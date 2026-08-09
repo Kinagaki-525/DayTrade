@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from src.market.models import MarketDataRecord, SourceRecord
+from src.market import MarketDataRecord, SourceRecord
 
 
 def make_market_record(

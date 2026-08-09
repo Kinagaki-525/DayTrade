@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-DEFAULT_TRADES_PATH = Path(__file__).resolve().parents[2] / "trades" / "trades.csv"
+DEFAULT_TRADES_PATH = Path(__file__).resolve().parents[1] / "trades" / "trades.csv"
 EXIT_REASONS = ("take_profit", "stop_loss", "end_of_day")
 ALLOWED_EXIT_REASONS = (*EXIT_REASONS, "other")
 TRADE_COLUMNS = (

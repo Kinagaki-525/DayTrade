@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from src.config import SUPPORTED_STRATEGY, validate_strategy_config
-from src.strategy.pricing import (
+from src.strategy import (
     calculate_entry_prices,
     calculate_exit_prices,
     exact_int,

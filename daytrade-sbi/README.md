@@ -108,12 +108,12 @@ daytrade-sbi/
     file_io.py
     cli.py
     recommendations.py
-    market/
-    screening/
-    strategy/
-    risk/
-    reports/
-    metrics/
+    market.py
+    screening.py
+    strategy.py
+    risk.py
+    reports.py
+    metrics.py
   tests/
   docs/
     architecture.md

@@ -18,14 +18,14 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | --- | --- |
 | `config/strategy.yaml` | 固定リスク条件、検証中パラメータ、未決定スクリーニング値 |
 | `prompts/nightly_research.md` | Codexが毎晩従う調査・保存・検証手順 |
-| `src/market/` | 市場データと出典のモデル、完全性・整合性検証 |
+| `src/market.py` | 市場データと出典のモデル、完全性・整合性検証 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
-| `src/screening/` | 資金条件を適用。未決定条件は未評価として残し、承認済み実装なしの値は拒否 |
-| `src/strategy/` | 前日高値ブレイクの価格計算 |
-| `src/risk/` | AI案から独立した固定リスク検証。値は修正しない |
-| `src/reports/` | PASS・REJECTED・NO_TRADEに応じた手動確認レポート |
+| `src/screening.py` | 資金条件を適用。未決定条件は未評価として残し、承認済み実装なしの値は拒否 |
+| `src/strategy.py` | 前日高値ブレイクの価格計算 |
+| `src/risk.py` | AI案から独立した固定リスク検証。値は修正しない |
+| `src/reports.py` | PASS・REJECTED・NO_TRADEに応じた手動確認レポート |
 | `src/recommendations.py` | 取引しなかった日を含む推奨履歴の記録 |
-| `src/metrics/` | 実取引結果の集計 |
+| `src/metrics.py` | 実取引結果の集計 |
 | `schemas/` | nightly実行で保存するJSONの構造契約 |
 
 `sources.json`は出典台帳の正本です。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。

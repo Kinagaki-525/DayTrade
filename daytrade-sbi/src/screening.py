@@ -5,8 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from src.config import SCREENING_KEYS
-from src.market.models import MarketDataRecord
-from src.market.validation import validate_market_data
+from src.market import MarketDataRecord, validate_market_data
 from src.strategy import OrderPlan, build_order_plan
 
 
@@ -64,6 +63,8 @@ def screen_market_record(
         unresolved_screening=unresolved,
         order_plan=plan,
     )
+
+
 def _json_ready(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)

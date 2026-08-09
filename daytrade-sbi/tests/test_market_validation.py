@@ -1,7 +1,6 @@
 from dataclasses import replace
 
-from src.market import validate_source_ledger
-from src.market.validation import validate_market_data
+from src.market import validate_market_data, validate_source_ledger
 from tests.factories import make_market_record
 
 
