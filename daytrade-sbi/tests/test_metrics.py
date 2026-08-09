@@ -100,6 +100,10 @@ def test_load_trades_accepts_header_only_file():
     assert load_trades(FIXTURES_DIR / "trades_header_only.csv") == []
 
 
+def test_repository_trade_log_uses_current_header_and_has_no_inferred_rows():
+    assert load_trades() == []
+
+
 def test_load_trades_rejects_unknown_exit_reason():
     with pytest.raises(ValueError, match="Invalid exit_reason"):
         load_trades(FIXTURES_DIR / "trades_invalid_exit_reason.csv")

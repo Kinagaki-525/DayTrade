@@ -1,2 +1,2 @@
-trade_date,ticker,company_name,previous_close,previous_high,tick_size,entry_trigger,entry_limit,entry_price,shares,take_profit_price,stop_loss_price,exit_price,exit_reason,profit_loss_yen,entry_time,exit_time,strategy_version,notes
-2026-01-01,1234,Example,400,401,1,402,403,403,100,411,398,404,takeprofit,100,09:01,09:10,v1,
+trade_date,ticker,company_name,strategy_type,previous_close,previous_high,tick_size,entry_trigger,entry_limit,planned_take_profit,planned_stop_loss,actual_entry,actual_exit,shares,profit_loss_yen,exit_reason,entry_time,exit_time,strategy_version,notes
+2026-01-01,1234,Example,previous_day_high_breakout,400,401,1,402,403,411,398,403,404,100,100,takeprofit,09:01,09:10,v1,

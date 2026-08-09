@@ -6,25 +6,26 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-DEFAULT_TRADES_PATH = Path(__file__).resolve().parents[1] / "trades" / "trades.csv"
+DEFAULT_TRADES_PATH = Path(__file__).resolve().parents[2] / "trades" / "trades.csv"
 EXIT_REASONS = ("take_profit", "stop_loss", "end_of_day")
 ALLOWED_EXIT_REASONS = (*EXIT_REASONS, "other")
 TRADE_COLUMNS = (
     "trade_date",
     "ticker",
     "company_name",
+    "strategy_type",
     "previous_close",
     "previous_high",
     "tick_size",
     "entry_trigger",
     "entry_limit",
-    "entry_price",
+    "planned_take_profit",
+    "planned_stop_loss",
+    "actual_entry",
+    "actual_exit",
     "shares",
-    "take_profit_price",
-    "stop_loss_price",
-    "exit_price",
-    "exit_reason",
     "profit_loss_yen",
+    "exit_reason",
     "entry_time",
     "exit_time",
     "strategy_version",
@@ -36,13 +37,11 @@ def load_trades(csv_path: str | Path = DEFAULT_TRADES_PATH) -> list[dict[str, st
     path = Path(csv_path)
     if not path.exists():
         return []
-
     with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
         reader = csv.DictReader(csv_file)
         if reader.fieldnames is None:
             return []
         _validate_trade_columns(reader.fieldnames)
-
         rows: list[dict[str, str]] = []
         for line_number, row in enumerate(reader, start=2):
             if None in row:
@@ -60,23 +59,19 @@ def calculate_metrics_from_csv(csv_path: str | Path = DEFAULT_TRADES_PATH) -> di
 def calculate_metrics(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     trade_rows = [row for row in rows if _has_any_value(row)]
     profit_losses = [
-        profit_loss
-        for profit_loss in (_parse_decimal(row.get("profit_loss_yen")) for row in trade_rows)
-        if profit_loss is not None
+        result
+        for result in (_parse_decimal(row.get("profit_loss_yen")) for row in trade_rows)
+        if result is not None
     ]
-
     wins = [value for value in profit_losses if value > 0]
     losses = [value for value in profit_losses if value < 0]
-
     exit_counts = {reason: 0 for reason in EXIT_REASONS}
     for row in trade_rows:
         reason = str(row.get("exit_reason", "")).strip()
         if reason in exit_counts:
             exit_counts[reason] += 1
-
     calculable_count = len(profit_losses)
     total_trades = len(trade_rows)
-
     return {
         "total_trades": total_trades,
         "calculable_trades": calculable_count,
@@ -105,16 +100,14 @@ def _average(values: list[Decimal]) -> Decimal | None:
 def _parse_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
-
     text = str(value).strip().replace(",", "")
-    if text == "":
+    if not text:
         return None
-
     try:
-        decimal_value = Decimal(text)
+        result = Decimal(text)
     except InvalidOperation:
         return None
-    return decimal_value if decimal_value.is_finite() else None
+    return result if result.is_finite() else None
 
 
 def _has_any_value(row: dict[str, Any]) -> bool:
@@ -125,7 +118,6 @@ def _validate_trade_columns(fieldnames: list[str]) -> None:
     duplicates = sorted({name for name in fieldnames if fieldnames.count(name) > 1})
     if duplicates:
         raise ValueError(f"Duplicate CSV columns: {', '.join(duplicates)}")
-
     missing = [name for name in TRADE_COLUMNS if name not in fieldnames]
     if missing:
         raise ValueError(f"Missing required CSV columns: {', '.join(missing)}")

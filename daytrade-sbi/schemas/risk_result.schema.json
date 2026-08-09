@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "risk_result.schema.json",
+  "title": "Risk Engine result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "strategy_version",
+    "config_sha256",
+    "decision",
+    "status",
+    "ticker",
+    "required_capital_yen",
+    "expected_loss_yen",
+    "violations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision": {"enum": ["TRADE", "NO_TRADE"]},
+    "status": {"enum": ["PASS", "REJECTED", "NOT_APPLICABLE"]},
+    "ticker": {"type": ["string", "null"]},
+    "required_capital_yen": {"$ref": "#/$defs/decimalOrNull"},
+    "expected_loss_yen": {"$ref": "#/$defs/decimalOrNull"},
+    "violations": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": ["decision"],
+        "properties": {"decision": {"const": "NO_TRADE"}}
+      },
+      "then": {
+        "properties": {
+          "status": {"const": "NOT_APPLICABLE"},
+          "ticker": {"type": "null"},
+          "required_capital_yen": {"type": "null"},
+          "expected_loss_yen": {"type": "null"},
+          "violations": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "status": {"enum": ["PASS", "REJECTED"]},
+          "ticker": {"type": "string", "minLength": 1},
+          "required_capital_yen": {"$ref": "#/$defs/decimal"},
+          "expected_loss_yen": {"$ref": "#/$defs/decimal"}
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "PASS"}}
+      },
+      "then": {"properties": {"violations": {"maxItems": 0}}}
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "REJECTED"}}
+      },
+      "then": {"properties": {"violations": {"minItems": 1}}}
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"}
+      ]
+    },
+    "decimalOrNull": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    }
+  }
+}

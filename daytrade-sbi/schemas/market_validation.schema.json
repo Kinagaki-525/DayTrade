@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "market_validation.schema.json",
+  "title": "Market data validation result",
+  "type": "object",
+  "required": ["schema_version", "target_date", "source_ledger", "results"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "source_ledger": {
+      "type": "object",
+      "required": ["valid", "errors"],
+      "properties": {
+        "valid": {"type": "boolean"},
+        "errors": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ticker", "valid_for_trade", "errors", "warnings"],
+        "properties": {
+          "ticker": {"type": ["string", "null"]},
+          "valid_for_trade": {"type": "boolean"},
+          "errors": {"type": "array", "items": {"type": "string"}},
+          "warnings": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

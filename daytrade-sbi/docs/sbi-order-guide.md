@@ -1,63 +1,76 @@
 # SBI証券 IFDOCO注文 入力整理メモ
 
-このドキュメントは、SBI証券のIFDOCO注文へ入力する考え方と、`rules/strategy.yaml` の設定値との対応関係を整理するためのものです。
+このドキュメントは、Risk Engineを通過した手動注文候補と、`config/strategy.yaml`の設定値との対応を整理するためのものです。
 
-現時点ではSBI証券の画面仕様、項目名、入力順、制約を推測して補完しません。実際の画面で確認できた内容だけを追記してください。
+現時点ではSBI証券の画面仕様、正式項目名、入力順、制約を推測して補完しません。実際の画面で人間が確認できた内容だけを追記します。
 
 ## 対象外
 
 - SBI証券へのログイン自動化
-- SBI証券画面の操作自動化
+- SBI証券画面やブラウザの操作自動化
 - 証券口座への注文送信
-- 呼値、株価、銘柄情報の外部API自動取得
+- Pythonからの市場データAPI・LLM API呼び出し
 
-## 現在確認している注文概念
+## 注文候補の作成
 
-IFDOCO注文は、買い注文が約定した後に、利確条件と損切り条件を組み合わせて決済するための条件注文として利用する想定です。
+Codexは出典付き市場調査から1銘柄の`TRADE`案または`NO_TRADE`を作成します。Python Risk Engineが`PASS`した場合だけ、`runs/YYYY-MM-DD/recommendation.md`を手入力候補として人間へ提示します。
 
-このプロジェクトでは、前日の夜に翌営業日の候補銘柄と注文条件を計算し、ユーザーがSBI証券の画面へ手動入力する前提です。
+`recommendation.md`は注文済みを意味しません。人間がSBI株アプリの実画面と照合し、採用するかを最終判断します。
 
-## strategy.yaml との対応
+## config/strategy.yamlとの対応
 
-| `strategy.yaml` | 意味 | IFDOCO入力時の扱い |
+| 設定 | 意味 | 手動確認時の扱い |
 | --- | --- | --- |
-| `strategy_version` | 適用ルールの版 | 画面入力項目ではない。実取引記録へ同じ値を残す |
-| `validation_status` | 戦略の検証状態 | 画面入力項目ではない。`unvalidated` は有効性未確認を示す |
-| `capital` | 運用資金上限 | 100株購入時の概算代金がこの範囲内か確認する |
-| `position_size` | 株数 | 原則100株として入力候補にする |
-| `entry.strategy` | 検証するエントリー戦略 | 現在は前日高値ブレイク型 |
-| `entry.trigger_ticks` | 前日高値から何ティック上で発動するか | `previous_high + tick_size * trigger_ticks` を発動価格候補にする |
-| `entry.limit_offset_ticks` | 発動価格から何ティック上まで買いを許容するか | `entry_trigger + tick_size * limit_offset_ticks` を買い指値上限候補にする |
-| `risk.max_loss_per_trade_yen` | 1回あたり最大損失目安 | 損切り条件がこの範囲を大きく超えないか確認する |
-| `risk.max_trades_per_day` | 1日の最大取引回数 | 1日1取引を超えないようにする |
-| `risk.max_positions` | 同時保有数 | 1銘柄のみ保有する |
-| `risk.averaging_down` | ナンピン可否 | `false` のため追加買いしない |
-| `risk.overnight_hold` | 持ち越し可否 | `false` のため当日中に決済する |
-| `exit.take_profit_yen` | 1取引あたりの利確幅候補 | 100株なら1株あたり `take_profit_yen / 100` 円を買値に加える |
-| `exit.stop_loss_yen` | 1取引あたりの損切り幅候補 | 100株なら1株あたり `stop_loss_yen / 100` 円を買値から引く |
-| `exit.close_by_end_of_day` | 当日中決済 | 大引け前に未決済なら時間切れ決済候補として扱う |
-| `validation.require_affordable_position` | 購入可能性チェック | 100株の概算購入額が資金内であることを必須条件にする |
+| `strategy_version` | 適用ルールの版 | SBI入力項目ではない。推奨・実取引記録へ残す |
+| `validation_status` | 戦略の検証状態 | `unvalidated`は有効性未確認を示す |
+| `account.account_type` | 口座・取引区分 | `cash`のため現物買候補のみ |
+| `capital.total_yen` | 運用資金上限 | 必要資金が50,000円以内かRisk Engineが検証 |
+| `capital.position_size` | 株数 | 100株でなければRisk Engineが拒否 |
+| `previous_day_high_breakout.trigger_ticks` | 前日高値からの発動ティック数 | 発動価格をPythonが再計算 |
+| `previous_day_high_breakout.entry_limit_offset_ticks` | 発動価格から買い上限までのティック数 | 買い上限をPythonが再計算 |
+| `risk.max_loss_per_trade_yen` | 損切り発動基準の想定損失上限 | 想定損失が500円を超える案を拒否 |
+| `risk.max_positions` | 同時保有上限 | 1ポジション以上保有中なら新規案を拒否 |
+| `risk.max_trades_per_day` | 1日の取引上限 | 1取引済みなら新規案を拒否 |
+| `risk.averaging_down` | ナンピン可否 | `false`のため追加買いしない |
+| `risk.overnight_hold` | 持ち越し可否 | `false`のため当日中に決済する |
+| `risk.short_selling` | 空売り可否 | `false`のため対象外 |
+| `risk.margin_trading` | 信用取引可否 | `false`のため対象外 |
+| `exit.take_profit_yen` | 1取引あたりの利確幅候補 | 100株で1株あたりの価格へ換算 |
+| `screening.*` | 銘柄抽出条件 | `null`項目は未決定。入力値や判断基準へ変換しない |
 
-## 手動入力前チェック
+## Risk Engine確認項目
 
-- 前日高値は推測せず、確認済みの値だけを使う
-- 呼値は銘柄・価格帯に応じて確認済みの値だけを使う
-- `entry_trigger`、`entry_limit`、`take_profit_price`、`stop_loss_price` を計算する
-- 利確・損切りの換算価格が呼値に一致しない場合は、どちらも上方向の呼値へ丸めた候補値であることを確認する
-- `entry_limit * position_size <= capital` であることを確認する
-- その日の取引候補が1銘柄だけであることを確認する
-- ナンピン注文や翌日持ち越し前提の注文を入れない
-- 実際に発注した場合は、結果を `trades/trades.csv` に記録する
-- `strategy_version` は注文条件を作成した時点の値を記録する
+- 市場データと数値ごとの出典が検証済み
+- 前日高値と呼値が市場データに一致
+- 発動価格、買い上限、利確、損切りが設定からの再計算値に一致
+- 100株
+- 買い上限 × 100株が50,000円以内
+- 発動価格が買い上限以下
+- 損切りが買い上限未満
+- 利確が買い上限より大きい
+- 想定損失が500円以内
+- 各注文価格が呼値に整合
+- 最大保有数と当日取引数を超えない
 
-計算結果は手動入力の候補であり、注文の成立、有効性、利益を保証しません。画面へ入力する前に、SBI証券で実際に表示される項目、呼値、注文期限、概算代金をユーザーが確認します。
+違反した注文案は値を修正せず`REJECTED`にします。
+
+## 人間による手動入力前チェック
+
+- 対象日、銘柄、株数、現物買であることを再確認する
+- 前日高値と呼値を出典およびSBI画面で再確認する
+- `recommendation.md`の発動価格、買い上限、利確、損切りを画面と照合する
+- IFDOCO、逆指値、指値、成行候補、執行条件、注文期間の実際の画面仕様を確認する
+- その日の注文・保有状況を確認する
+- 注文する場合だけ人間が入力・送信する
+
+逆指値発動後に成行を利用する場合、スリッページにより実際の損失が想定500円を超える可能性があります。
 
 ## 未確認事項
 
-以下はSBI証券の画面で実際に確認してから追記します。
-
 - IFDOCO注文画面の正式な項目名
-- 逆指値、指値、成行などの画面上の選択肢
+- 逆指値、指値、成行など画面上の選択肢
 - 入力可能な価格単位とエラー表示
-- 当日限り指定の具体的な入力方法
+- 当日限り指定と引け前決済の具体的な方法
 - 注文訂正・取消の操作手順
+
+確認できるまで推測で補完せず、[TODO.md](../TODO.md)で管理します。

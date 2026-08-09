@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "candidates.schema.json",
+  "title": "Fixed-condition screening results",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "generated_at",
+    "strategy_version",
+    "config_sha256",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ticker", "status", "reasons", "unresolved_screening", "order_plan"],
+        "properties": {
+          "ticker": {"type": ["string", "null"]},
+          "status": {"enum": ["ELIGIBLE", "REJECTED"]},
+          "reasons": {"type": "array", "items": {"type": "string"}},
+          "unresolved_screening": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "minimum_volume",
+                "minimum_turnover",
+                "minimum_price",
+                "maximum_price",
+                "maximum_spread",
+                "minimum_daily_range",
+                "maximum_gap_percent",
+                "exclude_earnings",
+                "exclude_special_disclosures"
+              ]
+            }
+          },
+          "order_plan": {
+            "oneOf": [
+              {"$ref": "#/$defs/orderPlan"},
+              {"type": "null"}
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": ["status"],
+              "properties": {"status": {"const": "ELIGIBLE"}}
+            },
+            "then": {
+              "properties": {
+                "ticker": {"type": "string", "minLength": 1},
+                "reasons": {"maxItems": 0},
+                "order_plan": {"$ref": "#/$defs/orderPlan"}
+              }
+            },
+            "else": {
+              "properties": {"reasons": {"minItems": 1}}
+            }
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "decimal": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"}
+      ]
+    },
+    "orderPlan": {
+      "type": "object",
+      "required": [
+        "strategy_version",
+        "validation_status",
+        "entry_trigger",
+        "entry_limit",
+        "affordable",
+        "estimated_purchase_amount",
+        "expected_loss_yen",
+        "shares",
+        "take_profit_price",
+        "stop_loss_price"
+      ],
+      "properties": {
+        "strategy_version": {"type": "string", "minLength": 1},
+        "validation_status": {"const": "unvalidated"},
+        "entry_trigger": {"$ref": "#/$defs/decimal"},
+        "entry_limit": {"$ref": "#/$defs/decimal"},
+        "affordable": {"type": "boolean"},
+        "estimated_purchase_amount": {"$ref": "#/$defs/decimal"},
+        "expected_loss_yen": {"$ref": "#/$defs/decimal"},
+        "shares": {"type": "integer", "minimum": 1},
+        "take_profit_price": {"$ref": "#/$defs/decimal"},
+        "stop_loss_price": {"$ref": "#/$defs/decimal"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recommendation.schema.json",
+  "title": "Codex nightly recommendation",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "strategy_version",
+    "config_sha256",
+    "decision",
+    "strategy_type",
+    "ticker",
+    "company_name",
+    "previous_high",
+    "tick_size",
+    "entry_trigger",
+    "entry_limit",
+    "take_profit",
+    "stop_loss",
+    "shares",
+    "selection_reasons",
+    "source_urls",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision": {"enum": ["TRADE", "NO_TRADE"]},
+    "strategy_type": {"type": ["string", "null"]},
+    "ticker": {"type": ["string", "null"]},
+    "company_name": {"type": ["string", "null"]},
+    "previous_high": {"$ref": "#/$defs/decimalOrNull"},
+    "tick_size": {"$ref": "#/$defs/decimalOrNull"},
+    "entry_trigger": {"$ref": "#/$defs/decimalOrNull"},
+    "entry_limit": {"$ref": "#/$defs/decimalOrNull"},
+    "take_profit": {"$ref": "#/$defs/decimalOrNull"},
+    "stop_loss": {"$ref": "#/$defs/decimalOrNull"},
+    "shares": {"type": ["integer", "null"]},
+    "selection_reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "source_urls": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^https?://"}
+    },
+    "notes": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": ["decision"],
+        "properties": {"decision": {"const": "TRADE"}}
+      },
+      "then": {
+        "properties": {
+          "strategy_type": {"const": "previous_day_high_breakout"},
+          "ticker": {"type": "string", "minLength": 1},
+          "company_name": {"type": "string", "minLength": 1},
+          "previous_high": {"$ref": "#/$defs/decimal"},
+          "tick_size": {"$ref": "#/$defs/decimal"},
+          "entry_trigger": {"$ref": "#/$defs/decimal"},
+          "entry_limit": {"$ref": "#/$defs/decimal"},
+          "take_profit": {"$ref": "#/$defs/decimal"},
+          "stop_loss": {"$ref": "#/$defs/decimal"},
+          "shares": {"const": 100},
+          "source_urls": {"minItems": 1}
+        }
+      },
+      "else": {
+        "properties": {
+          "strategy_type": {"type": "null"},
+          "ticker": {"type": "null"},
+          "company_name": {"type": "null"},
+          "previous_high": {"type": "null"},
+          "tick_size": {"type": "null"},
+          "entry_trigger": {"type": "null"},
+          "entry_limit": {"type": "null"},
+          "take_profit": {"type": "null"},
+          "stop_loss": {"type": "null"},
+          "shares": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"}
+      ]
+    },
+    "decimalOrNull": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+from src.reports import render_sbi_report
+
+
+def test_passed_trade_report_contains_manual_order_warning():
+    recommendation = {
+        "target_date": "2026-08-10",
+        "strategy_version": "v1",
+        "config_sha256": "a" * 64,
+        "decision": "TRADE",
+        "ticker": "1234",
+        "company_name": "Example Co.",
+        "shares": 100,
+        "entry_trigger": "401",
+        "entry_limit": "402",
+        "take_profit": "410",
+        "stop_loss": "397",
+        "selection_reasons": ["confirmed fact based comparison"],
+        "source_urls": ["https://example.test/market"],
+    }
+    risk = {
+        "status": "PASS",
+        "required_capital_yen": "40200",
+        "expected_loss_yen": "500",
+        "violations": [],
+    }
+
+    report = render_sbi_report(recommendation, risk)
+
+    assert "判定:\nTRADE" in report
+    assert "戦略バージョン: v1" in report
+    assert f"設定SHA-256: {'a' * 64}" in report
+    assert "SBI証券へのログイン・入力・注文・訂正・取消は人間が行う" in report
+    assert "実損失が想定500円を超える可能性" in report
+
+
+def test_no_trade_report_is_a_normal_result():
+    report = render_sbi_report(
+        {
+            "target_date": "2026-08-10",
+            "strategy_version": "v1",
+            "config_sha256": "a" * 64,
+            "decision": "NO_TRADE",
+            "selection_reasons": ["required data unavailable"],
+            "source_urls": [],
+        },
+        {"status": "NOT_APPLICABLE"},
+    )
+
+    assert "判定:\nNO_TRADE" in report
+    assert "NO_TRADEは正常な結果" in report
