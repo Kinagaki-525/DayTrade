@@ -61,6 +61,128 @@ def test_screen_market_command_generates_candidate_payload(monkeypatch):
     assert len(captured["config_sha256"]) == 64
 
 
+def test_build_candidate_pipeline_command_writes_payload(monkeypatch):
+    captured = {}
+    strategy_version, config_sha256 = config_metadata()
+    payload = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "generated_at": "2026-08-09T00:00:00+00:00",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "summary": {
+            "discovered": 0,
+            "research_complete": 0,
+            "research_incomplete": 0,
+            "data_unavailable": 0,
+            "screened": 0,
+            "eligible": 0,
+            "rejected": 0,
+        },
+        "candidates": [],
+    }
+
+    def load_stub(path, schema):
+        if schema == "market_research.schema.json":
+            return {"target_date": "2026-08-10", "discovery_candidates": []}
+        if schema == "candidates.schema.json":
+            return {
+                "target_date": "2026-08-10",
+                "strategy_version": strategy_version,
+                "config_sha256": config_sha256,
+                "candidates": [],
+            }
+        if schema == "sources.schema.json":
+            return {"target_date": "2026-08-10", "sources": [], "source_attempts": []}
+        return {}
+
+    monkeypatch.setattr(cli, "load_json_document", load_stub)
+    monkeypatch.setattr(cli, "load_market_data", lambda path: ("2026-08-10", []))
+    monkeypatch.setattr(cli, "build_candidate_pipeline", lambda **kwargs: payload)
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    result = cli.main(
+        [
+            "build-candidate-pipeline",
+            "--market-research",
+            "market_research.json",
+            "--market-data",
+            "market_data.json",
+            "--candidates",
+            "candidates.json",
+            "--sources",
+            "sources.json",
+            "--output",
+            "candidate_pipeline.json",
+        ]
+    )
+
+    assert result == 0
+    assert captured["schema_version"] == 1
+    assert captured["summary"]["discovered"] == 0
+
+
+def test_build_performance_command_writes_payload(monkeypatch):
+    captured = {}
+    payload = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "generated_at": "2026-08-09T00:00:00+00:00",
+        "counts": {
+            "source_request_count": 0,
+            "adopted_source_count": 0,
+            "duplicate_source_request_count": 0,
+            "discovery_candidate_count": 0,
+            "stage1_candidate_count": 0,
+            "stage1_rejected_count": 0,
+            "stage2_candidate_count": 0,
+            "context_research_candidate_count": 0,
+            "candidate_status_counts": {},
+        },
+        "timings": {
+            "total": None,
+            "calendar_check": None,
+            "discovery": None,
+            "candidate_stage1": None,
+            "candidate_stage2": None,
+            "source_audit": None,
+            "market_validation": None,
+            "screening": None,
+            "ranking": None,
+        },
+    }
+
+    def load_stub(path, schema):
+        if schema == "market_research.schema.json":
+            return {"target_date": "2026-08-10"}
+        if schema == "candidate_pipeline.schema.json":
+            return {"target_date": "2026-08-10", "candidates": []}
+        if schema == "sources.schema.json":
+            return {"target_date": "2026-08-10", "sources": [], "source_attempts": []}
+        return {}
+
+    monkeypatch.setattr(cli, "load_json_document", load_stub)
+    monkeypatch.setattr(cli, "build_performance_payload", lambda **kwargs: payload)
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    result = cli.main(
+        [
+            "build-performance",
+            "--market-research",
+            "market_research.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
+            "--sources",
+            "sources.json",
+            "--output",
+            "performance.json",
+        ]
+    )
+
+    assert result == 0
+    assert captured["counts"]["source_request_count"] == 0
+
+
 def test_validate_source_matrix_command_reports_valid(monkeypatch):
     captured = {}
     monkeypatch.setattr(cli, "_emit_json", lambda payload, output_path=None: captured.update(payload))

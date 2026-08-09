@@ -118,7 +118,48 @@
         "spread": {"$ref": "#/$defs/decimalOrNull"},
         "earnings_scheduled": {"type": ["boolean", "null"]},
         "special_disclosures": {"type": ["boolean", "null"]},
-        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}}
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "field_provenance": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/fieldProvenance"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "fieldProvenance": {
+      "type": "object",
+      "required": [
+        "field_name",
+        "status",
+        "verified_value",
+        "primary_source_ref",
+        "secondary_source_ref",
+        "source_refs",
+        "verified_at"
+      ],
+      "properties": {
+        "field_name": {"type": "string", "minLength": 1},
+        "status": {
+          "enum": [
+            "VERIFIED",
+            "DATA_UNAVAILABLE",
+            "CONFLICT",
+            "SINGLE_SOURCE_ONLY",
+            "SOURCE_POLICY_UNDEFINED",
+            "NOT_YET_AVAILABLE",
+            "PARSE_FAILED",
+            "ACCESS_FAILED",
+            "STALE"
+          ]
+        },
+        "verified_value": {"type": ["number", "integer", "string", "boolean", "null"]},
+        "primary_source_ref": {"type": ["string", "null"], "minLength": 1},
+        "secondary_source_ref": {"type": ["string", "null"], "minLength": 1},
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "verified_at": {"type": ["string", "null"], "format": "date-time"}
       },
       "additionalProperties": false
     }

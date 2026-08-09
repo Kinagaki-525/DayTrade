@@ -79,6 +79,7 @@
     "sourceAttempt": {
       "type": "object",
       "required": [
+        "attempt_id",
         "source_id",
         "source_role",
         "criticality",
@@ -92,6 +93,7 @@
         "values"
       ],
       "properties": {
+        "attempt_id": {"type": "string", "minLength": 1},
         "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
         "source_role": {"$ref": "#/$defs/sourceRole"},
         "criticality": {"$ref": "#/$defs/criticality"},
@@ -102,6 +104,11 @@
         "requested_at": {"type": "string", "format": "date-time"},
         "retrieved_at": {"type": ["string", "null"], "format": "date-time"},
         "url": {"type": "string", "pattern": "^https?://"},
+        "source_page_path": {
+          "type": "string",
+          "pattern": "^source_pages[\\\\/][^\\\\/:*?\"<>|]+$"
+        },
+        "cache_status": {"enum": ["MISS", "HIT", "STALE", "NOT_CACHEABLE"]},
         "status": {"$ref": "#/$defs/sourceStatus"},
         "values": {
           "oneOf": [
@@ -113,7 +120,21 @@
         "result_count": {"type": ["integer", "null"], "minimum": 0},
         "notes": {"type": "array", "items": {"type": "string"}}
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": {"status": {"const": "FOUND"}}
+          },
+          "then": {
+            "properties": {"result_count": {"type": "integer", "minimum": 0}}
+          },
+          "else": {
+            "properties": {"result_count": {"type": "null"}}
+          }
+        }
+      ]
     }
   }
 }

@@ -139,14 +139,28 @@
         "status": {"$ref": "#/$defs/sourceStatus"},
         "source_url": {"type": "string", "pattern": "^https?://"},
         "retrieved_at": {"type": "string", "format": "date-time"},
-        "result_count": {"type": "integer", "minimum": 0},
+        "result_count": {"type": ["integer", "null"], "minimum": 0},
         "items": {
           "type": "array",
           "items": {"$ref": "#/$defs/discoveryItem"}
         },
         "reason": {"type": ["string", "null"]}
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": {"status": {"const": "FOUND"}}
+          },
+          "then": {
+            "properties": {"result_count": {"type": "integer", "minimum": 0}}
+          },
+          "else": {
+            "properties": {"result_count": {"type": "null"}}
+          }
+        }
+      ]
     },
     "discoveryItem": {
       "type": "object",
@@ -217,7 +231,22 @@
         "ticker": {"type": "string", "minLength": 1},
         "data_status": {"$ref": "#/$defs/dataStatus"},
         "status_reasons": {"type": "array", "items": {"type": "string"}},
-        "source_policy_status": {"$ref": "#/$defs/sourceStatus"}
+        "source_policy_status": {"$ref": "#/$defs/sourceStatus"},
+        "stage1_status": {
+          "enum": ["NOT_STARTED", "PASSED", "REJECTED", "DATA_UNAVAILABLE", "SKIPPED"]
+        },
+        "stage1_reasons": {"type": "array", "items": {"type": "string"}},
+        "stage2_status": {
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE", "SKIPPED"]
+        },
+        "stage2_reasons": {"type": "array", "items": {"type": "string"}},
+        "context_research_status": {
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE", "SKIPPED"]
+        },
+        "source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
       },
       "additionalProperties": false
     }

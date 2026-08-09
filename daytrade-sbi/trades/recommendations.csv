@@ -1,2 +1,1 @@
 target_date,strategy_version,config_sha256,ticker,decision,strategy_type,entry_trigger,entry_limit,take_profit,stop_loss,risk_result,order_submitted,entry_triggered,entry_filled,notes
-2026-08-10,v1,5c7f803bf4da07155165b3b1f9075e577746280aa886f2b3d1348643c0b38d82,,DATA_UNAVAILABLE,,,,,,NOT_APPLICABLE,,,,"See market_research.json, sources.json source_attempts, and research.md for the data gaps. No SBI order candidate is produced."

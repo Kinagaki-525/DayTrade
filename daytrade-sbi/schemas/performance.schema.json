@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "performance.schema.json",
+  "title": "Nightly research performance counters",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "generated_at",
+    "counts",
+    "timings"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "counts": {
+      "type": "object",
+      "required": [
+        "source_request_count",
+        "adopted_source_count",
+        "duplicate_source_request_count",
+        "discovery_candidate_count",
+        "stage1_candidate_count",
+        "stage1_rejected_count",
+        "stage2_candidate_count",
+        "context_research_candidate_count",
+        "candidate_status_counts"
+      ],
+      "properties": {
+        "source_request_count": {"type": "integer", "minimum": 0},
+        "adopted_source_count": {"type": "integer", "minimum": 0},
+        "duplicate_source_request_count": {"type": "integer", "minimum": 0},
+        "discovery_candidate_count": {"type": "integer", "minimum": 0},
+        "stage1_candidate_count": {"type": "integer", "minimum": 0},
+        "stage1_rejected_count": {"type": "integer", "minimum": 0},
+        "stage2_candidate_count": {"type": "integer", "minimum": 0},
+        "context_research_candidate_count": {"type": "integer", "minimum": 0},
+        "candidate_status_counts": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "DISCOVERED",
+              "RESEARCH_IN_PROGRESS",
+              "RESEARCH_COMPLETE",
+              "DATA_UNAVAILABLE",
+              "SCREENED",
+              "ELIGIBLE",
+              "REJECTED"
+            ]
+          },
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      },
+      "additionalProperties": false
+    },
+    "timings": {
+      "type": "object",
+      "required": [
+        "total",
+        "calendar_check",
+        "discovery",
+        "candidate_stage1",
+        "candidate_stage2",
+        "source_audit",
+        "market_validation",
+        "screening",
+        "ranking"
+      ],
+      "properties": {
+        "total": {"type": ["number", "null"], "minimum": 0},
+        "calendar_check": {"type": ["number", "null"], "minimum": 0},
+        "discovery": {"type": ["number", "null"], "minimum": 0},
+        "candidate_stage1": {"type": ["number", "null"], "minimum": 0},
+        "candidate_stage2": {"type": ["number", "null"], "minimum": 0},
+        "source_audit": {"type": ["number", "null"], "minimum": 0},
+        "market_validation": {"type": ["number", "null"], "minimum": 0},
+        "screening": {"type": ["number", "null"], "minimum": 0},
+        "ranking": {"type": ["number", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

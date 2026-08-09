@@ -78,6 +78,7 @@ class MarketDataRecord:
     earnings_scheduled: bool | None
     special_disclosures: bool | None
     sources: tuple[SourceRecord, ...]
+    field_provenance: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MarketDataRecord:
@@ -90,6 +91,11 @@ class MarketDataRecord:
             raise ValueError("market data sources must be an array of objects")
         else:
             sources = tuple(SourceRecord.from_dict(item) for item in raw_sources)
+        raw_field_provenance = data.get("field_provenance", [])
+        if not isinstance(raw_field_provenance, list) or any(
+            not isinstance(item, dict) for item in raw_field_provenance
+        ):
+            raise ValueError("market data field_provenance must be an array of objects")
         return cls(
             ticker=_optional_text(data.get("ticker")),
             company_name=_optional_text(data.get("company_name")),
@@ -115,6 +121,7 @@ class MarketDataRecord:
             earnings_scheduled=_optional_bool(data.get("earnings_scheduled")),
             special_disclosures=_optional_bool(data.get("special_disclosures")),
             sources=sources,
+            field_provenance=tuple(dict(item) for item in raw_field_provenance),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -320,6 +327,7 @@ def validate_market_data(
         errors.append("At least one traceable source is required")
     for index, source in enumerate(record.sources):
         errors.extend(_validate_source(source, record, index, effective_source_matrix))
+    errors.extend(_validate_field_provenance(record))
 
     for field_name in SOURCED_NUMERIC_FIELDS:
         field_sources = [
@@ -462,6 +470,75 @@ def _validate_ohlcv_source_policy(record: MarketDataRecord) -> list[str]:
     return errors
 
 
+def _validate_field_provenance(record: MarketDataRecord) -> list[str]:
+    errors: list[str] = []
+    source_by_ref = {
+        source.source_ref: source
+        for source in record.sources
+        if source.source_ref is not None
+    }
+    for index, provenance in enumerate(record.field_provenance):
+        prefix = f"field_provenance[{index}]"
+        field_name = _optional_text(provenance.get("field_name"))
+        status = _optional_text(provenance.get("status"))
+        verified_value = provenance.get("verified_value")
+        source_refs = provenance.get("source_refs", [])
+        if field_name is None:
+            errors.append(f"{prefix}.field_name is required")
+            continue
+        if not isinstance(source_refs, list):
+            errors.append(f"{prefix}.source_refs must be an array")
+            source_refs = []
+        missing_refs = [
+            str(source_ref)
+            for source_ref in source_refs
+            if str(source_ref) not in source_by_ref
+        ]
+        if missing_refs:
+            errors.append(
+                f"{prefix}.source_refs are missing from market data sources: "
+                + ", ".join(missing_refs)
+            )
+        if status == "VERIFIED":
+            if verified_value is None:
+                errors.append(f"{prefix}.verified_value is required when VERIFIED")
+            record_value = getattr(record, field_name, None)
+            if record_value is not None and _as_decimal(verified_value) is not None:
+                if _as_decimal(verified_value) != record_value:
+                    errors.append(
+                        f"{prefix}.verified_value does not match market data field"
+                    )
+            if field_name in OHLCV_FIELDS:
+                primary_ref = _optional_text(provenance.get("primary_source_ref"))
+                secondary_ref = _optional_text(provenance.get("secondary_source_ref"))
+                if primary_ref is None or secondary_ref is None:
+                    errors.append(
+                        f"{prefix}.OHLCV VERIFIED requires primary and secondary source refs"
+                    )
+                else:
+                    primary = source_by_ref.get(primary_ref)
+                    secondary = source_by_ref.get(secondary_ref)
+                    if primary is None or secondary is None:
+                        errors.append(
+                            f"{prefix}.OHLCV source refs must exist in market data sources"
+                        )
+                    elif _source_values_conflict(primary.value, secondary.value):
+                        errors.append(
+                            f"{prefix}.OHLCV primary and secondary source values conflict"
+                        )
+        elif status == "CONFLICT" and verified_value is not None:
+            errors.append(f"{prefix}.verified_value must be null when CONFLICT")
+    return errors
+
+
+def _source_values_conflict(left: Any, right: Any) -> bool:
+    left_decimal = _as_decimal(left)
+    right_decimal = _as_decimal(right)
+    if left_decimal is not None and right_decimal is not None:
+        return left_decimal != right_decimal
+    return left != right
+
+
 def _is_iso_date(value: str) -> bool:
     try:
         _parse_iso_date(value)
@@ -533,11 +610,20 @@ def validate_source_ledger(
                     f"ticker={record.ticker}, index={index}"
                 )
     for index, attempt in enumerate(source_payload.get("source_attempts", [])):
+        if not _optional_text(attempt.get("attempt_id")):
+            errors.append(f"source_attempts[{index}].attempt_id is required")
         if attempt.get("target_date") != market_target_date:
             errors.append(f"source_attempts[{index}].target_date does not match market_data.json")
         status = attempt.get("status")
         if status not in SOURCE_STATUSES:
             errors.append(f"source_attempts[{index}].status is not known")
+        result_count = attempt.get("result_count")
+        if status == "FOUND" and result_count is None:
+            errors.append(f"source_attempts[{index}].result_count is required when FOUND")
+        if status != "FOUND" and result_count is not None:
+            errors.append(
+                f"source_attempts[{index}].result_count must be null unless status is FOUND"
+            )
         role = attempt.get("source_role")
         if role not in SOURCE_ROLES:
             errors.append(f"source_attempts[{index}].source_role is not known")

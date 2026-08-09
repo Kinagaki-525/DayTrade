@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "candidate_pipeline.schema.json",
+  "title": "Candidate research pipeline state",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "generated_at",
+    "strategy_version",
+    "config_sha256",
+    "summary",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "summary": {"$ref": "#/$defs/pipelineSummary"},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/pipelineCandidate"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "pipelineStatus": {
+      "enum": [
+        "DISCOVERED",
+        "RESEARCH_IN_PROGRESS",
+        "RESEARCH_COMPLETE",
+        "DATA_UNAVAILABLE",
+        "SCREENED",
+        "ELIGIBLE",
+        "REJECTED"
+      ]
+    },
+    "pipelineSummary": {
+      "type": "object",
+      "required": [
+        "discovered",
+        "research_complete",
+        "research_incomplete",
+        "data_unavailable",
+        "screened",
+        "eligible",
+        "rejected"
+      ],
+      "properties": {
+        "discovered": {"type": "integer", "minimum": 0},
+        "research_complete": {"type": "integer", "minimum": 0},
+        "research_incomplete": {"type": "integer", "minimum": 0},
+        "data_unavailable": {"type": "integer", "minimum": 0},
+        "screened": {"type": "integer", "minimum": 0},
+        "eligible": {"type": "integer", "minimum": 0},
+        "rejected": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "discoveryReason": {
+      "type": "object",
+      "required": ["discovery_type", "source_id", "source_url"],
+      "properties": {
+        "discovery_type": {
+          "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE"]
+        },
+        "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+        "source_url": {"type": "string", "pattern": "^https?://"},
+        "rank": {"type": ["integer", "null"], "minimum": 1},
+        "display_value": {"type": ["string", "number", "integer", "null"]},
+        "title": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "pipelineCandidate": {
+      "type": "object",
+      "required": [
+        "ticker",
+        "company_name",
+        "market",
+        "discovery_reasons",
+        "pipeline_status",
+        "reason_codes",
+        "missing_requirements",
+        "completed_checks",
+        "failed_checks",
+        "source_attempt_ids",
+        "source_refs"
+      ],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "company_name": {"type": "string", "minLength": 1},
+        "market": {"type": ["string", "null"]},
+        "discovery_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/discoveryReason"}
+        },
+        "pipeline_status": {"$ref": "#/$defs/pipelineStatus"},
+        "reason_codes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "missing_requirements": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "completed_checks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "failed_checks": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -23,8 +23,8 @@ Follow the nightly prompt as the procedural source of truth. Do not copy or repl
 
 1. Confirm the target and previous trading dates from authoritative evidence. Stop if either date is uncertain.
 2. Validate the fixed Source Matrix before research. Do not substitute undefined sources at runtime.
-3. Delegate bounded Market Discovery and Candidate Research to `market_researcher` when available. Require source_ref, source_id, source role, information type, source status, source URL, retrieval time, trading date, ticker, field, and exact value. Wait for its summary; the subagent must not write files.
-4. Have the main agent follow the nightly prompt to snapshot config, resolve and save the Python-generated research window, save confirmed evidence, and run Python validation and screening.
+3. Delegate bounded Market Discovery and Candidate Research to `market_researcher` when available. Require source_ref, source_id, source role, information type, source status, source URL, retrieval time, trading date, ticker, field, exact value, source_attempt attempt_id, and correct result_count semantics. Wait for its summary; the subagent must not write files.
+4. Have the main agent follow the nightly prompt to snapshot config, resolve and save the Python-generated research window, save confirmed evidence, and run Python validation, screening, candidate pipeline generation, and performance counter generation.
 5. Delegate a read-only audit of the saved dates, cutoff, sources, Source Status, Discovery reasons, required values, and contradictions to `source_auditor` when available. Wait for its findings. Correct only confirmed transcription errors and rerun affected Python steps; never fill missing facts.
 6. Have the main agent compare only `ELIGIBLE` candidates and write one `TRADE` recommendation, `NO_TRADE`, or `DATA_UNAVAILABLE`.
 7. If the recommendation decision is `TRADE`, ask the user for confirmed current positions and trades already made that day before the Risk Engine. Do not assume zero. Stop if either value is unavailable.
@@ -36,6 +36,7 @@ Follow the nightly prompt as the procedural source of truth. Do not copy or repl
 
 - Do not change strategy settings or resolve TODO items.
 - Do not add Discovery routes, Ranking rules, or Morning Research.
+- Do not treat cutoff-after weekend information as confirmed zero results unless it was actually researched inside the research window.
 - Do not delegate final recommendation, file writes, Python validation, or human confirmation.
 - Do not log in to SBI Securities, operate its UI, or send an order.
 - Do not fabricate facts or claim profitability.

@@ -21,6 +21,7 @@ def render_sbi_report(
         f"対象日: {recommendation.get('target_date', '')}",
         f"戦略バージョン: {recommendation.get('strategy_version', '')}",
         f"設定SHA-256: {recommendation.get('config_sha256', '')}",
+        *(_cutoff_line(recommendation)),
         "",
         "判定:",
         report_decision,
@@ -62,6 +63,7 @@ def render_sbi_report(
         str(risk_result.get("status", "")),
     ]
     _append_section(lines, "Codex選定理由", reasons)
+    _append_pipeline_sections(lines, recommendation)
     _append_section(lines, "参照データ", source_urls)
     violations = _as_text_list(risk_result.get("violations"))
     if violations:
@@ -90,11 +92,13 @@ def _render_non_trade(
         f"対象日: {recommendation.get('target_date', '')}",
         f"戦略バージョン: {recommendation.get('strategy_version', '')}",
         f"設定SHA-256: {recommendation.get('config_sha256', '')}",
+        *(_cutoff_line(recommendation)),
         "",
         "判定:",
         decision,
     ]
     _append_section(lines, "理由", reasons or ["理由が記録されていない"])
+    _append_pipeline_sections(lines, recommendation)
     _append_section(lines, "参照データ", source_urls)
     note = (
         "必要な市場データが揃わず、取引判断まで到達していない。"
@@ -111,6 +115,42 @@ def _append_section(lines: list[str], title: str, values: Iterable[str]) -> None
         return
     lines.extend(["", f"{title}:"])
     lines.extend(f"- {item}" for item in items)
+
+
+def _append_pipeline_sections(lines: list[str], recommendation: dict[str, Any]) -> None:
+    summary = recommendation.get("pipeline_summary")
+    if isinstance(summary, dict):
+        _append_section(
+            lines,
+            "候補パイプライン概要",
+            [
+                f"Discovery候補: {summary.get('discovered', 0)}件",
+                f"Research完了: {summary.get('research_complete', 0)}件",
+                f"Research未完了: {summary.get('research_incomplete', 0)}件",
+                f"DATA_UNAVAILABLE: {summary.get('data_unavailable', 0)}件",
+                f"ELIGIBLE: {summary.get('eligible', 0)}件",
+                f"REJECTED: {summary.get('rejected', 0)}件",
+            ],
+        )
+    source_statuses = recommendation.get("source_statuses")
+    if isinstance(source_statuses, list):
+        values: list[str] = []
+        for item in source_statuses:
+            if not isinstance(item, dict):
+                continue
+            line = (
+                f"{item.get('source_id', '')}: "
+                f"{item.get('status', '')} {item.get('url', '')}"
+            ).strip()
+            if item.get("reason"):
+                line = f"{line} ({item.get('reason')})"
+            values.append(line)
+        _append_section(lines, "主なSource状態", values)
+
+
+def _cutoff_line(recommendation: dict[str, Any]) -> list[str]:
+    cutoff = recommendation.get("research_cutoff")
+    return [f"情報カットオフ: {cutoff}"] if cutoff else []
 
 
 def _as_text_list(value: Any) -> list[str]:

@@ -57,6 +57,24 @@ def test_data_unavailable_report_is_not_no_trade():
             "strategy_version": "v1",
             "config_sha256": "a" * 64,
             "decision": "DATA_UNAVAILABLE",
+            "research_cutoff": "2026-08-07T20:00:00+09:00",
+            "pipeline_summary": {
+                "discovered": 99,
+                "research_complete": 0,
+                "research_incomplete": 0,
+                "data_unavailable": 99,
+                "screened": 0,
+                "eligible": 0,
+                "rejected": 0,
+            },
+            "source_statuses": [
+                {
+                    "source_id": "JPX_TDNET",
+                    "status": "PARSE_FAILED",
+                    "url": "https://example.test/tdnet",
+                    "reason": "cutoff内TDnetを解析できなかった",
+                }
+            ],
             "selection_reasons": ["OHLCV secondary source missing"],
             "source_urls": [],
         },
@@ -65,3 +83,6 @@ def test_data_unavailable_report_is_not_no_trade():
 
     assert "判定:\nDATA_UNAVAILABLE" in report
     assert "取引判断まで到達していない" in report
+    assert "情報カットオフ: 2026-08-07T20:00:00+09:00" in report
+    assert "候補パイプライン概要" in report
+    assert "JPX_TDNET: PARSE_FAILED" in report

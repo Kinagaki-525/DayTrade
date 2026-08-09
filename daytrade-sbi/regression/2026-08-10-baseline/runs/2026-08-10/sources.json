@@ -4,6 +4,7 @@
   "sources": [],
   "source_attempts": [
     {
+      "attempt_id": "jpx-calendar-20260810-20260807t200000",
       "source_id": "JPX_CALENDAR",
       "source_role": "PRIMARY",
       "criticality": "TRADE_CRITICAL",
@@ -25,6 +26,7 @@
       "notes": []
     },
     {
+      "attempt_id": "yahoo-volume-20260810-20260807t200000",
       "source_id": "YAHOO_JP_VOLUME_RANKING",
       "source_role": "PRIMARY",
       "criticality": "DISCOVERY_CRITICAL",
@@ -599,6 +601,7 @@
       ]
     },
     {
+      "attempt_id": "yahoo-gain-20260810-20260807t200000",
       "source_id": "YAHOO_JP_GAIN_RANKING",
       "source_role": "PRIMARY",
       "criticality": "DISCOVERY_CRITICAL",
@@ -1173,6 +1176,7 @@
       ]
     },
     {
+      "attempt_id": "tdnet-20260807-parse-failed",
       "source_id": "JPX_TDNET",
       "source_role": "PRIMARY",
       "criticality": "DISCOVERY_CRITICAL",

@@ -216,7 +216,7 @@ def test_discovery_source_failure_is_not_complete():
     payload["overall_status"] = "DISCOVERY_INCOMPLETE"
     payload["discovery"][0]["status"] = "ACCESS_FAILED"
     payload["discovery"][0]["items"] = []
-    payload["discovery"][0]["result_count"] = 0
+    payload["discovery"][0]["result_count"] = None
     payload = complete_candidate_research(payload)
 
     result = validate_market_research(payload, load_source_matrix())
@@ -269,6 +269,17 @@ def test_market_research_rejects_missing_candidate_research():
 
     assert result.valid is False
     assert any(missing_ticker in error for error in result.errors)
+
+
+def test_market_research_allows_missing_candidate_research_when_incomplete():
+    payload = complete_candidate_research(market_research_payload())
+    missing_ticker = payload["candidate_research"].pop()["ticker"]
+    payload["overall_status"] = "DATA_UNAVAILABLE"
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is True
+    assert any(missing_ticker in warning for warning in result.warnings)
 
 
 def test_market_data_research_alignment_requires_matching_statuses():

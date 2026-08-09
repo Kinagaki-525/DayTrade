@@ -81,6 +81,8 @@ Pythonが市場データを検証
   ↓
 Pythonが固定条件でスクリーニング
   ↓
+Pythonが候補パイプラインと性能計測を保存
+  ↓
 CodexがELIGIBLE銘柄を比較
   ↓ TRADE 1銘柄、NO_TRADE、または DATA_UNAVAILABLE
 Python Risk Engineが注文案を再計算・検証
@@ -156,6 +158,8 @@ Pythonツールは外部Web接続なしで実行できます。直接実行す�
 ## 記録と集計
 
 - `runs/YYYY-MM-DD/`: Web調査、出典、候補、Codex評価、Risk Engine結果
+- `runs/YYYY-MM-DD/candidate_pipeline.json`: Discovery後の候補を消さずに候補単位の処理状態を保存
+- `runs/YYYY-MM-DD/performance.json`: Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に保存
 - `trades/recommendations.csv`: `NO_TRADE`、`DATA_UNAVAILABLE`、未約定を含む推奨履歴
 - `trades/trades.csv`: 実際に約定した取引だけ
 - `rules/versions/`: 過去の戦略設定

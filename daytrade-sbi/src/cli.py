@@ -13,9 +13,12 @@ from src.config import (
     snapshot_strategy_config,
     strategy_config_sha256,
 )
+from src.candidate_pipeline import build_candidate_pipeline
 from src.contracts import (
     load_json_document,
+    validate_candidate_pipeline_inputs,
     validate_json_document,
+    validate_performance_inputs,
     validate_recommendation_candidate_link,
     validate_recommendation_risk_link,
     validate_recommendation_sources,
@@ -31,6 +34,7 @@ from src.market import (
     validate_source_ledger,
 )
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
+from src.performance import build_performance_payload
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_sbi_report
 from src.research import (
@@ -105,6 +109,21 @@ def build_parser() -> argparse.ArgumentParser:
     screen_parser.add_argument("--market-research", type=Path)
     screen_parser.add_argument("--output", required=True, type=Path)
     screen_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+
+    pipeline_parser = subparsers.add_parser("build-candidate-pipeline")
+    pipeline_parser.add_argument("--market-research", required=True, type=Path)
+    pipeline_parser.add_argument("--market-data", required=True, type=Path)
+    pipeline_parser.add_argument("--candidates", required=True, type=Path)
+    pipeline_parser.add_argument("--sources", required=True, type=Path)
+    pipeline_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    pipeline_parser.add_argument("--output", required=True, type=Path)
+
+    performance_parser = subparsers.add_parser("build-performance")
+    performance_parser.add_argument("--market-research", required=True, type=Path)
+    performance_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    performance_parser.add_argument("--sources", required=True, type=Path)
+    performance_parser.add_argument("--output", required=True, type=Path)
+    performance_parser.add_argument("--timings", type=Path)
 
     risk_parser = subparsers.add_parser("risk-check")
     risk_parser.add_argument("--recommendation", required=True, type=Path)
@@ -194,6 +213,23 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             args.source_matrix,
             args.market_research,
+        )
+    if args.command == "build-candidate-pipeline":
+        return _build_candidate_pipeline(
+            args.market_research,
+            args.market_data,
+            args.candidates,
+            args.sources,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-performance":
+        return _build_performance(
+            args.market_research,
+            args.candidate_pipeline,
+            args.sources,
+            args.output,
+            args.timings,
         )
     if args.command == "risk-check":
         return _risk_check(
@@ -442,6 +478,74 @@ def _risk_check(
     return 0
 
 
+def _build_candidate_pipeline(
+    market_research_path: Path,
+    market_data_path: Path,
+    candidates_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    load_json_document(market_data_path, "market_data.schema.json")
+    market_target_date, records = load_market_data(market_data_path)
+    assert market_target_date is not None
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    sources = load_json_document(sources_path, "sources.schema.json")
+    config = load_strategy_config(config_path)
+    validate_candidate_pipeline_inputs(
+        market_research=market_research,
+        market_target_date=market_target_date,
+        candidates=candidates,
+        source_payload=sources,
+        config=config,
+    )
+    payload = build_candidate_pipeline(
+        market_research=market_research,
+        market_records=records,
+        candidates_payload=candidates,
+        source_payload=sources,
+        config=config,
+    )
+    _write_json(output_path, payload, "candidate_pipeline.schema.json")
+    return 0
+
+
+def _build_performance(
+    market_research_path: Path,
+    candidate_pipeline_path: Path,
+    sources_path: Path,
+    output_path: Path,
+    timings_path: Path | None,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path,
+        "candidate_pipeline.schema.json",
+    )
+    sources = load_json_document(sources_path, "sources.schema.json")
+    validate_performance_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=sources,
+    )
+    timings = _load_unvalidated_json_object(timings_path) if timings_path else None
+    payload = build_performance_payload(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=sources,
+        timings_payload=timings,
+    )
+    _write_json(output_path, payload, "performance.schema.json")
+    return 0
+
+
 def _resolve_research_window(
     target_date: str,
     previous_trading_day: str,
@@ -619,6 +723,14 @@ def _load_market_bundle(
         source_matrix,
     )
     return target_date, records, ledger_result, source_payload, source_matrix
+
+
+def _load_unvalidated_json_object(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as json_file:
+        payload = json.load(json_file)
+    if not isinstance(payload, dict):
+        raise ValueError(f"JSON file must contain an object: {path}")
+    return payload
 
 
 def _load_market_research_alignment(

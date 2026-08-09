@@ -29,6 +29,8 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/research_window.py` | TDnet調査期間を、初回補完期間または前回cutoffから決定 |
 | `src/research.py` | Discovery成果物の検証とDiscovery候補Union |
 | `src/market.py` | 市場データ、Source試行、OHLCV二重確認、後日監査 |
+| `src/candidate_pipeline.py` | Discovery後の候補を下流で消さず、候補単位のパイプライン状態と集計を生成 |
+| `src/performance.py` | Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に集計 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
 | `src/screening.py` | 資金条件を適用。未決定条件は未評価として残し、承認済み実装なしの値は拒否 |
 | `src/strategy.py` | 前日高値ブレイクの価格計算 |
@@ -39,7 +41,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/execution.py` | 完全決済済み実績と日次成果物の照合、CSV行生成、重複防止付き追記 |
 | `schemas/` | nightly実行で保存するJSONの構造契約 |
 
-`research_window.json`はPythonが確定したTDnet調査対象期間です。`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
+`research_window.json`はPythonが確定したTDnet調査対象期間です。`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。`candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
 
 日次ディレクトリには`strategy_snapshot.yaml`を保存します。候補・推奨・Risk Engine結果へ同じ`strategy_version`と設定内容のSHA-256を引き継ぎ、別設定で作られた成果物の混在を拒否します。
 

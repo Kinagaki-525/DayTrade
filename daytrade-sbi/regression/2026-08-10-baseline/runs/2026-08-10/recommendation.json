@@ -15,10 +15,30 @@
   "stop_loss": null,
   "shares": null,
   "selection_reasons": [
-    "JPX_TDNET Discovery was not fully extracted for the research_window, so timely-disclosure candidates and exclusions are incomplete.",
-    "Candidate-level trade-critical data (listed company details, Yahoo/Kabutan OHLCV, and JPX tick size) was not verified for the Discovery union.",
-    "No ELIGIBLE candidate was produced by screen-market; order values are not created for DATA_UNAVAILABLE."
+    "JPX_TDNETのDiscoveryがresearch_window全体で抽出完了しておらず、適時開示由来の候補と除外判断が不完全。",
+    "Discovery Unionの候補について、銘柄基本情報、Yahoo/株探OHLCV、JPX呼値などの取引重要データを検証できていない。",
+    "screen-marketでELIGIBLE候補が作成されておらず、DATA_UNAVAILABLEとして注文値は作成しない。"
+  ],
+  "research_cutoff": "2026-08-07T20:00:00+09:00",
+  "pipeline_summary": {
+    "discovered": 99,
+    "research_complete": 0,
+    "research_incomplete": 0,
+    "data_unavailable": 99,
+    "screened": 0,
+    "eligible": 0,
+    "rejected": 0
+  },
+  "source_statuses": [
+    {
+      "source_id": "JPX_TDNET",
+      "status": "PARSE_FAILED",
+      "url": "https://www.release.tdnet.info/inbs/I_list_001_20260807.html",
+      "candidate_code": null,
+      "information_type": "TIMELY_DISCLOSURE",
+      "reason": "research_window全体のTDnetページ巡回が完了していない。"
+    }
   ],
   "source_urls": [],
-  "notes": "See market_research.json, sources.json source_attempts, and research.md for the data gaps. No SBI order candidate is produced."
+  "notes": "データ欠落はmarket_research.json、sources.jsonのsource_attempts、research.mdを参照。SBI手入力用の注文候補は作成しない。"
 }

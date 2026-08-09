@@ -7,6 +7,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from src.config import strategy_config_sha256
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = PROJECT_ROOT / "schemas"
@@ -93,6 +95,71 @@ def validate_recommendation_sources(
             "recommendation source_urls are missing from sources.json: "
             + ", ".join(missing_urls)
         )
+    attempt_urls = {
+        attempt["url"]
+        for attempt in source_payload.get("source_attempts", [])
+        if attempt.get("url")
+    }
+    known_urls = ledger_urls | attempt_urls
+    missing_status_urls = [
+        status["url"]
+        for status in recommendation.get("source_statuses", [])
+        if status.get("url") not in known_urls
+    ]
+    if missing_status_urls:
+        raise ValueError(
+            "recommendation source_statuses are missing from sources.json/source_attempts: "
+            + ", ".join(missing_status_urls)
+        )
+
+
+def validate_candidate_pipeline_inputs(
+    *,
+    market_research: dict[str, Any],
+    market_target_date: str,
+    candidates: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    expected_target_date = market_research.get("target_date")
+    if market_target_date != expected_target_date:
+        raise ValueError("market_data target_date does not match market_research")
+    _require_equal(
+        market_research,
+        candidates,
+        "target_date",
+        "market_research/candidates",
+    )
+    _require_equal(
+        market_research,
+        source_payload,
+        "target_date",
+        "market_research/sources",
+    )
+    if candidates.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("candidates strategy_version does not match --config")
+    if candidates.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("candidates config_sha256 does not match --config")
+
+
+def validate_performance_inputs(
+    *,
+    market_research: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    source_payload: dict[str, Any],
+) -> None:
+    _require_equal(
+        market_research,
+        candidate_pipeline,
+        "target_date",
+        "market_research/candidate_pipeline",
+    )
+    _require_equal(
+        market_research,
+        source_payload,
+        "target_date",
+        "market_research/sources",
+    )
 
 
 def validate_recommendation_risk_link(

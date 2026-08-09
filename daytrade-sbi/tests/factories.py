@@ -130,7 +130,9 @@ def make_source_attempt(
     target_date: str = "2026-08-10",
     status: str = "FOUND",
 ) -> dict[str, object]:
+    attempt_id = f"{source_id.lower()}-{candidate_code or 'discovery'}-{status.lower()}"
     return {
+        "attempt_id": attempt_id,
         "source_id": source_id,
         "source_role": source_role,
         "criticality": criticality,
@@ -143,6 +145,6 @@ def make_source_attempt(
         "url": f"https://example.test/{source_id.lower()}",
         "status": status,
         "values": {},
-        "result_count": 1,
+        "result_count": 1 if status == "FOUND" else None,
         "notes": [],
     }

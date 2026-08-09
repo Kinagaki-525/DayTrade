@@ -29,6 +29,16 @@ def recommendation_payload(decision="TRADE"):
         "config_sha256": strategy_config_sha256(config),
         "decision": decision,
         "selection_reasons": ["confirmed comparison"],
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "pipeline_summary": {
+            "discovered": 1,
+            "research_complete": 1,
+            "research_incomplete": 0,
+            "data_unavailable": 0,
+            "screened": 1,
+            "eligible": 1 if decision == "TRADE" else 0,
+            "rejected": 0,
+        },
         "source_urls": ["https://example.test/source"],
         "notes": None,
     }
@@ -128,6 +138,65 @@ def test_sources_schema_accepts_empty_source_attempts():
         },
         "sources.schema.json",
     )
+
+
+def test_sources_schema_rejects_parse_failed_result_count_zero():
+    with pytest.raises(ValueError, match="result_count"):
+        validate_json_document(
+            {
+                "schema_version": 1,
+                "target_date": "2026-08-10",
+                "sources": [],
+                "source_attempts": [
+                    {
+                        "attempt_id": "tdnet-parse-failed",
+                        "source_id": "JPX_TDNET",
+                        "source_role": "PRIMARY",
+                        "criticality": "DISCOVERY_CRITICAL",
+                        "information_type": "TIMELY_DISCLOSURE",
+                        "candidate_code": None,
+                        "target_date": "2026-08-10",
+                        "research_cutoff": "2026-08-07T20:00:00+09:00",
+                        "requested_at": "2026-08-07T20:01:00+09:00",
+                        "retrieved_at": "2026-08-07T20:02:00+09:00",
+                        "url": "https://example.test/tdnet",
+                        "status": "PARSE_FAILED",
+                        "values": None,
+                        "result_count": 0,
+                    }
+                ],
+            },
+            "sources.schema.json",
+        )
+
+
+def test_sources_schema_requires_attempt_id():
+    with pytest.raises(ValueError, match="attempt_id"):
+        validate_json_document(
+            {
+                "schema_version": 1,
+                "target_date": "2026-08-10",
+                "sources": [],
+                "source_attempts": [
+                    {
+                        "source_id": "JPX_TDNET",
+                        "source_role": "PRIMARY",
+                        "criticality": "DISCOVERY_CRITICAL",
+                        "information_type": "TIMELY_DISCLOSURE",
+                        "candidate_code": None,
+                        "target_date": "2026-08-10",
+                        "research_cutoff": "2026-08-07T20:00:00+09:00",
+                        "requested_at": "2026-08-07T20:01:00+09:00",
+                        "retrieved_at": "2026-08-07T20:02:00+09:00",
+                        "url": "https://example.test/tdnet",
+                        "status": "PARSE_FAILED",
+                        "values": None,
+                        "result_count": None,
+                    }
+                ],
+            },
+            "sources.schema.json",
+        )
 
 
 def test_recommendation_file_keeps_json_integers_schema_compatible():

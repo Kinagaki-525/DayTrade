@@ -1143,7 +1143,7 @@
       "status": "PARSE_FAILED",
       "source_url": "https://www.release.tdnet.info/inbs/I_list_001_20260807.html",
       "retrieved_at": "2026-08-09T18:32:58+09:00",
-      "result_count": 0,
+      "result_count": null,
       "items": [],
       "reason": "TDnet 2026-08-07 page 1 was saved and showed additional pages; the full research_window extraction was not completed, so no TDnet discovery candidates were admitted."
     }

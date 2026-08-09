@@ -4,6 +4,8 @@ risk_status: NOT_APPLICABLE
 discovery_candidates: 99
 candidate_research_count: 99
 market_data_count: 0
+pipeline_candidates: 99
+source_request_count: 4
 eligible_candidates: 0
-pytest_result: "108 passed"
+pytest_result: "128 passed"
 execution_time: unknown

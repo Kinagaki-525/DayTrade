@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-10",
+  "generated_at": "2026-08-09T12:05:33.287629+00:00",
+  "counts": {
+    "source_request_count": 4,
+    "adopted_source_count": 0,
+    "duplicate_source_request_count": 0,
+    "discovery_candidate_count": 99,
+    "stage1_candidate_count": 0,
+    "stage1_rejected_count": 0,
+    "stage2_candidate_count": 0,
+    "context_research_candidate_count": 0,
+    "candidate_status_counts": {
+      "DATA_UNAVAILABLE": 99
+    }
+  },
+  "timings": {
+    "total": null,
+    "calendar_check": null,
+    "discovery": null,
+    "candidate_stage1": null,
+    "candidate_stage2": null,
+    "source_audit": null,
+    "market_validation": null,
+    "screening": null,
+    "ranking": null
+  }
+}

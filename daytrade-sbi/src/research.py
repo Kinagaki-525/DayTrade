@@ -140,10 +140,14 @@ def validate_market_research(
             + ", ".join(unexpected_research)
         )
     if missing_research:
-        errors.append(
+        message = (
             "candidate_research is missing Discovery candidate ticker(s): "
             + ", ".join(missing_research)
         )
+        if payload["overall_status"] == "COMPLETE":
+            errors.append(message)
+        else:
+            warnings.append(message)
 
     for research in payload["candidate_research"]:
         source_policy_status = research.get("source_policy_status")

@@ -33,6 +33,8 @@ runs/YYYY-MM-DD/
   market_data.json
   market_validation.json
   candidates.json
+  candidate_pipeline.json
+  performance.json
   research.md
   recommendation.json
   recommendation.md
@@ -65,13 +67,22 @@ py -B -m src.cli resolve-research-window --target-date <対象日YYYY-MM-DD> --p
 py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --research-window runs/YYYY-MM-DD/research_window.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
 ```
 
+Candidate Researchが未完了の時点では`overall_status=COMPLETE`にしない。Discovery候補に対応する`candidate_research`が未作成の銘柄は、非完了ステータスでは警告として扱い、後続の`candidate_pipeline.json`で`DISCOVERED`または`RESEARCH_IN_PROGRESS`として追跡する。
+
 ### 2. Candidate Research
 
-- Discovery Candidatesについてのみ、銘柄基本情報、前営業日OHLCV、呼値、決算予定、適時開示、関連ニュースをSource Matrix順に確認する。
+- Discovery Candidatesについてのみ調査する。Discovery Unionに入った候補は、下流成果物から黙って削除せず、`candidate_pipeline.json`で状態を追跡できるようにする。
+- Candidate Researchはステージ化する。Stage 1では既存条件だけで安全に判定できる軽量確認を行い、確実に既存条件違反と確認できた候補だけをEarly Rejectする。未確認値から`REJECTED`を推測しない。
+- Stage 1を通過した候補だけStage 2の詳細調査へ進める。Stage 2では、銘柄基本情報、前営業日OHLCV、呼値、決算予定、適時開示、関連ニュースをSource Matrix順に確認する。
+- 高コスト調査ではTRADE_CRITICAL情報をContextより先に確認する。TRADE_CRITICAL不足で取引判断不能が確定した候補について、不要なニュース等Context取得は行わない。
+- 同一実行内で同じ `url + target_date + research_cutoff` のSource取得が再利用可能な場合は使い回す。Webページ仕様上共有できないものを共有可能と仮定しない。
 - OHLCVはYahoo!ファイナンスをPrimary、株探をSecondaryとし、同一対象日のOpen/High/Low/Close/Volumeが一致した場合だけ`VERIFIED`とする。
 - Secondary取得不能は`SINGLE_SOURCE_ONLY`、値不一致は`CONFLICT`、対象日違いは`STALE`として保存し、未確認値を補完しない。
-- Source試行は成功・失敗とも`sources.json`の`source_attempts`へ保存し、成功値は`sources`へ保存する。
+- Source試行は成功・失敗とも`sources.json`の`source_attempts`へ保存し、成功値は`sources`へ保存する。新規runでは`source_attempts[].attempt_id`を付与する。
+- `result_count=0`は、正常に検索・取得できた結果が0件だった場合だけ使用する。`PARSE_FAILED`、`ACCESS_FAILED`、`NOT_YET_AVAILABLE`、`STALE`等では`result_count=null`にする。
+- 保存HTMLがある場合、`source_pages`はEvidenceとして扱い、`source_attempts[].source_page_path`から追跡できるようにする。
 - `sources.json`を出典台帳、`market_data.json`を構造化された確認データとして作成する。
+- TRADE_CRITICALフィールドについては、可能な範囲で`market_data.records[].field_provenance`に値・Source・検証状態を保存する。OHLCV不一致時は`CONFLICT`とし、`verified_value`を作らない。
 
 ### 3. 事実と評価の分離
 
@@ -98,10 +109,13 @@ py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/mark
 ```powershell
 py -B -m src.cli validate-market --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_validation.json
 py -B -m src.cli screen-market --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/candidates.json
+py -B -m src.cli build-candidate-pipeline --market-research runs/YYYY-MM-DD/market_research.json --market-data runs/YYYY-MM-DD/market_data.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/candidate_pipeline.json
+py -B -m src.cli build-performance --market-research runs/YYYY-MM-DD/market_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --sources runs/YYYY-MM-DD/sources.json --output runs/YYYY-MM-DD/performance.json
 ```
 
 `REJECTED`の銘柄を候補に戻さない。`ELIGIBLE`は固定条件を通過した意味だけであり、利益見込みを意味しない。
 `DATA_UNAVAILABLE`は市場データ不足により取引判断へ到達していない状態であり、通常の`NO_TRADE`とは区別する。
+Discovery候補0件、Discovery候補あり・Research未完了、Research/Screening完了後にELIGIBLE 0件は、`candidate_pipeline.json`の`summary`と候補単位の`pipeline_status`で区別する。
 
 ### 5. Codexによる候補比較
 
@@ -110,6 +124,7 @@ py -B -m src.cli screen-market --market-data runs/YYYY-MM-DD/market_data.json --
 - 1銘柄を`TRADE`候補にするか、適切な候補がなければ`NO_TRADE`、必要データが揃わなければ`DATA_UNAVAILABLE`とする。
 - 未決定の固定閾値を新設しない。
 - `recommendation.json`へ判断、理由、参照URLを保存する。`TRADE`の参照URLは1件以上とし、すべて`sources.json`にも記録する。
+- `recommendation.json`には`research_cutoff`、`pipeline_summary`、必要に応じて`source_statuses`を保存する。`source_urls`は採用済みSource URL、`source_statuses`は失敗・未取得Sourceも含む状態表示として分離する。
 - `strategy_version`と`config_sha256`は`candidates.json`からそのまま転記し、生成・推測しない。
 
 ### 6. Risk Engineとレポート
@@ -136,6 +151,7 @@ py -B -m src.cli record-recommendation --recommendation runs/YYYY-MM-DD/recommen
 - `NO_TRADE`の場合は注文値を作らず、理由を記録する。
 - `DATA_UNAVAILABLE`の場合は注文値を作らず、調査不能理由を記録する。
 - `order_submitted`、`entry_triggered`、`entry_filled`は人間が確認するまで空欄にする。
+- 月曜向けプランでは、現時点の標準v1として金曜夜の`research_cutoff`で作成したプランを使用する。土日・cutoff後情報を再調査していない場合、「情報なし」や「0件確認済み」と書かず、「cutoff後のため調査対象外」と明記する。
 
 ## 最終報告
 

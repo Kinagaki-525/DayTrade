@@ -27,13 +27,14 @@ py -B -m pytest
 8. 固定Discovery経路だけで`market_research.json`を作成
 9. Discovery CandidatesだけをSource Matrix順に調査し、`sources.json`と`market_data.json`を保存
 10. Pythonで市場データと出典台帳を検証し、`candidates.json`を生成
-11. 確認済み情報だけで候補を比較
-12. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
-13. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-14. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
-15. `recommendation.md`を生成
-16. `trades/recommendations.csv`へ推奨履歴を追加
-17. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+11. Pythonで`candidate_pipeline.json`と`performance.json`を生成
+12. 確認済み情報だけで候補を比較
+13. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
+14. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+15. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+16. `recommendation.md`を生成
+17. `trades/recommendations.csv`へ推奨履歴を追加
+18. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 

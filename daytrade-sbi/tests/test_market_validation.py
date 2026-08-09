@@ -153,6 +153,55 @@ def test_source_ledger_rejects_attempt_fields_that_do_not_match_source_matrix():
     assert any("information_type does not match" in error for error in result.errors)
 
 
+def test_source_ledger_rejects_non_found_attempt_result_count_zero():
+    record = make_market_record()
+    attempt = make_source_attempt(
+        source_id="YAHOO_JP_HISTORY",
+        source_role="PRIMARY",
+        criticality="TRADE_CRITICAL",
+        information_type="OHLCV",
+        status="PARSE_FAILED",
+    )
+    attempt["result_count"] = 0
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [record],
+        {
+            "target_date": "2026-08-10",
+            "sources": [source.as_dict() for source in record.sources],
+            "source_attempts": [attempt],
+        },
+    )
+
+    assert result.valid is False
+    assert any("result_count must be null" in error for error in result.errors)
+
+
+def test_source_ledger_requires_attempt_id():
+    record = make_market_record()
+    attempt = make_source_attempt(
+        source_id="YAHOO_JP_HISTORY",
+        source_role="PRIMARY",
+        criticality="TRADE_CRITICAL",
+        information_type="OHLCV",
+    )
+    del attempt["attempt_id"]
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [record],
+        {
+            "target_date": "2026-08-10",
+            "sources": [source.as_dict() for source in record.sources],
+            "source_attempts": [attempt],
+        },
+    )
+
+    assert result.valid is False
+    assert any("attempt_id is required" in error for error in result.errors)
+
+
 def test_source_ledger_treats_numeric_string_and_number_as_same_value():
     record = make_market_record()
     ledger_sources = [source.as_dict() for source in record.sources]
@@ -179,6 +228,105 @@ def test_market_date_requires_extended_iso_format():
 
     assert result.valid_for_trade is False
     assert "trading_date must use YYYY-MM-DD" in result.errors
+
+
+def test_field_provenance_accepts_verified_ohlcv_primary_and_secondary():
+    record = make_market_record()
+    primary = next(
+        source
+        for source in record.sources
+        if source.field_name == "open" and source.source_role == "PRIMARY"
+    )
+    secondary = next(
+        source
+        for source in record.sources
+        if source.field_name == "open" and source.source_role == "SECONDARY"
+    )
+
+    result = validate_market_data(
+        replace(
+            record,
+            field_provenance=(
+                {
+                    "field_name": "open",
+                    "status": "VERIFIED",
+                    "verified_value": "390",
+                    "primary_source_ref": primary.source_ref,
+                    "secondary_source_ref": secondary.source_ref,
+                    "source_refs": [primary.source_ref, secondary.source_ref],
+                    "verified_at": "2026-08-09T20:01:00+09:00",
+                },
+            ),
+        )
+    )
+
+    assert result.valid_for_trade is True
+
+
+def test_field_provenance_compares_ohlcv_sources_as_numbers():
+    record = make_market_record()
+    primary = next(
+        source
+        for source in record.sources
+        if source.field_name == "open" and source.source_role == "PRIMARY"
+    )
+    secondary = next(
+        source
+        for source in record.sources
+        if source.field_name == "open" and source.source_role == "SECONDARY"
+    )
+    numeric_primary = replace(primary, value=390)
+    mixed_sources = tuple(
+        numeric_primary if source.source_ref == primary.source_ref else source
+        for source in record.sources
+    )
+
+    result = validate_market_data(
+        replace(
+            record,
+            sources=mixed_sources,
+            field_provenance=(
+                {
+                    "field_name": "open",
+                    "status": "VERIFIED",
+                    "verified_value": "390",
+                    "primary_source_ref": primary.source_ref,
+                    "secondary_source_ref": secondary.source_ref,
+                    "source_refs": [primary.source_ref, secondary.source_ref],
+                    "verified_at": "2026-08-09T20:01:00+09:00",
+                },
+            ),
+        )
+    )
+
+    assert result.valid_for_trade is True
+
+
+def test_field_provenance_rejects_conflict_with_verified_value():
+    record = make_market_record()
+
+    result = validate_market_data(
+        replace(
+            record,
+            field_provenance=(
+                {
+                    "field_name": "open",
+                    "status": "CONFLICT",
+                    "verified_value": "390",
+                    "primary_source_ref": None,
+                    "secondary_source_ref": None,
+                    "source_refs": [],
+                    "verified_at": None,
+                },
+            ),
+        )
+    )
+
+    assert result.valid_for_trade is False
+    assert any(
+        "verified_value must be null when CONFLICT" in error
+        for error in result.errors
+    )
 
 
 def test_official_ohlcv_audit_treats_missing_jpx_report_as_not_yet_available():
