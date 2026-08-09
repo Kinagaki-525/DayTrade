@@ -1,0 +1,9 @@
+target_date: 2026-08-10
+decision: DATA_UNAVAILABLE
+risk_status: NOT_APPLICABLE
+discovery_candidates: 99
+candidate_research_count: 99
+market_data_count: 0
+eligible_candidates: 0
+pytest_result: "108 passed"
+execution_time: unknown
