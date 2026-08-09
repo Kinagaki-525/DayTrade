@@ -7,7 +7,7 @@
 | データ | 保存先 | 内容 |
 | --- | --- | --- |
 | 市場調査 | `runs/YYYY-MM-DD/` | 出典、確認データ、Codex評価、注文案、Risk Engine結果 |
-| 推奨履歴 | `trades/recommendations.csv` | `TRADE`、`NO_TRADE`、`REJECTED`とその後の提出・発動・約定状況 |
+| 推奨履歴 | `trades/recommendations.csv` | `TRADE`、`NO_TRADE`、`DATA_UNAVAILABLE`、`REJECTED`とその後の提出・発動・約定状況 |
 | 実取引 | `trades/trades.csv` | 実際に約定した取引だけ |
 | 実績入力 | `runs/YYYY-MM-DD/execution_result.json` | 人間が確認した完全決済済み取引をCSV追記前に検証する入力 |
 
@@ -24,7 +24,7 @@
 
 ## trades.csv
 
-`trades/trades.csv`には実際に約定した取引だけを記録します。注文候補、未約定、NO_TRADE、仮想取引は記録しません。
+`trades/trades.csv`には実際に約定した取引だけを記録します。注文候補、未約定、NO_TRADE、DATA_UNAVAILABLE、REJECTED、仮想取引は記録しません。
 
 | カラム | 内容 |
 | --- | --- |
@@ -74,9 +74,9 @@ py -B -m src.cli calculate-metrics
 | `target_date` | 推奨対象の翌営業日 |
 | `strategy_version` | 推奨生成時に使用した戦略バージョン |
 | `config_sha256` | 推奨生成時に使用した設定内容のSHA-256 |
-| `ticker` | `TRADE`候補の銘柄コード。`NO_TRADE`では空欄可 |
-| `decision` | `TRADE`または`NO_TRADE`。Risk Engine拒否は`risk_result`へ記録 |
-| `strategy_type` | 使用した戦略。`NO_TRADE`では空欄可 |
+| `ticker` | `TRADE`候補の銘柄コード。`NO_TRADE`または`DATA_UNAVAILABLE`では空欄可 |
+| `decision` | `TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`。Risk Engine拒否は`risk_result`へ記録 |
+| `strategy_type` | 使用した戦略。`NO_TRADE`または`DATA_UNAVAILABLE`では空欄可 |
 | `entry_trigger` | 提案した買い発動価格 |
 | `entry_limit` | 提案した買い指値上限 |
 | `take_profit` | 提案した利確価格 |

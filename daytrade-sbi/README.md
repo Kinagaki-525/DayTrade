@@ -10,7 +10,7 @@ OpenAI APIなどの外部LLM APIは使用しません。SBI証券へのログイ
 
 | 担当 | 責任 |
 | --- | --- |
-| Codex | Web市場調査、出典保存、候補比較、`TRADE`または`NO_TRADE`案の作成 |
+| Codex | Web市場調査、出典保存、候補比較、`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`案の作成 |
 | Python | 市場データ検証、固定条件スクリーニング、価格計算、Risk Engine、集計 |
 | 人間 | 出典と注文案の最終確認、SBI株アプリへの手入力、実取引結果の記録 |
 
@@ -18,12 +18,12 @@ Codexが作成するものは注文候補です。注文判断・注文操作・
 
 ## Codex Skillとサブエージェント
 
-日次運用はリポジトリ直下の2つのCodex Skillから明示的に開始します。
+日次運用はリポジトリ直下の2つのCodex Skillから明示的に開始します。市場調査Sourceは[config/source_matrix.yaml](config/source_matrix.yaml)で固定し、実行ごとに任意のサイトへ代替しません。
 
 - `$prepare-daytrade-plan`: 翌営業日の調査、候補比較、Risk Engine、手入力候補までをメインエージェントが統括
 - `$record-daytrade-result`: 人間が確認した完全決済済み取引を検証し、確認後に記録・集計
 
-`prepare`では、Web調査用の`market_researcher`と出典監査用の`source_auditor`だけを読み取り専用サブエージェントとして使用できます。日次成果物の書き込みと`TRADE`または`NO_TRADE`の判断はメインエージェントが行います。`record`はサブエージェントを使いません。
+`prepare`では、Web調査用の`market_researcher`と出典監査用の`source_auditor`だけを読み取り専用サブエージェントとして使用できます。日次成果物の書き込みと`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`の判断はメインエージェントが行います。`record`はサブエージェントを使いません。
 
 ## 固定条件
 
@@ -39,7 +39,7 @@ Codexが作成するものは注文候補です。注文判断・注文操作・
 - 空売り禁止
 - 信用取引禁止
 - 損切り発動基準の想定損失上限: 500円
-- 条件に適合しなければ`NO_TRADE`
+- 条件に適合しなければ`NO_TRADE`、必要データが揃わなければ`DATA_UNAVAILABLE`
 
 逆指値発動後の成行等では、スリッページにより実際の損失が500円を超える可能性があります。500円は実損失の保証ではありません。
 
@@ -67,18 +67,22 @@ Codexが作成するものは注文候補です。注文判断・注文操作・
 ```text
 $prepare-daytrade-planを明示実行
   ↓
-メインCodexが読み取り専用サブエージェントへWeb調査を委譲
-  ↓ 出典付きでruns/YYYY-MM-DDへ保存
 実行時のstrategy.yamlをスナップショット保存
   ↓
+Source Matrixを検証
+  ↓
+メインCodexが読み取り専用サブエージェントへWeb調査を委譲
+  ↓ 固定Discovery経路をmarket_research.jsonへ保存
+Source Matrix順にCandidate Research
+  ↓ 出典付きでruns/YYYY-MM-DDへ保存
 Pythonが市場データを検証
   ↓
 Pythonが固定条件でスクリーニング
   ↓
 CodexがELIGIBLE銘柄を比較
-  ↓ TRADE 1銘柄 または NO_TRADE
+  ↓ TRADE 1銘柄、NO_TRADE、または DATA_UNAVAILABLE
 Python Risk Engineが注文案を再計算・検証
-  ↓ PASS または REJECTED
+  ↓ PASS、REJECTED、または NOT_APPLICABLE
 MarkdownのSBI手入力候補を生成
   ↓
 人間が最終確認し、採用する場合だけ手入力
@@ -88,7 +92,7 @@ $record-daytrade-resultを明示実行
 Pythonが検証・記録・集計
 ```
 
-Risk EngineはAI案を修正しません。違反があれば`REJECTED`にします。`NO_TRADE`と`REJECTED`を都合よく`TRADE`へ変更しません。
+Risk EngineはAI案を修正しません。違反があれば`REJECTED`にします。`NO_TRADE`、`DATA_UNAVAILABLE`、`REJECTED`を都合よく`TRADE`へ変更しません。
 
 ## ディレクトリ構成
 
@@ -150,7 +154,7 @@ Pythonツールは外部Web接続なしで実行できます。直接実行す�
 ## 記録と集計
 
 - `runs/YYYY-MM-DD/`: Web調査、出典、候補、Codex評価、Risk Engine結果
-- `trades/recommendations.csv`: `NO_TRADE`や未約定を含む推奨履歴
+- `trades/recommendations.csv`: `NO_TRADE`、`DATA_UNAVAILABLE`、未約定を含む推奨履歴
 - `trades/trades.csv`: 実際に約定した取引だけ
 - `rules/versions/`: 過去の戦略設定
 

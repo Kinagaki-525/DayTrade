@@ -30,14 +30,17 @@ class ScreeningResult:
 def screen_market_record(
     record: MarketDataRecord,
     config: dict[str, Any],
+    source_matrix: dict[str, Any] | None = None,
 ) -> ScreeningResult:
-    validation = validate_market_data(record)
+    validation = validate_market_data(record, source_matrix)
     screening = config["screening"]
     unresolved = tuple(key for key in SCREENING_KEYS if screening[key] is None)
     if not validation.valid_for_trade:
         return ScreeningResult(
             ticker=record.ticker,
-            status="REJECTED",
+            status="DATA_UNAVAILABLE"
+            if _is_data_unavailable(validation.errors)
+            else "REJECTED",
             reasons=validation.errors,
             unresolved_screening=unresolved,
             order_plan=None,
@@ -73,3 +76,23 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
     return value
+
+
+def _is_data_unavailable(errors: tuple[str, ...]) -> bool:
+    data_error_prefixes = (
+        "Missing required market data:",
+        "Market data status is not verified:",
+        "Source policy is undefined",
+        "Conflicting source values for market data field:",
+        "No source value matches market data field:",
+        "Missing source for market data field:",
+        "SINGLE_SOURCE_ONLY for OHLCV field:",
+        "Missing primary OHLCV source",
+        "Missing secondary OHLCV source",
+        "Missing JPX primary source for tick_size",
+    )
+    return any(
+        error.startswith(data_error_prefixes)
+        or "source is missing from sources.json" in error
+        for error in errors
+    )

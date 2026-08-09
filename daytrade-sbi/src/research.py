@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from src.contracts import validate_json_document
+from src.source_matrix import DISCOVERY_SOURCE_IDS, DISCOVERY_TYPES, source_by_id
+
+
+DISCOVERY_ORDER = ("VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE")
+
+
+@dataclass(frozen=True)
+class MarketResearchValidationResult:
+    valid: bool
+    discovery_complete: bool
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "discovery_complete": self.discovery_complete,
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class MarketDataResearchAlignmentResult:
+    valid: bool
+    global_errors: tuple[str, ...]
+    errors_by_ticker: dict[str, tuple[str, ...]]
+
+
+def validate_market_research(
+    payload: dict[str, Any],
+    source_matrix: dict[str, Any],
+) -> MarketResearchValidationResult:
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        validate_json_document(payload, "market_research.schema.json")
+    except ValueError as exc:
+        errors.append(str(exc))
+        return MarketResearchValidationResult(False, False, tuple(errors), tuple(warnings))
+
+    source_definitions = source_by_id(source_matrix)
+    target_date = _date(payload["target_date"])
+    previous_trading_day = _date(payload["previous_trading_day"])
+    if previous_trading_day >= target_date:
+        errors.append("previous_trading_day must be before target_date")
+    if _date_time(payload["research_cutoff"]).date() != previous_trading_day.date():
+        errors.append("research_cutoff must be on previous_trading_day")
+
+    routes = payload["discovery"]
+    route_types = [route["discovery_type"] for route in routes]
+    if sorted(route_types) != sorted(DISCOVERY_TYPES):
+        errors.append("discovery must contain exactly the three standard discovery routes")
+
+    discovery_complete = True
+    for route in routes:
+        discovery_type = route["discovery_type"]
+        expected_source_id = DISCOVERY_SOURCE_IDS[discovery_type]
+        source_id = route["source_id"]
+        if source_id != expected_source_id:
+            errors.append(f"{discovery_type} must use source_id {expected_source_id}")
+        if source_id not in source_definitions:
+            errors.append(f"market_research references undefined source_id: {source_id}")
+        if route["status"] != "FOUND":
+            discovery_complete = False
+        if route["status"] == "FOUND" and route["result_count"] != len(route["items"]):
+            errors.append(f"{discovery_type} result_count must equal items length")
+        if (
+            discovery_type in {"VOLUME_RANKING", "PRICE_GAIN_RANKING"}
+            and route["status"] == "FOUND"
+            and route["result_count"] != 50
+        ):
+            errors.append(f"{discovery_type} must record TOP50 when FOUND")
+        if discovery_type == "TIMELY_DISCLOSURE" and route["status"] == "FOUND":
+            # result_count = 0 is a confirmed no-disclosure result, not a source failure.
+            continue
+
+    if not discovery_complete and payload["overall_status"] == "COMPLETE":
+        errors.append("overall_status cannot be COMPLETE when Discovery is incomplete")
+    if not discovery_complete and payload["overall_status"] != "DISCOVERY_INCOMPLETE":
+        warnings.append("Discovery source failure should normally set overall_status to DISCOVERY_INCOMPLETE")
+
+    expected_candidates = _normalized_discovery_candidates(
+        merge_discovery_candidates(routes)
+    )
+    actual_candidates = _normalized_discovery_candidates(payload["discovery_candidates"])
+    if actual_candidates != expected_candidates:
+        expected_tickers = {candidate["ticker"] for candidate in expected_candidates}
+        actual_tickers = {candidate["ticker"] for candidate in actual_candidates}
+        missing_tickers = sorted(expected_tickers - actual_tickers)
+        extra_tickers = sorted(actual_tickers - expected_tickers)
+        if missing_tickers:
+            errors.append(
+                "discovery_candidates is missing ticker(s) from Discovery union: "
+                + ", ".join(missing_tickers)
+            )
+        if extra_tickers:
+            errors.append(
+                "discovery_candidates contains ticker(s) outside Discovery union: "
+                + ", ".join(extra_tickers)
+            )
+        if not missing_tickers and not extra_tickers:
+            errors.append("discovery_candidates must exactly match Discovery union")
+
+    for candidate in payload["discovery_candidates"]:
+        reason_types = {
+            reason["discovery_type"] for reason in candidate["discovery_reasons"]
+        }
+        if set(candidate["discovered_by"]) != reason_types:
+            errors.append(f"discovered_by does not match discovery_reasons for {candidate['ticker']}")
+
+    expected_research_tickers = {candidate["ticker"] for candidate in expected_candidates}
+    research_tickers = [research["ticker"] for research in payload["candidate_research"]]
+    duplicate_research_count = len(research_tickers) - len(set(research_tickers))
+    if duplicate_research_count:
+        errors.append(
+            f"candidate_research contains {duplicate_research_count} duplicate ticker(s)"
+        )
+    researched_tickers = set(research_tickers)
+    unexpected_research = sorted(researched_tickers - expected_research_tickers)
+    missing_research = sorted(expected_research_tickers - researched_tickers)
+    if unexpected_research:
+        errors.append(
+            "candidate_research contains ticker(s) outside Discovery candidates: "
+            + ", ".join(unexpected_research)
+        )
+    if missing_research:
+        errors.append(
+            "candidate_research is missing Discovery candidate ticker(s): "
+            + ", ".join(missing_research)
+        )
+
+    for research in payload["candidate_research"]:
+        source_policy_status = research.get("source_policy_status")
+        if (
+            source_policy_status == "SOURCE_POLICY_UNDEFINED"
+            and research["data_status"] != "SOURCE_POLICY_UNDEFINED"
+        ):
+            errors.append(
+                f"{research['ticker']} has SOURCE_POLICY_UNDEFINED without matching data_status"
+            )
+
+    return MarketResearchValidationResult(
+        not errors,
+        discovery_complete,
+        tuple(errors),
+        tuple(warnings),
+    )
+
+
+def validate_market_records_against_research(
+    records: list[Any],
+    market_research: dict[str, Any],
+) -> MarketDataResearchAlignmentResult:
+    global_errors: list[str] = []
+    errors_by_ticker: dict[str, list[str]] = {}
+    research_by_ticker: dict[str, dict[str, Any]] = {}
+    for research in market_research["candidate_research"]:
+        ticker = str(research["ticker"]).strip()
+        if ticker in research_by_ticker:
+            global_errors.append(f"candidate_research contains duplicate ticker: {ticker}")
+        research_by_ticker[ticker] = research
+
+    for record in records:
+        ticker = _text(getattr(record, "ticker", None))
+        key = ticker or "<missing>"
+        record_errors = errors_by_ticker.setdefault(key, [])
+        if ticker is None:
+            record_errors.append("market_data record ticker is required for research alignment")
+            continue
+        research = research_by_ticker.get(ticker)
+        if research is None:
+            record_errors.append(
+                f"market_data ticker is missing from candidate_research: {ticker}"
+            )
+            continue
+        record_data_status = _text(getattr(record, "data_status", None))
+        if record_data_status != research["data_status"]:
+            record_errors.append(
+                f"market_data data_status does not match candidate_research for {ticker}"
+            )
+        research_source_policy = research.get("source_policy_status")
+        record_source_policy = _text(getattr(record, "source_policy_status", None))
+        if (
+            research_source_policy is not None
+            and record_source_policy != research_source_policy
+        ):
+            record_errors.append(
+                "market_data source_policy_status does not match "
+                f"candidate_research for {ticker}"
+            )
+
+    frozen_errors = {
+        ticker: tuple(errors)
+        for ticker, errors in errors_by_ticker.items()
+        if errors
+    }
+    return MarketDataResearchAlignmentResult(
+        not global_errors and not frozen_errors,
+        tuple(global_errors),
+        frozen_errors,
+    )
+
+
+def merge_discovery_candidates(discovery_routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for route in discovery_routes:
+        discovery_type = route["discovery_type"]
+        if route.get("status") != "FOUND":
+            continue
+        for item in route.get("items", []):
+            ticker = str(item["ticker"]).strip()
+            if ticker not in merged:
+                merged[ticker] = {
+                    "ticker": ticker,
+                    "company_name": item["company_name"],
+                    "market": item.get("market"),
+                    "discovered_by": [],
+                    "discovery_reasons": [],
+                }
+            candidate = merged[ticker]
+            if not candidate.get("market") and item.get("market"):
+                candidate["market"] = item["market"]
+            if discovery_type not in candidate["discovered_by"]:
+                candidate["discovered_by"].append(discovery_type)
+            candidate["discovery_reasons"].append(
+                {
+                    "discovery_type": discovery_type,
+                    "source_id": route["source_id"],
+                    "source_url": item["source_url"],
+                    "rank": item.get("rank"),
+                    "display_value": item.get("display_value"),
+                    "title": item.get("title"),
+                }
+            )
+
+    order = {name: index for index, name in enumerate(DISCOVERY_ORDER)}
+    for candidate in merged.values():
+        candidate["discovered_by"].sort(key=lambda value: order[value])
+        candidate["discovery_reasons"].sort(
+            key=lambda reason: (order[reason["discovery_type"]], reason.get("rank") or 0)
+        )
+    return [merged[ticker] for ticker in sorted(merged)]
+
+
+def _normalized_discovery_candidates(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return sorted(
+        (_normalized_discovery_candidate(candidate) for candidate in candidates),
+        key=lambda candidate: candidate["ticker"],
+    )
+
+
+def _normalized_discovery_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    order = {name: index for index, name in enumerate(DISCOVERY_ORDER)}
+    reasons = [
+        {
+            "discovery_type": reason["discovery_type"],
+            "source_id": reason["source_id"],
+            "source_url": reason["source_url"],
+            "rank": reason.get("rank"),
+            "display_value": reason.get("display_value"),
+            "title": reason.get("title"),
+        }
+        for reason in candidate["discovery_reasons"]
+    ]
+    reasons.sort(
+        key=lambda reason: (
+            order[reason["discovery_type"]],
+            reason.get("rank") or 0,
+            _stable_json(reason.get("display_value")),
+            reason.get("source_url") or "",
+            reason.get("title") or "",
+        )
+    )
+    return {
+        "ticker": str(candidate["ticker"]).strip(),
+        "company_name": candidate["company_name"],
+        "market": candidate.get("market"),
+        "discovered_by": sorted(
+            candidate["discovered_by"],
+            key=lambda value: order[value],
+        ),
+        "discovery_reasons": reasons,
+    }
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _date(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _date_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

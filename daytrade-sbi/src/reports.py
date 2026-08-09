@@ -11,8 +11,8 @@ def render_sbi_report(
     reasons = _as_text_list(recommendation.get("selection_reasons"))
     source_urls = _as_text_list(recommendation.get("source_urls"))
 
-    if decision == "NO_TRADE":
-        return _render_no_trade(recommendation, reasons, source_urls)
+    if decision in {"NO_TRADE", "DATA_UNAVAILABLE"}:
+        return _render_non_trade(recommendation, reasons, source_urls, decision)
 
     report_decision = "TRADE" if risk_result.get("status") == "PASS" else "REJECTED"
     lines = [
@@ -78,10 +78,11 @@ def render_sbi_report(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_no_trade(
+def _render_non_trade(
     recommendation: dict[str, Any],
     reasons: list[str],
     source_urls: list[str],
+    decision: str,
 ) -> str:
     lines = [
         "# 翌営業日注文案",
@@ -91,11 +92,16 @@ def _render_no_trade(
         f"設定SHA-256: {recommendation.get('config_sha256', '')}",
         "",
         "判定:",
-        "NO_TRADE",
+        decision,
     ]
     _append_section(lines, "理由", reasons or ["理由が記録されていない"])
     _append_section(lines, "参照データ", source_urls)
-    _append_section(lines, "注意事項", ["NO_TRADEは正常な結果であり、注文は作成しない。"])
+    note = (
+        "必要な市場データが揃わず、取引判断まで到達していない。"
+        if decision == "DATA_UNAVAILABLE"
+        else "NO_TRADEは正常な結果であり、注文は作成しない。"
+    )
+    _append_section(lines, "注意事項", [note])
     return "\n".join(lines).rstrip() + "\n"
 
 

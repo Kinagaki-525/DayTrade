@@ -24,7 +24,7 @@
         "required": ["ticker", "status", "reasons", "unresolved_screening", "order_plan"],
         "properties": {
           "ticker": {"type": ["string", "null"]},
-          "status": {"enum": ["ELIGIBLE", "REJECTED"]},
+          "status": {"enum": ["ELIGIBLE", "REJECTED", "DATA_UNAVAILABLE"]},
           "reasons": {"type": "array", "items": {"type": "string"}},
           "unresolved_screening": {
             "type": "array",

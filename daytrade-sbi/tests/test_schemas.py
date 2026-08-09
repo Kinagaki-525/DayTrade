@@ -80,6 +80,56 @@ def test_recommendation_schema_accepts_explicit_no_trade_without_order_values():
     )
 
 
+def test_recommendation_schema_accepts_data_unavailable_without_order_values():
+    validate_json_document(
+        recommendation_payload("DATA_UNAVAILABLE"),
+        "recommendation.schema.json",
+    )
+
+
+def test_risk_result_schema_accepts_data_unavailable_as_not_applicable():
+    config = load_strategy_config()
+    validate_json_document(
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "strategy_version": config["strategy_version"],
+            "config_sha256": strategy_config_sha256(config),
+            "decision": "DATA_UNAVAILABLE",
+            "status": "NOT_APPLICABLE",
+            "ticker": None,
+            "required_capital_yen": None,
+            "expected_loss_yen": None,
+            "violations": [],
+        },
+        "risk_result.schema.json",
+    )
+
+
+def test_sources_schema_requires_source_attempts():
+    with pytest.raises(ValueError, match="source_attempts"):
+        validate_json_document(
+            {
+                "schema_version": 1,
+                "target_date": "2026-08-10",
+                "sources": [],
+            },
+            "sources.schema.json",
+        )
+
+
+def test_sources_schema_accepts_empty_source_attempts():
+    validate_json_document(
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "sources": [],
+            "source_attempts": [],
+        },
+        "sources.schema.json",
+    )
+
+
 def test_recommendation_file_keeps_json_integers_schema_compatible():
     loaded = load_json_document(
         Path(__file__).resolve().parent / "fixtures" / "recommendation_valid.json",

@@ -23,6 +23,22 @@ def test_recommendation_row_does_not_infer_execution_results():
     assert row["entry_filled"] == ""
 
 
+def test_data_unavailable_recommendation_row_does_not_infer_execution_results():
+    row = recommendation_to_row(
+        {
+            "target_date": "2026-08-10",
+            "decision": "DATA_UNAVAILABLE",
+            "notes": "secondary OHLCV source missing",
+        },
+        {"status": "NOT_APPLICABLE"},
+    )
+
+    assert row["decision"] == "DATA_UNAVAILABLE"
+    assert row["order_submitted"] == ""
+    assert row["entry_triggered"] == ""
+    assert row["entry_filled"] == ""
+
+
 def test_repository_recommendation_log_uses_current_header():
     with DEFAULT_RECOMMENDATIONS_PATH.open(
         "r", encoding="utf-8-sig", newline=""

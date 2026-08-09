@@ -48,3 +48,20 @@ def test_no_trade_report_is_a_normal_result():
 
     assert "判定:\nNO_TRADE" in report
     assert "NO_TRADEは正常な結果" in report
+
+
+def test_data_unavailable_report_is_not_no_trade():
+    report = render_sbi_report(
+        {
+            "target_date": "2026-08-10",
+            "strategy_version": "v1",
+            "config_sha256": "a" * 64,
+            "decision": "DATA_UNAVAILABLE",
+            "selection_reasons": ["OHLCV secondary source missing"],
+            "source_urls": [],
+        },
+        {"status": "NOT_APPLICABLE"},
+    )
+
+    assert "判定:\nDATA_UNAVAILABLE" in report
+    assert "取引判断まで到達していない" in report

@@ -6,6 +6,7 @@ import src.cli as cli
 from src.config import load_strategy_config, strategy_config_sha256
 from src.contracts import validate_json_document
 from src.market import SourceLedgerValidationResult
+from src.source_matrix import load_source_matrix
 from tests.factories import make_market_record
 
 
@@ -27,11 +28,12 @@ def test_screen_market_command_generates_candidate_payload(monkeypatch):
     monkeypatch.setattr(
         cli,
         "_load_market_bundle",
-        lambda market, sources: (
+        lambda market, sources, source_matrix: (
             "2026-08-10",
             [make_market_record()],
             SourceLedgerValidationResult(True, ()),
             {"target_date": "2026-08-10", "sources": []},
+            load_source_matrix(),
         ),
     )
     monkeypatch.setattr(
@@ -56,6 +58,16 @@ def test_screen_market_command_generates_candidate_payload(monkeypatch):
     assert captured["candidates"][0]["status"] == "ELIGIBLE"
     assert captured["strategy_version"] == "v1"
     assert len(captured["config_sha256"]) == 64
+
+
+def test_validate_source_matrix_command_reports_valid(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(cli, "_emit_json", lambda payload, output_path=None: captured.update(payload))
+
+    result = cli.main(["validate-source-matrix"])
+
+    assert result == 0
+    assert captured["valid"] is True
 
 
 def test_risk_check_command_generates_pass_payload(monkeypatch):
@@ -97,7 +109,7 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
     monkeypatch.setattr(
         cli,
         "_load_market_bundle",
-        lambda market, sources: (
+        lambda market, sources, source_matrix: (
             "2026-08-10",
             [make_market_record()],
             SourceLedgerValidationResult(True, ()),
@@ -107,6 +119,7 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
                     {"source_url": "https://example.test/source"},
                 ],
             },
+            load_source_matrix(),
         ),
     )
     monkeypatch.setattr(
@@ -139,6 +152,80 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
     assert captured["status"] == "PASS"
     assert captured["expected_loss_yen"] == "500"
     assert captured["config_sha256"] == config_sha256
+
+
+def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
+    captured = {}
+    strategy_version, config_sha256 = config_metadata()
+    recommendation = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "decision": "DATA_UNAVAILABLE",
+        "ticker": None,
+        "company_name": None,
+        "strategy_type": None,
+        "previous_high": None,
+        "tick_size": None,
+        "entry_trigger": None,
+        "entry_limit": None,
+        "take_profit": None,
+        "stop_loss": None,
+        "shares": None,
+        "selection_reasons": ["secondary OHLCV source missing"],
+        "source_urls": [],
+        "notes": None,
+    }
+    candidates = {
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "candidates": [{"ticker": "1234", "status": "DATA_UNAVAILABLE"}],
+    }
+    monkeypatch.setattr(
+        cli,
+        "load_json_document",
+        lambda path, schema: recommendation
+        if schema == "recommendation.schema.json"
+        else candidates,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_market_bundle",
+        lambda market, sources, source_matrix: (
+            "2026-08-10",
+            [],
+            SourceLedgerValidationResult(True, ()),
+            {"target_date": "2026-08-10", "sources": []},
+            load_source_matrix(),
+        ),
+    )
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    result = cli.main(
+        [
+            "risk-check",
+            "--recommendation",
+            "recommendation.json",
+            "--candidates",
+            "candidates.json",
+            "--market-data",
+            "market_data.json",
+            "--sources",
+            "sources.json",
+            "--output",
+            "risk_result.json",
+            "--current-positions",
+            "0",
+            "--trades-today",
+            "0",
+        ]
+    )
+
+    assert result == 0
+    assert captured["decision"] == "DATA_UNAVAILABLE"
+    assert captured["status"] == "NOT_APPLICABLE"
 
 
 def test_risk_check_rejects_schema_invalid_recommendation(monkeypatch):

@@ -25,6 +25,7 @@ from src.file_io import atomic_write_text
 from src.market import (
     MarketDataRecord,
     SourceLedgerValidationResult,
+    audit_official_ohlcv,
     load_market_data,
     validate_market_data,
     validate_source_ledger,
@@ -32,8 +33,14 @@ from src.market import (
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_sbi_report
+from src.research import (
+    MarketDataResearchAlignmentResult,
+    validate_market_records_against_research,
+    validate_market_research,
+)
 from src.risk import OrderProposal, evaluate_order, not_applicable_result
 from src.screening import screen_market_record
+from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH, load_source_matrix, validate_source_matrix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,11 +54,40 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser("validate-market")
     validate_parser.add_argument("--market-data", required=True, type=Path)
     validate_parser.add_argument("--sources", required=True, type=Path)
+    validate_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    validate_parser.add_argument("--market-research", type=Path)
     validate_parser.add_argument("--output", required=True, type=Path)
+
+    source_matrix_parser = subparsers.add_parser("validate-source-matrix")
+    source_matrix_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    source_matrix_parser.add_argument("--output", type=Path)
+
+    market_research_parser = subparsers.add_parser("validate-market-research")
+    market_research_parser.add_argument("--market-research", required=True, type=Path)
+    market_research_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    market_research_parser.add_argument("--output", required=True, type=Path)
 
     screen_parser = subparsers.add_parser("screen-market")
     screen_parser.add_argument("--market-data", required=True, type=Path)
     screen_parser.add_argument("--sources", required=True, type=Path)
+    screen_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    screen_parser.add_argument("--market-research", type=Path)
     screen_parser.add_argument("--output", required=True, type=Path)
     screen_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
 
@@ -60,10 +96,26 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument("--candidates", required=True, type=Path)
     risk_parser.add_argument("--market-data", required=True, type=Path)
     risk_parser.add_argument("--sources", required=True, type=Path)
+    risk_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    risk_parser.add_argument("--market-research", type=Path)
     risk_parser.add_argument("--output", required=True, type=Path)
     risk_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     risk_parser.add_argument("--current-positions", type=int, required=True)
     risk_parser.add_argument("--trades-today", type=int, required=True)
+
+    audit_parser = subparsers.add_parser("audit-official-ohlcv")
+    audit_parser.add_argument("--market-data", required=True, type=Path)
+    audit_parser.add_argument("--sources", required=True, type=Path)
+    audit_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    audit_parser.add_argument("--output", required=True, type=Path)
 
     report_parser = subparsers.add_parser("render-report")
     report_parser.add_argument("--recommendation", required=True, type=Path)
@@ -95,9 +147,30 @@ def main(argv: list[str] | None = None) -> int:
         snapshot_strategy_config(args.output, args.config)
         return 0
     if args.command == "validate-market":
-        return _validate_market(args.market_data, args.sources, args.output)
+        return _validate_market(
+            args.market_data,
+            args.sources,
+            args.output,
+            args.source_matrix,
+            args.market_research,
+        )
+    if args.command == "validate-source-matrix":
+        return _validate_source_matrix(args.source_matrix, args.output)
+    if args.command == "validate-market-research":
+        return _validate_market_research(
+            args.market_research,
+            args.source_matrix,
+            args.output,
+        )
     if args.command == "screen-market":
-        return _screen_market(args.market_data, args.sources, args.output, args.config)
+        return _screen_market(
+            args.market_data,
+            args.sources,
+            args.output,
+            args.config,
+            args.source_matrix,
+            args.market_research,
+        )
     if args.command == "risk-check":
         return _risk_check(
             args.recommendation,
@@ -108,6 +181,15 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             args.current_positions,
             args.trades_today,
+            args.source_matrix,
+            args.market_research,
+        )
+    if args.command == "audit-official-ohlcv":
+        return _audit_official_ohlcv(
+            args.market_data,
+            args.sources,
+            args.output,
+            args.source_matrix,
         )
     if args.command == "render-report":
         return _render_report(args.recommendation, args.risk_result, args.output)
@@ -155,18 +237,40 @@ def _validate_market(
     market_data_path: Path,
     sources_path: Path,
     output_path: Path,
+    source_matrix_path: Path,
+    market_research_path: Path | None,
 ) -> int:
-    target_date, records, ledger_result, _ = _load_market_bundle(
+    target_date, records, ledger_result, _, source_matrix = _load_market_bundle(
         market_data_path,
         sources_path,
+        source_matrix_path,
+    )
+    alignment_result = _load_market_research_alignment(
+        records,
+        market_research_path,
+        source_matrix,
+    )
+    global_errors = (
+        list(alignment_result.global_errors) if alignment_result is not None else []
     )
     results = []
     for record in records:
-        record_result = validate_market_data(record)
-        errors = [*ledger_result.errors, *record_result.errors]
+        record_result = validate_market_data(record, source_matrix)
+        alignment_errors = (
+            list(alignment_result.errors_by_ticker.get(record.ticker or "<missing>", ()))
+            if alignment_result is not None
+            else []
+        )
+        errors = [
+            *ledger_result.errors,
+            *global_errors,
+            *record_result.errors,
+            *alignment_errors,
+        ]
         results.append(
             {
                 "ticker": record.ticker,
+                "data_status": record.data_status,
                 "valid_for_trade": not errors,
                 "errors": errors,
                 "warnings": list(record_result.warnings),
@@ -190,15 +294,31 @@ def _screen_market(
     sources_path: Path,
     output_path: Path,
     config_path: Path,
+    source_matrix_path: Path,
+    market_research_path: Path | None,
 ) -> int:
-    target_date, records, ledger_result, _ = _load_market_bundle(
+    target_date, records, ledger_result, _, source_matrix = _load_market_bundle(
         market_data_path,
         sources_path,
+        source_matrix_path,
     )
     if not ledger_result.valid:
         raise ValueError("Source ledger validation failed: " + "; ".join(ledger_result.errors))
+    alignment_result = _load_market_research_alignment(
+        records,
+        market_research_path,
+        source_matrix,
+    )
+    if alignment_result is not None and not alignment_result.valid:
+        raise ValueError(
+            "Market research alignment failed: "
+            + "; ".join(_alignment_error_messages(alignment_result))
+        )
     config = load_strategy_config(config_path)
-    results = [screen_market_record(record, config).as_dict() for record in records]
+    results = [
+        screen_market_record(record, config, source_matrix).as_dict()
+        for record in records
+    ]
     _write_json(
         output_path,
         {
@@ -223,6 +343,8 @@ def _risk_check(
     config_path: Path,
     current_positions: int,
     trades_today: int,
+    source_matrix_path: Path,
+    market_research_path: Path | None,
 ) -> int:
     recommendation = load_json_document(
         recommendation_path,
@@ -230,9 +352,15 @@ def _risk_check(
     )
     candidates = load_json_document(candidates_path, "candidates.schema.json")
     validate_recommendation_candidate_link(recommendation, candidates)
-    market_target_date, records, ledger_result, source_payload = _load_market_bundle(
+    market_target_date, records, ledger_result, source_payload, source_matrix = _load_market_bundle(
         market_data_path,
         sources_path,
+        source_matrix_path,
+    )
+    alignment_result = _load_market_research_alignment(
+        records,
+        market_research_path,
+        source_matrix,
     )
     validate_recommendation_sources(recommendation, source_payload)
     config = load_strategy_config(config_path)
@@ -243,14 +371,22 @@ def _risk_check(
         raise ValueError("recommendation config_sha256 does not match --config")
 
     decision = recommendation.get("decision")
-    if decision == "NO_TRADE":
+    if decision != "TRADE":
         result = not_applicable_result(recommendation.get("ticker"))
     else:
         ticker = str(recommendation.get("ticker", "")).strip()
         matches = [record for record in records if record.ticker == ticker]
         market_record = matches[0] if len(matches) == 1 else None
+        alignment_valid = True
+        if alignment_result is not None:
+            alignment_valid = (
+                not alignment_result.global_errors
+                and not alignment_result.errors_by_ticker.get(ticker)
+            )
         market_valid = (
-            ledger_result.valid and validate_market_data(market_record).valid_for_trade
+            ledger_result.valid
+            and alignment_valid
+            and validate_market_data(market_record, source_matrix).valid_for_trade
             if market_record is not None
             else False
         )
@@ -291,6 +427,65 @@ def _render_report(
     atomic_write_text(
         output_path,
         render_sbi_report(recommendation, risk_result),
+    )
+    return 0
+
+
+def _validate_source_matrix(
+    source_matrix_path: Path,
+    output_path: Path | None,
+) -> int:
+    from src.config import load_yaml
+
+    payload = load_yaml(source_matrix_path)
+    result = validate_source_matrix(payload)
+    _emit_json(result.as_dict(), output_path)
+    if not result.valid:
+        raise ValueError("Source matrix validation failed: " + "; ".join(result.errors))
+    return 0
+
+
+def _validate_market_research(
+    market_research_path: Path,
+    source_matrix_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    source_matrix = load_source_matrix(source_matrix_path)
+    result = validate_market_research(market_research, source_matrix)
+    _write_json(
+        output_path,
+        result.as_dict(),
+        "market_research_validation.schema.json",
+    )
+    if not result.valid:
+        raise ValueError("Market research validation failed: " + "; ".join(result.errors))
+    return 0
+
+
+def _audit_official_ohlcv(
+    market_data_path: Path,
+    sources_path: Path,
+    output_path: Path,
+    source_matrix_path: Path,
+) -> int:
+    target_date, records, _, source_payload, _ = _load_market_bundle(
+        market_data_path,
+        sources_path,
+        source_matrix_path,
+    )
+    _write_json(
+        output_path,
+        {
+            "schema_version": 1,
+            "target_date": target_date,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "results": audit_official_ohlcv(records, source_payload),
+        },
+        "official_ohlcv_audit.schema.json",
     )
     return 0
 
@@ -341,18 +536,55 @@ def _load_execution_row(
 def _load_market_bundle(
     market_data_path: Path,
     sources_path: Path,
+    source_matrix_path: Path = DEFAULT_SOURCE_MATRIX_PATH,
 ) -> tuple[
     str,
     list[MarketDataRecord],
     SourceLedgerValidationResult,
     dict[str, Any],
+    dict[str, Any],
 ]:
+    source_matrix = load_source_matrix(source_matrix_path)
     load_json_document(market_data_path, "market_data.schema.json")
     source_payload = load_json_document(sources_path, "sources.schema.json")
     target_date, records = load_market_data(market_data_path)
     assert target_date is not None
-    ledger_result = validate_source_ledger(target_date, records, source_payload)
-    return target_date, records, ledger_result, source_payload
+    ledger_result = validate_source_ledger(
+        target_date,
+        records,
+        source_payload,
+        source_matrix,
+    )
+    return target_date, records, ledger_result, source_payload, source_matrix
+
+
+def _load_market_research_alignment(
+    records: list[MarketDataRecord],
+    market_research_path: Path | None,
+    source_matrix: dict[str, Any],
+) -> MarketDataResearchAlignmentResult | None:
+    if market_research_path is None:
+        return None
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    research_result = validate_market_research(market_research, source_matrix)
+    alignment_result = validate_market_records_against_research(records, market_research)
+    return MarketDataResearchAlignmentResult(
+        research_result.valid and alignment_result.valid,
+        (*research_result.errors, *alignment_result.global_errors),
+        alignment_result.errors_by_ticker,
+    )
+
+
+def _alignment_error_messages(
+    result: MarketDataResearchAlignmentResult,
+) -> list[str]:
+    messages = list(result.global_errors)
+    for ticker, errors in sorted(result.errors_by_ticker.items()):
+        messages.extend(f"{ticker}: {error}" for error in errors)
+    return messages
 
 
 def _write_json(

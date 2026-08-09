@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "market_research_validation.schema.json",
+  "title": "Market research validation result",
+  "type": "object",
+  "required": ["valid", "discovery_complete", "errors", "warnings"],
+  "properties": {
+    "valid": {"type": "boolean"},
+    "discovery_complete": {"type": "boolean"},
+    "errors": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

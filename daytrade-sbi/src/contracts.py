@@ -59,7 +59,7 @@ def validate_recommendation_candidate_link(
         "config_sha256",
         "recommendation/candidates",
     )
-    if recommendation["decision"] == "NO_TRADE":
+    if recommendation["decision"] != "TRADE":
         return
 
     ticker = recommendation["ticker"]

@@ -25,6 +25,16 @@ def test_trade_recommendation_must_reference_an_eligible_candidate():
         validate_recommendation_candidate_link(recommendation, candidates)
 
 
+def test_data_unavailable_recommendation_does_not_require_eligible_candidate():
+    recommendation = {**METADATA, "decision": "DATA_UNAVAILABLE", "ticker": None}
+    candidates = {
+        **METADATA,
+        "candidates": [{"ticker": "1234", "status": "DATA_UNAVAILABLE"}],
+    }
+
+    validate_recommendation_candidate_link(recommendation, candidates)
+
+
 def test_recommendation_and_risk_result_must_use_same_config():
     recommendation = {**METADATA, "decision": "NO_TRADE", "ticker": None}
     risk_result = {

@@ -24,11 +24,14 @@
 - Codex自身がWeb調査エージェントとして市場データを調査する
 - 一次情報または信頼性の高い市場データを優先する
 - 検索結果の断片だけを価格決定の根拠にしない
+- `config/source_matrix.yaml`に存在しない情報源を実行時に勝手に代替採用しない
+- Discoveryは出来高ランキング、値上がり率ランキング、適時開示に限定し、Discovery順位をそのままRankingへ使わない
 - 株価等の数値ごとに情報源、URL、取得日時、取引日、銘柄、値を保存する
 - 更新日不明、古いデータ、必須値欠落、出典矛盾を推測で解決しない
 - 確認できた事実とCodex評価を明確に分ける
 - 固定条件通過銘柄を取得済み情報だけで比較する
-- 1銘柄の`TRADE`案または`NO_TRADE`を記録する
+- 1銘柄の`TRADE`案、`NO_TRADE`、または`DATA_UNAVAILABLE`を記録する
+- 必要な市場データが揃わない場合は`DATA_UNAVAILABLE`として`NO_TRADE`と区別する
 - 適切な候補がなければ`NO_TRADE`を正常結果として扱う
 - Python Risk Engineを必ず実行する
 - 注文案を、注文済み・約定見込み・利益見込みとは表現しない
@@ -58,6 +61,7 @@
 ## 正本
 
 - v2設定: [config/strategy.yaml](config/strategy.yaml)
+- Source Matrix: [config/source_matrix.yaml](config/source_matrix.yaml)
 - 未決定事項: [TODO.md](TODO.md)
 - nightly手順: [prompts/nightly_research.md](prompts/nightly_research.md)
 - 翌営業日Skill: [prepare-daytrade-plan](../.agents/skills/prepare-daytrade-plan/SKILL.md)
@@ -81,7 +85,7 @@
 - ユーザー承認後に戦略ルールを変更する場合も、戦略バージョン規則が決まるまでは命名を独断で決めない
 - 実取引行には、ユーザーが提示または確認した事実だけを記録する
 - `execution_result.json`は実績入力の確認用記録とし、証券会社の証明や未確認事実として扱わない
-- 未約定、一部約定、未決済、`NO_TRADE`、`REJECTED`を`trades/trades.csv`へ記録しない
+- 未約定、一部約定、未決済、`NO_TRADE`、`DATA_UNAVAILABLE`、`REJECTED`を`trades/trades.csv`へ記録しない
 - 推奨履歴の実行状態更新と一部約定の記録方法は、`TODO.md`で決まるまで自動化しない
 - バックテストを追加する場合は`runs/`と`trades/`から分離する
 - コード変更時は可能な限りテストを追加・更新する

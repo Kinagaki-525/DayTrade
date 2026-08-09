@@ -20,7 +20,7 @@
     "target_date": {"type": "string", "format": "date"},
     "strategy_version": {"type": "string", "minLength": 1},
     "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "decision": {"enum": ["TRADE", "NO_TRADE"]},
+    "decision": {"enum": ["TRADE", "NO_TRADE", "DATA_UNAVAILABLE"]},
     "status": {"enum": ["PASS", "REJECTED", "NOT_APPLICABLE"]},
     "ticker": {"type": ["string", "null"]},
     "required_capital_yen": {"$ref": "#/$defs/decimalOrNull"},
@@ -32,7 +32,7 @@
     {
       "if": {
         "required": ["decision"],
-        "properties": {"decision": {"const": "NO_TRADE"}}
+        "properties": {"decision": {"enum": ["NO_TRADE", "DATA_UNAVAILABLE"]}}
       },
       "then": {
         "properties": {

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "official_ohlcv_audit.schema.json",
+  "title": "Official OHLCV audit result",
+  "type": "object",
+  "required": ["schema_version", "target_date", "generated_at", "results"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ticker", "audit_status", "differences"],
+        "properties": {
+          "ticker": {"type": ["string", "null"]},
+          "audit_status": {
+            "enum": ["FOUND", "NOT_YET_AVAILABLE", "CONFLICT"]
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field_name", "saved_value", "official_value"],
+              "properties": {
+                "field_name": {"type": "string", "minLength": 1},
+                "saved_value": {"type": ["string", "number", "integer", "null"]},
+                "official_value": {"type": ["string", "number", "integer", "null"]}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

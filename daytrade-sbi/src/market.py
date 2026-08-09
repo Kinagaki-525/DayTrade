@@ -9,11 +9,22 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+from src.source_matrix import (
+    SOURCE_ROLES,
+    SOURCE_STATUSES,
+    load_source_matrix,
+    source_definition_errors,
+)
 from src.strategy import exact_int, is_tick_aligned, to_decimal
 
 
 @dataclass(frozen=True)
 class SourceRecord:
+    source_ref: str | None
+    source_id: str | None
+    source_role: str | None
+    information_type: str | None
+    source_status: str | None
     source_name: str | None
     source_url: str | None
     retrieved_at: str | None
@@ -25,6 +36,11 @@ class SourceRecord:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SourceRecord:
         return cls(
+            source_ref=_optional_text(data.get("source_ref")),
+            source_id=_optional_text(data.get("source_id")),
+            source_role=_optional_text(data.get("source_role")),
+            information_type=_optional_text(data.get("information_type")),
+            source_status=_optional_text(data.get("source_status")),
             source_name=_optional_text(data.get("source_name")),
             source_url=_optional_text(data.get("source_url")),
             retrieved_at=_optional_text(data.get("retrieved_at")),
@@ -42,6 +58,12 @@ class SourceRecord:
 class MarketDataRecord:
     ticker: str | None
     company_name: str | None
+    market: str | None
+    share_unit: int | None
+    security_type: str | None
+    source_policy_status: str | None
+    data_status: str | None
+    data_status_reasons: tuple[str, ...]
     trading_date: str | None
     open: Decimal | None
     high: Decimal | None
@@ -71,6 +93,14 @@ class MarketDataRecord:
         return cls(
             ticker=_optional_text(data.get("ticker")),
             company_name=_optional_text(data.get("company_name")),
+            market=_optional_text(data.get("market")),
+            share_unit=_optional_int(data.get("share_unit"), "share_unit"),
+            security_type=_optional_text(data.get("security_type")),
+            source_policy_status=_optional_text(data.get("source_policy_status")),
+            data_status=_optional_text(data.get("data_status")),
+            data_status_reasons=tuple(
+                str(reason) for reason in data.get("data_status_reasons", [])
+            ),
             trading_date=_optional_text(data.get("trading_date")),
             open=_optional_decimal(data.get("open")),
             high=_optional_decimal(data.get("high")),
@@ -166,6 +196,9 @@ def _json_ready(value: Any) -> Any:
 REQUIRED_TRADE_FIELDS = (
     "ticker",
     "company_name",
+    "market",
+    "share_unit",
+    "data_status",
     "trading_date",
     "open",
     "high",
@@ -177,6 +210,7 @@ REQUIRED_TRADE_FIELDS = (
     "tick_size",
 )
 SOURCED_NUMERIC_FIELDS = (
+    "share_unit",
     "open",
     "high",
     "low",
@@ -186,32 +220,66 @@ SOURCED_NUMERIC_FIELDS = (
     "previous_high",
     "tick_size",
 )
+SOURCED_TEXT_FIELDS = (
+    "company_name",
+    "market",
+)
+OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
+DATA_AVAILABLE_STATUS = "VERIFIED"
+DATA_BLOCKING_STATUSES = {
+    "DATA_UNAVAILABLE",
+    "CONFLICT",
+    "SINGLE_SOURCE_ONLY",
+    "SOURCE_POLICY_UNDEFINED",
+}
 
 
 @dataclass(frozen=True)
 class MarketValidationResult:
     valid_for_trade: bool
+    data_status: str | None
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
 
     def as_dict(self) -> dict[str, object]:
         return {
             "valid_for_trade": self.valid_for_trade,
+            "data_status": self.data_status,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
 
 
-def validate_market_data(record: MarketDataRecord) -> MarketValidationResult:
+def validate_market_data(
+    record: MarketDataRecord,
+    source_matrix: dict[str, Any] | None = None,
+) -> MarketValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
+    effective_source_matrix = (
+        source_matrix if source_matrix is not None else load_source_matrix()
+    )
 
     for field_name in REQUIRED_TRADE_FIELDS:
         if getattr(record, field_name) is None:
             errors.append(f"Missing required market data: {field_name}")
 
+    if record.data_status in DATA_BLOCKING_STATUSES:
+        errors.append(f"Market data status is not verified: {record.data_status}")
+    elif record.data_status is not None and record.data_status != DATA_AVAILABLE_STATUS:
+        errors.append(f"Unknown market data status: {record.data_status}")
+    if record.source_policy_status == "SOURCE_POLICY_UNDEFINED":
+        errors.append("Source policy is undefined for this candidate")
+    elif (
+        record.source_policy_status is not None
+        and record.source_policy_status not in SOURCE_STATUSES
+    ):
+        errors.append(f"Unknown source policy status: {record.source_policy_status}")
+
     if record.trading_date is not None and not _is_iso_date(record.trading_date):
         errors.append("trading_date must use YYYY-MM-DD")
+    if record.share_unit is not None and record.share_unit != 100:
+        errors.append("share_unit must be 100 for the current strategy")
 
     price_fields = (
         "open",
@@ -251,7 +319,7 @@ def validate_market_data(record: MarketDataRecord) -> MarketValidationResult:
     if not record.sources:
         errors.append("At least one traceable source is required")
     for index, source in enumerate(record.sources):
-        errors.extend(_validate_source(source, record, index))
+        errors.extend(_validate_source(source, record, index, effective_source_matrix))
 
     for field_name in SOURCED_NUMERIC_FIELDS:
         field_sources = [
@@ -268,6 +336,22 @@ def validate_market_data(record: MarketDataRecord) -> MarketValidationResult:
         if len(set(valid_values)) > 1:
             errors.append(f"Conflicting source values for market data field: {field_name}")
 
+    for field_name in SOURCED_TEXT_FIELDS:
+        field_sources = [
+            source for source in record.sources if source.field_name == field_name
+        ]
+        if not field_sources:
+            errors.append(f"Missing source for market data field: {field_name}")
+            continue
+        record_value = getattr(record, field_name)
+        source_values = [
+            str(source.value).strip() for source in field_sources if source.value is not None
+        ]
+        if record_value is not None and str(record_value) not in source_values:
+            errors.append(f"No source value matches market data field: {field_name}")
+
+    errors.extend(_validate_ohlcv_source_policy(record))
+
     if record.turnover is None:
         warnings.append("turnover is not available")
     if record.spread is None:
@@ -277,17 +361,28 @@ def validate_market_data(record: MarketDataRecord) -> MarketValidationResult:
     if record.special_disclosures is None:
         warnings.append("special disclosures are not confirmed")
 
-    return MarketValidationResult(not errors, tuple(errors), tuple(warnings))
+    return MarketValidationResult(
+        not errors,
+        record.data_status,
+        tuple(errors),
+        tuple(warnings),
+    )
 
 
 def _validate_source(
     source: SourceRecord,
     record: MarketDataRecord,
     index: int,
+    source_matrix: dict[str, Any],
 ) -> list[str]:
     prefix = f"sources[{index}]"
     errors: list[str] = []
     for field_name in (
+        "source_ref",
+        "source_id",
+        "source_role",
+        "information_type",
+        "source_status",
         "source_name",
         "source_url",
         "retrieved_at",
@@ -299,6 +394,19 @@ def _validate_source(
             errors.append(f"{prefix}.{field_name} is required")
     if source.value is None:
         errors.append(f"{prefix}.value is required")
+    errors.extend(
+        source_definition_errors(
+            source_id=source.source_id,
+            source_role=source.source_role,
+            information_type=source.information_type,
+            source_matrix=source_matrix,
+            prefix=prefix,
+        )
+    )
+    if source.source_role is not None and source.source_role not in SOURCE_ROLES:
+        errors.append(f"{prefix}.source_role is not a known role")
+    if source.source_status is not None and source.source_status != "FOUND":
+        errors.append(f"{prefix}.source_status must be FOUND for saved values")
     if source.source_url is not None:
         parsed = urlparse(source.source_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -313,6 +421,44 @@ def _validate_source(
         errors.append(f"{prefix}.ticker does not match the market record")
     if record.trading_date is not None and source.trading_date != record.trading_date:
         errors.append(f"{prefix}.trading_date does not match the market record")
+    return errors
+
+
+def _validate_ohlcv_source_policy(record: MarketDataRecord) -> list[str]:
+    errors: list[str] = []
+    for field_name in OHLCV_FIELDS:
+        field_sources = [
+            source
+            for source in record.sources
+            if source.field_name == field_name and source.source_status == "FOUND"
+        ]
+        has_primary = any(
+            source.source_id == "YAHOO_JP_HISTORY"
+            and source.source_role == "PRIMARY"
+            for source in field_sources
+        )
+        has_secondary = any(
+            source.source_id == "KABUTAN_HISTORY"
+            and source.source_role == "SECONDARY"
+            for source in field_sources
+        )
+        if has_primary and not has_secondary:
+            errors.append(f"SINGLE_SOURCE_ONLY for OHLCV field: {field_name}")
+        elif not has_primary:
+            errors.append(f"Missing primary OHLCV source for field: {field_name}")
+        elif not has_secondary:
+            errors.append(f"Missing secondary OHLCV source for field: {field_name}")
+
+    tick_sources = [
+        source
+        for source in record.sources
+        if source.field_name == "tick_size" and source.source_status == "FOUND"
+    ]
+    if not any(
+        source.source_id == "JPX_TICK_SIZE" and source.source_role == "PRIMARY"
+        for source in tick_sources
+    ):
+        errors.append("Missing JPX primary source for tick_size")
     return errors
 
 
@@ -352,12 +498,27 @@ def validate_source_ledger(
     market_target_date: str,
     records: Iterable[MarketDataRecord],
     source_payload: dict[str, Any],
+    source_matrix: dict[str, Any] | None = None,
 ) -> SourceLedgerValidationResult:
     errors: list[str] = []
+    effective_source_matrix = (
+        source_matrix if source_matrix is not None else load_source_matrix()
+    )
     if source_payload["target_date"] != market_target_date:
         errors.append("sources.json target_date does not match market_data.json")
 
     ledger_sources = source_payload["sources"]
+    for index, source in enumerate(ledger_sources):
+        errors.extend(
+            source_definition_errors(
+                source_id=_optional_text(source.get("source_id")),
+                source_role=_optional_text(source.get("source_role")),
+                information_type=_optional_text(source.get("information_type")),
+                source_matrix=effective_source_matrix,
+                prefix=f"sources[{index}]",
+            )
+        )
+
     canonical_ledger = [_canonical_source(source) for source in ledger_sources]
     duplicate_count = len(canonical_ledger) - len(set(canonical_ledger))
     if duplicate_count:
@@ -371,7 +532,83 @@ def validate_source_ledger(
                     "market_data.json source is missing from sources.json: "
                     f"ticker={record.ticker}, index={index}"
                 )
+    for index, attempt in enumerate(source_payload.get("source_attempts", [])):
+        if attempt.get("target_date") != market_target_date:
+            errors.append(f"source_attempts[{index}].target_date does not match market_data.json")
+        status = attempt.get("status")
+        if status not in SOURCE_STATUSES:
+            errors.append(f"source_attempts[{index}].status is not known")
+        role = attempt.get("source_role")
+        if role not in SOURCE_ROLES:
+            errors.append(f"source_attempts[{index}].source_role is not known")
+        errors.extend(
+            source_definition_errors(
+                source_id=_optional_text(attempt.get("source_id")),
+                source_role=_optional_text(role),
+                information_type=_optional_text(attempt.get("information_type")),
+                criticality=_optional_text(attempt.get("criticality")),
+                source_matrix=effective_source_matrix,
+                prefix=f"source_attempts[{index}]",
+            )
+        )
     return SourceLedgerValidationResult(not errors, tuple(errors))
+
+
+def audit_official_ohlcv(
+    records: Iterable[MarketDataRecord],
+    source_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    ledger_sources = source_payload["sources"]
+    results: list[dict[str, Any]] = []
+    for record in records:
+        differences: list[dict[str, Any]] = []
+        audit_sources = [
+            source
+            for source in ledger_sources
+            if source.get("ticker") == record.ticker
+            and source.get("source_id") == "JPX_DAILY_REPORT"
+            and source.get("source_role") == "AUDIT"
+        ]
+        if not audit_sources:
+            results.append(
+                {
+                    "ticker": record.ticker,
+                    "audit_status": "NOT_YET_AVAILABLE",
+                    "differences": [],
+                }
+            )
+            continue
+        for field_name in OHLCV_FIELDS:
+            official_sources = [
+                source for source in audit_sources if source.get("field_name") == field_name
+            ]
+            if not official_sources:
+                differences.append(
+                    {
+                        "field_name": field_name,
+                        "saved_value": getattr(record, field_name),
+                        "official_value": None,
+                    }
+                )
+                continue
+            official_value = _as_decimal(official_sources[0].get("value"))
+            saved_value = getattr(record, field_name)
+            if official_value != saved_value:
+                differences.append(
+                    {
+                        "field_name": field_name,
+                        "saved_value": saved_value,
+                        "official_value": official_sources[0].get("value"),
+                    }
+                )
+        results.append(
+            {
+                "ticker": record.ticker,
+                "audit_status": "CONFLICT" if differences else "FOUND",
+                "differences": differences,
+            }
+        )
+    return results
 
 
 def _canonical_source(source: dict[str, Any]) -> str:

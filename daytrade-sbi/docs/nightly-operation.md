@@ -22,15 +22,16 @@ py -B -m pytest
 3. `TODO.md`を確認
 4. 翌営業日と前営業日を確認
 5. `config/strategy.yaml`を対象日ディレクトリへスナップショット保存
-6. 読み取り専用サブエージェントを必要に応じて使い、Webで市場データ・決算予定・適時開示・必要なニュースを調査
-7. `sources.json`と`market_data.json`を保存
-8. Pythonで市場データと出典台帳を検証し、`candidates.json`を生成
-9. 確認済み情報だけで候補を比較
-10. `recommendation.json`へ`TRADE`または`NO_TRADE`を保存
-11. 人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-12. `recommendation.md`を生成
-13. `trades/recommendations.csv`へ推奨履歴を追加
-14. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+6. `config/source_matrix.yaml`を検証
+7. 固定Discovery経路だけで`market_research.json`を作成
+8. Discovery CandidatesだけをSource Matrix順に調査し、`sources.json`と`market_data.json`を保存
+9. Pythonで市場データと出典台帳を検証し、`candidates.json`を生成
+10. 確認済み情報だけで候補を比較
+11. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
+12. 人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+13. `recommendation.md`を生成
+14. `trades/recommendations.csv`へ推奨履歴を追加
+15. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 
@@ -45,14 +46,16 @@ py -B -m pytest
 
 ## 中止条件
 
-次の場合は、値を補完せず対象銘柄を除外するか`NO_TRADE`にします。
+次の場合は、値を補完せず対象銘柄を除外するか`DATA_UNAVAILABLE`にします。
 
 - 対象営業日を確認できない
 - 必須市場データが欠落している
 - 数値の出典を追跡できない
 - 出典間の数値矛盾を解消できない
+- Discovery Critical Sourceが欠落している
+- OHLCVが`CONFLICT`または`SINGLE_SOURCE_ONLY`
 - 決算・重要開示の確認が必要だが確認できない
-- Risk Engineが`REJECTED`
 - SBI画面の注文仕様を人間が確認できない
 
+Risk Engineが`REJECTED`の場合は、提案値を変更せず`REJECTED`として記録します。
 `REJECTED`を回避するために提案値を都合よく変更して再実行しません。

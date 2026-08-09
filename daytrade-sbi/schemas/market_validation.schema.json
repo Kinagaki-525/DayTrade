@@ -20,9 +20,19 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["ticker", "valid_for_trade", "errors", "warnings"],
+        "required": ["ticker", "data_status", "valid_for_trade", "errors", "warnings"],
         "properties": {
           "ticker": {"type": ["string", "null"]},
+          "data_status": {
+            "enum": [
+              "VERIFIED",
+              "DATA_UNAVAILABLE",
+              "CONFLICT",
+              "SINGLE_SOURCE_ONLY",
+              "SOURCE_POLICY_UNDEFINED",
+              null
+            ]
+          },
           "valid_for_trade": {"type": "boolean"},
           "errors": {"type": "array", "items": {"type": "string"}},
           "warnings": {"type": "array", "items": {"type": "string"}}

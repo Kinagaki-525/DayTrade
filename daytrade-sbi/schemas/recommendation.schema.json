@@ -28,7 +28,7 @@
     "target_date": {"type": "string", "format": "date"},
     "strategy_version": {"type": "string", "minLength": 1},
     "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "decision": {"enum": ["TRADE", "NO_TRADE"]},
+    "decision": {"enum": ["TRADE", "NO_TRADE", "DATA_UNAVAILABLE"]},
     "strategy_type": {"type": ["string", "null"]},
     "ticker": {"type": ["string", "null"]},
     "company_name": {"type": ["string", "null"]},

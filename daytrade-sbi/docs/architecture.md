@@ -3,7 +3,7 @@
 ## 責任分界
 
 ```text
-Codex: Web調査・出典保存・候補比較・TRADE/NO_TRADE案
+Codex: Web調査・出典保存・候補比較・TRADE/NO_TRADE/DATA_UNAVAILABLE案
   ↓
 Python: データ検証・固定条件スクリーニング・価格計算・Risk Engine
   ↓
@@ -23,19 +23,22 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | コンポーネント | 責任 |
 | --- | --- |
 | `config/strategy.yaml` | 固定リスク条件、検証中パラメータ、未決定スクリーニング値 |
+| `config/source_matrix.yaml` | 市場調査で使うSource ID、Role、Criticality、URLテンプレート |
 | `prompts/nightly_research.md` | Codexが毎晩従う調査・保存・検証手順 |
-| `src/market.py` | 市場データと出典のモデル、完全性・整合性検証 |
+| `src/source_matrix.py` | Source Matrixの構造検証と標準Source ID管理 |
+| `src/research.py` | Discovery成果物の検証とDiscovery候補Union |
+| `src/market.py` | 市場データ、Source試行、OHLCV二重確認、後日監査 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
 | `src/screening.py` | 資金条件を適用。未決定条件は未評価として残し、承認済み実装なしの値は拒否 |
 | `src/strategy.py` | 前日高値ブレイクの価格計算 |
 | `src/risk.py` | AI案から独立した固定リスク検証。値は修正しない |
-| `src/reports.py` | PASS・REJECTED・NO_TRADEに応じた手動確認レポート |
+| `src/reports.py` | PASS・REJECTED・NO_TRADE・DATA_UNAVAILABLEに応じた手動確認レポート |
 | `src/recommendations.py` | 取引しなかった日を含む推奨履歴の記録 |
 | `src/metrics.py` | 実取引結果の集計 |
 | `src/execution.py` | 完全決済済み実績と日次成果物の照合、CSV行生成、重複防止付き追記 |
 | `schemas/` | nightly実行で保存するJSONの構造契約 |
 
-`sources.json`は出典台帳の正本です。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
+`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本です。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
 
 日次ディレクトリには`strategy_snapshot.yaml`を保存します。候補・推奨・Risk Engine結果へ同じ`strategy_version`と設定内容のSHA-256を引き継ぎ、別設定で作られた成果物の混在を拒否します。
 
@@ -44,9 +47,10 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 - `ELIGIBLE`: 市場データ検証と設定済み固定条件を通過。取引推奨ではない。
 - `TRADE`: Codexが比較結果として作った1銘柄の注文案。Risk Engine通過前は採用不可。
 - `NO_TRADE`: 適切な候補がない正常な結果。注文を作らない。
+- `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。
 - `PASS`: 注文案が固定リスク条件を通過。
 - `REJECTED`: 注文案またはデータが固定条件に違反。値を自動修正しない。
-- `NOT_APPLICABLE`: `NO_TRADE`のため注文リスク評価対象がない。
+- `NOT_APPLICABLE`: `NO_TRADE`または`DATA_UNAVAILABLE`のため注文リスク評価対象がない。
 
 ## データ境界
 

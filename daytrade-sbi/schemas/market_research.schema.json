@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "market_research.schema.json",
+  "title": "Nightly market research discovery and source audit",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "previous_trading_day",
+    "research_cutoff",
+    "research_executed_at",
+    "market_filter",
+    "overall_status",
+    "discovery",
+    "discovery_candidates",
+    "candidate_research"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "research_cutoff": {"type": "string", "format": "date-time"},
+    "research_executed_at": {"type": "string", "format": "date-time"},
+    "market_filter": {"enum": ["ALL_MARKETS", "TSE_ONLY"]},
+    "overall_status": {
+      "enum": [
+        "COMPLETE",
+        "DISCOVERY_INCOMPLETE",
+        "DATA_UNAVAILABLE",
+        "SOURCE_POLICY_UNDEFINED"
+      ]
+    },
+    "discovery": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"$ref": "#/$defs/discoveryRoute"}
+    },
+    "discovery_candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/discoveryCandidate"}
+    },
+    "candidate_research": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidateResearch"}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sourceStatus": {
+      "enum": [
+        "FOUND",
+        "NOT_FOUND",
+        "NOT_YET_AVAILABLE",
+        "ACCESS_FAILED",
+        "PARSE_FAILED",
+        "STALE",
+        "CONFLICT",
+        "SINGLE_SOURCE_ONLY",
+        "SOURCE_POLICY_UNDEFINED"
+      ]
+    },
+    "discoveryType": {
+      "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE"]
+    },
+    "dataStatus": {
+      "enum": [
+        "VERIFIED",
+        "DATA_UNAVAILABLE",
+        "CONFLICT",
+        "SINGLE_SOURCE_ONLY",
+        "SOURCE_POLICY_UNDEFINED"
+      ]
+    },
+    "discoveryRoute": {
+      "type": "object",
+      "required": [
+        "discovery_type",
+        "source_id",
+        "status",
+        "source_url",
+        "retrieved_at",
+        "result_count",
+        "items"
+      ],
+      "properties": {
+        "discovery_type": {"$ref": "#/$defs/discoveryType"},
+        "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+        "status": {"$ref": "#/$defs/sourceStatus"},
+        "source_url": {"type": "string", "pattern": "^https?://"},
+        "retrieved_at": {"type": "string", "format": "date-time"},
+        "result_count": {"type": "integer", "minimum": 0},
+        "items": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/discoveryItem"}
+        },
+        "reason": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "discoveryItem": {
+      "type": "object",
+      "required": [
+        "ticker",
+        "company_name",
+        "market",
+        "source_url",
+        "retrieved_at"
+      ],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "company_name": {"type": "string", "minLength": 1},
+        "market": {"type": ["string", "null"]},
+        "rank": {"type": ["integer", "null"], "minimum": 1},
+        "display_value": {"type": ["string", "number", "integer", "null"]},
+        "disclosure_datetime": {"type": ["string", "null"], "format": "date-time"},
+        "title": {"type": ["string", "null"]},
+        "source_url": {"type": "string", "pattern": "^https?://"},
+        "retrieved_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "discoveryReason": {
+      "type": "object",
+      "required": ["discovery_type", "source_id", "source_url"],
+      "properties": {
+        "discovery_type": {"$ref": "#/$defs/discoveryType"},
+        "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+        "source_url": {"type": "string", "pattern": "^https?://"},
+        "rank": {"type": ["integer", "null"], "minimum": 1},
+        "display_value": {"type": ["string", "number", "integer", "null"]},
+        "title": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "discoveryCandidate": {
+      "type": "object",
+      "required": [
+        "ticker",
+        "company_name",
+        "market",
+        "discovered_by",
+        "discovery_reasons"
+      ],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "company_name": {"type": "string", "minLength": 1},
+        "market": {"type": ["string", "null"]},
+        "discovered_by": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/discoveryType"}
+        },
+        "discovery_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/discoveryReason"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidateResearch": {
+      "type": "object",
+      "required": ["ticker", "data_status", "status_reasons"],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "data_status": {"$ref": "#/$defs/dataStatus"},
+        "status_reasons": {"type": "array", "items": {"type": "string"}},
+        "source_policy_status": {"$ref": "#/$defs/sourceStatus"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -13,7 +13,7 @@
 
 ## 注文候補の作成
 
-Codexは出典付き市場調査から1銘柄の`TRADE`案または`NO_TRADE`を作成します。Python Risk Engineが`PASS`した場合だけ、`runs/YYYY-MM-DD/recommendation.md`を手入力候補として人間へ提示します。
+Codexは出典付き市場調査から1銘柄の`TRADE`案、`NO_TRADE`、または`DATA_UNAVAILABLE`を作成します。Python Risk Engineが`PASS`した場合だけ、`runs/YYYY-MM-DD/recommendation.md`を手入力候補として人間へ提示します。
 
 `recommendation.md`は注文済みを意味しません。人間がSBI株アプリの実画面と照合し、採用するかを最終判断します。
 

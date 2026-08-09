@@ -24,6 +24,11 @@
     "source": {
       "type": "object",
       "required": [
+        "source_ref",
+        "source_id",
+        "source_role",
+        "information_type",
+        "source_status",
         "source_name",
         "source_url",
         "retrieved_at",
@@ -33,6 +38,11 @@
         "value"
       ],
       "properties": {
+        "source_ref": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+        "source_role": {"enum": ["PRIMARY", "SECONDARY", "AUDIT", "CONTEXT"]},
+        "information_type": {"type": "string", "minLength": 1},
+        "source_status": {"const": "FOUND"},
         "source_name": {"type": "string", "minLength": 1},
         "source_url": {"type": "string", "pattern": "^https?://"},
         "retrieved_at": {"type": "string", "format": "date-time"},
@@ -48,6 +58,9 @@
       "required": [
         "ticker",
         "company_name",
+        "market",
+        "share_unit",
+        "data_status",
         "trading_date",
         "open",
         "high",
@@ -62,6 +75,36 @@
       "properties": {
         "ticker": {"type": ["string", "null"]},
         "company_name": {"type": ["string", "null"]},
+        "market": {"type": ["string", "null"]},
+        "share_unit": {"type": ["integer", "string", "null"]},
+        "security_type": {"type": ["string", "null"]},
+        "source_policy_status": {
+          "enum": [
+            "FOUND",
+            "NOT_FOUND",
+            "NOT_YET_AVAILABLE",
+            "ACCESS_FAILED",
+            "PARSE_FAILED",
+            "STALE",
+            "CONFLICT",
+            "SINGLE_SOURCE_ONLY",
+            "SOURCE_POLICY_UNDEFINED",
+            null
+          ]
+        },
+        "data_status": {
+          "enum": [
+            "VERIFIED",
+            "DATA_UNAVAILABLE",
+            "CONFLICT",
+            "SINGLE_SOURCE_ONLY",
+            "SOURCE_POLICY_UNDEFINED"
+          ]
+        },
+        "data_status_reasons": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
         "trading_date": {"type": ["string", "null"]},
         "open": {"$ref": "#/$defs/decimalOrNull"},
         "high": {"$ref": "#/$defs/decimalOrNull"},

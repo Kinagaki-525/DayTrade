@@ -5,6 +5,8 @@
 ```text
 runs/YYYY-MM-DD/
   strategy_snapshot.yaml
+  market_research.json
+  market_research_validation.json
   sources.json
   market_data.json
   market_validation.json
