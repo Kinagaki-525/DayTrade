@@ -9,6 +9,7 @@
 | 市場調査 | `runs/YYYY-MM-DD/` | 出典、確認データ、Codex評価、注文案、Risk Engine結果 |
 | 推奨履歴 | `trades/recommendations.csv` | `TRADE`、`NO_TRADE`、`REJECTED`とその後の提出・発動・約定状況 |
 | 実取引 | `trades/trades.csv` | 実際に約定した取引だけ |
+| 実績入力 | `runs/YYYY-MM-DD/execution_result.json` | 人間が確認した完全決済済み取引をCSV追記前に検証する入力 |
 
 バックテスト結果は上記へ保存しません。
 
@@ -49,6 +50,20 @@
 | `notes` | 例外事項や`other`の具体的理由など |
 
 `src.metrics`は`profit_loss_yen`を再計算せず、記録値を集計します。手数料・税金を含むかどうかなど採用基準を変更する場合は、既存データとの比較可能性を確認し、変更日と内容を文書化します。
+
+## execution_result.json
+
+`execution_result.json`には、実際の買い・売りがともに約定し、当日中に決済済みであることを人間が確認した場合だけ入力します。計画値と会社名は`recommendation.json`、前日終値は`market_data.json`からPythonが取得するため、実績入力へ重複記載しません。
+
+`profit_loss_yen`は人間が確認できた値だけを入力し、不明なら`null`とします。Pythonは約定価格から推測しません。`exit_reason`が`other`の場合は`notes`を必須とします。一部約定、未決済、未約定は記録方法が未決定のため、このSchemaではCSVへ記録できません。
+
+```powershell
+py -B -m src.cli validate-execution --execution runs/YYYY-MM-DD/execution_result.json --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --market-data runs/YYYY-MM-DD/market_data.json
+py -B -m src.cli record-execution --execution runs/YYYY-MM-DD/execution_result.json --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --market-data runs/YYYY-MM-DD/market_data.json
+py -B -m src.cli calculate-metrics
+```
+
+`record-execution`は同じ`trade_date`の完全一致行を再追記しません。同日の内容が既存行と異なる場合は、1日最大1取引の固定条件に基づき、既存行を自動修正せず競合として停止します。
 
 ## recommendations.csv
 

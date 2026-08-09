@@ -20,6 +20,7 @@ from src.contracts import (
     validate_recommendation_risk_link,
     validate_recommendation_sources,
 )
+from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
 from src.market import (
     MarketDataRecord,
@@ -28,6 +29,7 @@ from src.market import (
     validate_market_data,
     validate_source_ledger,
 )
+from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_sbi_report
 from src.risk import OrderProposal, evaluate_order, not_applicable_result
@@ -72,6 +74,18 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--recommendation", required=True, type=Path)
     record_parser.add_argument("--risk-result", required=True, type=Path)
     record_parser.add_argument("--csv", type=Path)
+
+    execution_parser = subparsers.add_parser("validate-execution")
+    _add_execution_arguments(execution_parser)
+    execution_parser.add_argument("--output", type=Path)
+
+    record_execution_parser = subparsers.add_parser("record-execution")
+    _add_execution_arguments(record_execution_parser)
+    record_execution_parser.add_argument("--csv", type=Path)
+
+    metrics_parser = subparsers.add_parser("calculate-metrics")
+    metrics_parser.add_argument("--csv", type=Path, default=DEFAULT_TRADES_PATH)
+    metrics_parser.add_argument("--output", type=Path)
     return parser
 
 
@@ -99,7 +113,42 @@ def main(argv: list[str] | None = None) -> int:
         return _render_report(args.recommendation, args.risk_result, args.output)
     if args.command == "record-recommendation":
         return _record_recommendation(args.recommendation, args.risk_result, args.csv)
+    if args.command == "validate-execution":
+        row = _load_execution_row(
+            args.execution,
+            args.recommendation,
+            args.risk_result,
+            args.market_data,
+        )
+        _emit_json({"status": "VALID", "trade_row": row}, args.output)
+        return 0
+    if args.command == "record-execution":
+        row = _load_execution_row(
+            args.execution,
+            args.recommendation,
+            args.risk_result,
+            args.market_data,
+        )
+        appended = append_trade(row) if args.csv is None else append_trade(row, args.csv)
+        _emit_json(
+            {
+                "status": "RECORDED" if appended else "ALREADY_RECORDED",
+                "trade_date": row["trade_date"],
+                "ticker": row["ticker"],
+            }
+        )
+        return 0
+    if args.command == "calculate-metrics":
+        _emit_json(calculate_metrics_from_csv(args.csv), args.output)
+        return 0
     raise ValueError(f"Unknown command: {args.command}")
+
+
+def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--execution", required=True, type=Path)
+    parser.add_argument("--recommendation", required=True, type=Path)
+    parser.add_argument("--risk-result", required=True, type=Path)
+    parser.add_argument("--market-data", required=True, type=Path)
 
 
 def _validate_market(
@@ -265,6 +314,30 @@ def _record_recommendation(
     return 0
 
 
+def _load_execution_row(
+    execution_path: Path,
+    recommendation_path: Path,
+    risk_result_path: Path,
+    market_data_path: Path,
+) -> dict[str, str]:
+    execution = load_json_document(execution_path, "execution_result.schema.json")
+    recommendation = load_json_document(
+        recommendation_path,
+        "recommendation.schema.json",
+    )
+    risk_result = load_json_document(risk_result_path, "risk_result.schema.json")
+    load_json_document(market_data_path, "market_data.schema.json")
+    market_target_date, market_records = load_market_data(market_data_path)
+    assert market_target_date is not None
+    return build_trade_row(
+        execution,
+        recommendation,
+        risk_result,
+        market_target_date,
+        market_records,
+    )
+
+
 def _load_market_bundle(
     market_data_path: Path,
     sources_path: Path,
@@ -292,6 +365,14 @@ def _write_json(
         path,
         json.dumps(_json_ready(payload), ensure_ascii=False, indent=2) + "\n",
     )
+
+
+def _emit_json(payload: dict[str, Any], output_path: Path | None = None) -> None:
+    content = json.dumps(_json_ready(payload), ensure_ascii=False, indent=2) + "\n"
+    if output_path is None:
+        print(content, end="")
+    else:
+        atomic_write_text(output_path, content)
 
 
 def _json_ready(value: Any) -> Any:

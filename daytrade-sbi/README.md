@@ -16,6 +16,15 @@ OpenAI APIなどの外部LLM APIは使用しません。SBI証券へのログイ
 
 Codexが作成するものは注文候補です。注文判断・注文操作・訂正・取消は人間だけが行います。
 
+## Codex Skillとサブエージェント
+
+日次運用はリポジトリ直下の2つのCodex Skillから明示的に開始します。
+
+- `$prepare-daytrade-plan`: 翌営業日の調査、候補比較、Risk Engine、手入力候補までをメインエージェントが統括
+- `$record-daytrade-result`: 人間が確認した完全決済済み取引を検証し、確認後に記録・集計
+
+`prepare`では、Web調査用の`market_researcher`と出典監査用の`source_auditor`だけを読み取り専用サブエージェントとして使用できます。日次成果物の書き込みと`TRADE`または`NO_TRADE`の判断はメインエージェントが行います。`record`はサブエージェントを使いません。
+
 ## 固定条件
 
 - 証券会社: SBI証券
@@ -56,7 +65,9 @@ Codexが作成するものは注文候補です。注文判断・注文操作・
 ## 処理フロー
 
 ```text
-CodexがWeb調査
+$prepare-daytrade-planを明示実行
+  ↓
+メインCodexが読み取り専用サブエージェントへWeb調査を委譲
   ↓ 出典付きでruns/YYYY-MM-DDへ保存
 実行時のstrategy.yamlをスナップショット保存
   ↓
@@ -72,7 +83,9 @@ MarkdownのSBI手入力候補を生成
   ↓
 人間が最終確認し、採用する場合だけ手入力
   ↓
-人間が実績を記録し、Pythonが集計
+$record-daytrade-resultを明示実行
+  ↓ 人間が実績を確認
+Pythonが検証・記録・集計
 ```
 
 Risk EngineはAI案を修正しません。違反があれば`REJECTED`にします。`NO_TRADE`と`REJECTED`を都合よく`TRADE`へ変更しません。
@@ -80,48 +93,28 @@ Risk EngineはAI案を修正しません。違反があれば`REJECTED`にしま
 ## ディレクトリ構成
 
 ```text
-daytrade-sbi/
-  README.md
-  AGENTS.md
-  TODO.md
-  .gitattributes
-  config/
-    strategy.yaml
-  prompts/
-    nightly_research.md
-  schemas/
-    market_data.schema.json
-    market_validation.schema.json
-    sources.schema.json
-    candidates.schema.json
-    recommendation.schema.json
-    risk_result.schema.json
-  runs/
+DayTrade/
+  .agents/skills/
+    prepare-daytrade-plan/
+    record-daytrade-result/
+  .codex/
+    config.toml
+    agents/
+      market-researcher.toml
+      source-auditor.toml
+  daytrade-sbi/
     README.md
-    YYYY-MM-DD/
-  trades/
-    trades.csv
-    recommendations.csv
-  src/
-    config.py
-    contracts.py
-    file_io.py
-    cli.py
-    recommendations.py
-    market.py
-    screening.py
-    strategy.py
-    risk.py
-    reports.py
-    metrics.py
-  tests/
-  docs/
-    architecture.md
-    nightly-operation.md
-    sbi-order-guide.md
-    trade-data-dictionary.md
-  rules/versions/
-    v1.yaml
+    AGENTS.md
+    TODO.md
+    config/strategy.yaml
+    prompts/nightly_research.md
+    schemas/
+    runs/YYYY-MM-DD/
+    trades/
+    src/
+    tests/
+    docs/
+    rules/versions/
 ```
 
 `rules/versions/v1.yaml`はv1設定の不変履歴です。v2の設定正本は[config/strategy.yaml](config/strategy.yaml)です。`strategy_version: v1`は売買パラメータを引き継いでいることを示し、v2はプロジェクト構成の世代を示します。戦略バージョンの今後の命名・更新基準は未決定です。
@@ -145,19 +138,11 @@ py -m pip install -r requirements.txt
 
 VS Code上のCodexへ次のように依頼します。
 
-> `prompts/nightly_research.md`に従って翌営業日の調査を実行してください。
+> `$prepare-daytrade-plan`
 
-詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。CodexはWeb調査で確認した事実と評価を分け、すべての重要数値にURL・取得日時・取引日を保存します。
+詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。Skillは[prompts/nightly_research.md](prompts/nightly_research.md)を既存の詳細手順として読みます。CodexはWeb調査で確認した事実と評価を分け、すべての重要数値にURL・取得日時・取引日を保存します。
 
-Pythonツールは外部Web接続なしで実行できます。
-
-```powershell
-py -B -m src.cli snapshot-config --output runs/YYYY-MM-DD/strategy_snapshot.yaml
-py -B -m src.cli validate-market --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --output runs/YYYY-MM-DD/market_validation.json
-py -B -m src.cli screen-market --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/candidates.json
-py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/risk_result.json --current-positions <確認済み保有数> --trades-today <確認済み当日取引数>
-py -B -m src.cli render-report --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --output runs/YYYY-MM-DD/recommendation.md
-```
+Pythonツールは外部Web接続なしで実行できます。直接実行する場合のコマンドは[prompts/nightly_research.md](prompts/nightly_research.md)を正本とします。
 
 保有数と当日取引数は人間が確認した値を明示し、未確認時に0と仮定しません。
 `candidates.json`、`recommendation.json`、`risk_result.json`には戦略バージョンと設定内容のSHA-256を保存し、異なる実行日のファイルや設定を混在させた場合は処理を停止します。
@@ -171,11 +156,10 @@ py -B -m src.cli render-report --recommendation runs/YYYY-MM-DD/recommendation.j
 
 存在しない株価、注文、約定、損益を推測して埋めないでください。実取引とバックテストも同じファイルへ保存しません。
 
-```python
-from src.metrics import calculate_metrics_from_csv
+完全に約定し当日中に決済した取引を記録する場合は、Codexへ次のSkillを明示します。
 
-metrics = calculate_metrics_from_csv("trades/trades.csv")
-print(metrics)
-```
+> `$record-daytrade-result`
+
+Skillは人間が確認した事実を`runs/YYYY-MM-DD/execution_result.json`へ保存し、CSV行のプレビュー後に明示確認を求めます。同じ日の異なる内容は自動追記せず競合として停止します。未約定、一部約定、未決済の記録方法は未決定のため、自動処理しません。直接実行するCLIとCSV仕様は[trade-data-dictionary.md](docs/trade-data-dictionary.md)を参照してください。
 
 `win_rate`は損益を計算できる取引に占める利益が正の取引の割合です。損益0円は勝ちにも負けにも数えませんが分母には含めます。損益が未入力または非数値の行は推測せず、`uncalculable_trades`に数えます。

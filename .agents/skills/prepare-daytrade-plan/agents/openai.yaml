@@ -1,0 +1,7 @@
+interface:
+  display_name: "翌営業日プラン準備"
+  short_description: "出典付き市場調査からRisk Engine検証までを安全に実行する"
+  default_prompt: "$prepare-daytrade-planを使って、翌営業日の市場調査からRisk Engine検証まで実行してください。"
+
+policy:
+  allow_implicit_invocation: false

@@ -16,6 +16,8 @@
 - 実取引結果とバックテスト結果を混同しない
 - AI評価や売買戦略の有効性、将来の値上がりを断定しない
 - `rules/versions/`に保存済みの版ファイルを変更・削除しない
+- サブエージェントに日次成果物、設定、取引CSVを変更させない
+- 人間の明示確認前に`trades/trades.csv`へ実績を追記しない
 
 ## Codexの役割
 
@@ -30,6 +32,7 @@
 - 適切な候補がなければ`NO_TRADE`を正常結果として扱う
 - Python Risk Engineを必ず実行する
 - 注文案を、注文済み・約定見込み・利益見込みとは表現しない
+- Skillはメインエージェントが実行し、`prepare`の読み取り調査・監査だけをサブエージェントへ委譲する。日次成果物の書き込みと`record`は委譲しない
 
 ## Pythonの役割
 
@@ -40,6 +43,8 @@
 - AI案と設定から再計算した価格が一致するか検証する
 - 違反値を修正せず`REJECTED`を返す
 - SBI手入力候補レポートと実績集計を生成する
+- 完全約定・当日決済済みの実績入力を日次成果物と照合し、重複なしで記録する
+- 実現損益が未確認の場合は計算で補完せず、未計算として扱う
 - Web接続やLLM判断をPythonへ組み込まない
 
 ## 人間の役割
@@ -55,6 +60,9 @@
 - v2設定: [config/strategy.yaml](config/strategy.yaml)
 - 未決定事項: [TODO.md](TODO.md)
 - nightly手順: [prompts/nightly_research.md](prompts/nightly_research.md)
+- 翌営業日Skill: [prepare-daytrade-plan](../.agents/skills/prepare-daytrade-plan/SKILL.md)
+- 実績記録Skill: [record-daytrade-result](../.agents/skills/record-daytrade-result/SKILL.md)
+- Codexサブエージェント: `../.codex/agents/`
 - JSON構造: `schemas/`
 - 日次調査とAI評価: `runs/YYYY-MM-DD/`
 - 推奨履歴: `trades/recommendations.csv`
@@ -72,6 +80,9 @@
 - 未決定のスクリーニング値は`null`のまま扱う
 - ユーザー承認後に戦略ルールを変更する場合も、戦略バージョン規則が決まるまでは命名を独断で決めない
 - 実取引行には、ユーザーが提示または確認した事実だけを記録する
+- `execution_result.json`は実績入力の確認用記録とし、証券会社の証明や未確認事実として扱わない
+- 未約定、一部約定、未決済、`NO_TRADE`、`REJECTED`を`trades/trades.csv`へ記録しない
+- 推奨履歴の実行状態更新と一部約定の記録方法は、`TODO.md`で決まるまで自動化しない
 - バックテストを追加する場合は`runs/`と`trades/`から分離する
 - コード変更時は可能な限りテストを追加・更新する
 - 完了前に`py -B -m pytest`を実行し、既存テストを壊したまま終了しない

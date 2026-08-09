@@ -18,6 +18,9 @@
 - `trades/recommendations.csv` に推奨履歴を残すためのカラム
 - `prompts/nightly_research.md` と `docs/nightly-operation.md` の運用手順
 - 日次設定スナップショット、JSON Schema実行時検証、出典台帳と成果物間の整合性検証
+- `$prepare-daytrade-plan`と`$record-daytrade-result`による明示起動の運用手順
+- 読み取り専用の市場調査・出典監査サブエージェント
+- 完全約定・当日決済済み取引に限定した実績Schema、プレビュー、重複防止付きCSV追記
 
 これらの実装を理由に、P0・P1・P2・P3の意思決定済みとは扱わない。
 

@@ -167,3 +167,72 @@ def test_risk_check_rejects_schema_invalid_recommendation(monkeypatch):
                 "0",
             ]
         )
+
+
+def test_validate_execution_command_prints_preview(monkeypatch, capsys):
+    row = {
+        "trade_date": "2026-08-10",
+        "ticker": "1234",
+        "actual_entry": "402",
+    }
+    monkeypatch.setattr(cli, "_load_execution_row", lambda *args: row)
+
+    result = cli.main(
+        [
+            "validate-execution",
+            "--execution",
+            "execution.json",
+            "--recommendation",
+            "recommendation.json",
+            "--risk-result",
+            "risk-result.json",
+            "--market-data",
+            "market-data.json",
+        ]
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"status": "VALID"' in output
+    assert '"actual_entry": "402"' in output
+
+
+def test_record_execution_command_reports_idempotent_result(monkeypatch, capsys):
+    row = {"trade_date": "2026-08-10", "ticker": "1234"}
+    monkeypatch.setattr(cli, "_load_execution_row", lambda *args: row)
+    monkeypatch.setattr(cli, "append_trade", lambda *args: False)
+
+    result = cli.main(
+        [
+            "record-execution",
+            "--execution",
+            "execution.json",
+            "--recommendation",
+            "recommendation.json",
+            "--risk-result",
+            "risk-result.json",
+            "--market-data",
+            "market-data.json",
+        ]
+    )
+
+    assert result == 0
+    assert '"status": "ALREADY_RECORDED"' in capsys.readouterr().out
+
+
+def test_calculate_metrics_command_preserves_unknown_values(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(
+        cli,
+        "calculate_metrics_from_csv",
+        lambda path: {"total_trades": 1, "win_rate": None},
+    )
+
+    result = cli.main(["calculate-metrics"])
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"total_trades": 1' in output
+    assert '"win_rate": null' in output

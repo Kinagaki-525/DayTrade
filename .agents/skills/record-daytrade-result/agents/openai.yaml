@@ -1,0 +1,7 @@
+interface:
+  display_name: "デイトレ実績記録"
+  short_description: "人間が確認した約定・決済事実だけを検証し取引CSVへ記録する"
+  default_prompt: "$record-daytrade-resultを使って、確認済みの実取引結果を検証して記録してください。"
+
+policy:
+  allow_implicit_invocation: false

@@ -4,7 +4,9 @@
 
 毎晩、VS Code上のCodexへ次のように依頼します。
 
-> `prompts/nightly_research.md`に従って翌営業日の調査を実行してください。
+> `$prepare-daytrade-plan`
+
+Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントが全体を統括し、市場調査と出典監査だけを読み取り専用サブエージェントへ委譲します。
 
 実行前にPython依存関係を導入し、テストが成功することを確認します。
 
@@ -20,7 +22,7 @@ py -B -m pytest
 3. `TODO.md`を確認
 4. 翌営業日と前営業日を確認
 5. `config/strategy.yaml`を対象日ディレクトリへスナップショット保存
-6. Webで市場データ・決算予定・適時開示・必要なニュースを調査
+6. 読み取り専用サブエージェントを必要に応じて使い、Webで市場データ・決算予定・適時開示・必要なニュースを調査
 7. `sources.json`と`market_data.json`を保存
 8. Pythonで市場データと出典台帳を検証し、`candidates.json`を生成
 9. 確認済み情報だけで候補を比較
@@ -36,8 +38,10 @@ py -B -m pytest
 2. `recommendation.md`とSBI株アプリの実画面を照合
 3. 注文するか最終判断
 4. 注文する場合のみSBI株アプリへ手入力
-5. 注文提出・発動・約定の結果を`recommendations.csv`へ記録
-6. 実際に約定した取引だけを`trades.csv`へ記録
+5. 完全約定・当日決済済みの場合は`$record-daytrade-result`を明示実行
+6. Pythonが提示する実績プレビューを確認し、正しい場合だけCSV追記を承認
+
+`recommendations.csv`の注文提出・発動・未約定状態を更新する確定手順と、一部約定の記録方法は未決定です。`TODO.md`で決まるまでSkillは自動更新しません。
 
 ## 中止条件
 

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution_result.schema.json",
+  "title": "Human-confirmed completed trade execution",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "trade_date",
+    "strategy_version",
+    "config_sha256",
+    "ticker",
+    "actual_entry",
+    "actual_exit",
+    "shares",
+    "profit_loss_yen",
+    "exit_reason",
+    "entry_time",
+    "exit_time",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "trade_date": {"type": "string", "format": "date"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "ticker": {"type": "string", "minLength": 1},
+    "actual_entry": {"$ref": "#/$defs/decimal"},
+    "actual_exit": {"$ref": "#/$defs/decimal"},
+    "shares": {"type": "integer", "minimum": 1},
+    "profit_loss_yen": {"$ref": "#/$defs/decimalOrNull"},
+    "exit_reason": {
+      "enum": ["take_profit", "stop_loss", "end_of_day", "other"]
+    },
+    "entry_time": {"$ref": "#/$defs/localTime"},
+    "exit_time": {"$ref": "#/$defs/localTime"},
+    "notes": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": ["exit_reason"],
+        "properties": {"exit_reason": {"const": "other"}}
+      },
+      "then": {
+        "properties": {"notes": {"type": "string", "minLength": 1}}
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"}
+      ]
+    },
+    "decimalOrNull": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "localTime": {
+      "type": "string",
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$"
+    }
+  }
+}
