@@ -9,6 +9,7 @@
     "previous_trading_day",
     "research_cutoff",
     "research_executed_at",
+    "research_window",
     "market_filter",
     "overall_status",
     "discovery",
@@ -16,11 +17,12 @@
     "candidate_research"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "target_date": {"type": "string", "format": "date"},
     "previous_trading_day": {"type": "string", "format": "date"},
     "research_cutoff": {"type": "string", "format": "date-time"},
     "research_executed_at": {"type": "string", "format": "date-time"},
+    "research_window": {"$ref": "#/$defs/researchWindow"},
     "market_filter": {"enum": ["ALL_MARKETS", "TSE_ONLY"]},
     "overall_status": {
       "enum": [
@@ -58,6 +60,54 @@
         "CONFLICT",
         "SINGLE_SOURCE_ONLY",
         "SOURCE_POLICY_UNDEFINED"
+      ]
+    },
+    "researchWindow": {
+      "type": "object",
+      "required": [
+        "run_type",
+        "window_start",
+        "window_end",
+        "previous_research_cutoff",
+        "previous_run_date",
+        "bootstrap_lookback_days"
+      ],
+      "properties": {
+        "run_type": {"enum": ["FIRST_RUN", "NORMAL_RUN"]},
+        "window_start": {"type": "string", "format": "date-time"},
+        "window_end": {"type": "string", "format": "date-time"},
+        "previous_research_cutoff": {"type": ["string", "null"], "format": "date-time"},
+        "previous_run_date": {"type": ["string", "null"], "format": "date"},
+        "bootstrap_lookback_days": {"type": ["integer", "null"], "minimum": 1}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["run_type"],
+            "properties": {"run_type": {"const": "FIRST_RUN"}}
+          },
+          "then": {
+            "properties": {
+              "previous_research_cutoff": {"type": "null"},
+              "previous_run_date": {"type": "null"},
+              "bootstrap_lookback_days": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["run_type"],
+            "properties": {"run_type": {"const": "NORMAL_RUN"}}
+          },
+          "then": {
+            "properties": {
+              "previous_research_cutoff": {"type": "string", "format": "date-time"},
+              "previous_run_date": {"type": "string", "format": "date"},
+              "bootstrap_lookback_days": {"type": "null"}
+            }
+          }
+        }
       ]
     },
     "discoveryType": {

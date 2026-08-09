@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.contracts import validate_json_document
@@ -54,6 +54,13 @@ def validate_market_research(
         errors.append("previous_trading_day must be before target_date")
     if _date_time(payload["research_cutoff"]).date() != previous_trading_day.date():
         errors.append("research_cutoff must be on previous_trading_day")
+    errors.extend(
+        _research_window_errors(
+            payload["research_window"],
+            payload["research_cutoff"],
+            target_date,
+        )
+    )
 
     routes = payload["discovery"]
     route_types = [route["discovery_type"] for route in routes]
@@ -154,6 +161,21 @@ def validate_market_research(
         tuple(errors),
         tuple(warnings),
     )
+
+
+def validate_market_research_window_link(
+    market_research: dict[str, Any],
+    resolved_window: dict[str, Any],
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    for field_name in ("target_date", "previous_trading_day", "research_cutoff"):
+        if market_research.get(field_name) != resolved_window.get(field_name):
+            errors.append(
+                f"market_research.{field_name} must match research_window.json"
+            )
+    if market_research.get("research_window") != resolved_window.get("research_window"):
+        errors.append("market_research.research_window must match research_window.json")
+    return tuple(errors)
 
 
 def validate_market_records_against_research(
@@ -296,6 +318,44 @@ def _normalized_discovery_candidate(candidate: dict[str, Any]) -> dict[str, Any]
 
 def _stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _research_window_errors(
+    window: dict[str, Any],
+    research_cutoff: str,
+    target_date: datetime,
+) -> list[str]:
+    errors: list[str] = []
+    window_start = _date_time(window["window_start"])
+    window_end = _date_time(window["window_end"])
+    current_cutoff = _date_time(research_cutoff)
+
+    if window_end != current_cutoff:
+        errors.append("research_window.window_end must equal research_cutoff")
+    if window_start >= window_end:
+        errors.append("research_window.window_start must be before window_end")
+
+    run_type = window["run_type"]
+    if run_type == "FIRST_RUN":
+        lookback_days = window["bootstrap_lookback_days"]
+        expected_start = window_end - timedelta(days=lookback_days)
+        if window_start != expected_start:
+            errors.append(
+                "FIRST_RUN research_window.window_start must equal "
+                "window_end minus bootstrap_lookback_days"
+            )
+    if run_type == "NORMAL_RUN":
+        previous_cutoff = _date_time(window["previous_research_cutoff"])
+        previous_run_date = _date(window["previous_run_date"])
+        if window_start != previous_cutoff:
+            errors.append(
+                "NORMAL_RUN research_window.window_start must equal "
+                "previous_research_cutoff"
+            )
+        if previous_run_date >= target_date:
+            errors.append("NORMAL_RUN previous_run_date must be before target_date")
+
+    return errors
 
 
 def _text(value: Any) -> str | None:

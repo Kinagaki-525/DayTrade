@@ -26,6 +26,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `config/source_matrix.yaml` | 市場調査で使うSource ID、Role、Criticality、URLテンプレート |
 | `prompts/nightly_research.md` | Codexが毎晩従う調査・保存・検証手順 |
 | `src/source_matrix.py` | Source Matrixの構造検証と標準Source ID管理 |
+| `src/research_window.py` | TDnet調査期間を、初回補完期間または前回cutoffから決定 |
 | `src/research.py` | Discovery成果物の検証とDiscovery候補Union |
 | `src/market.py` | 市場データ、Source試行、OHLCV二重確認、後日監査 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
@@ -38,7 +39,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/execution.py` | 完全決済済み実績と日次成果物の照合、CSV行生成、重複防止付き追記 |
 | `schemas/` | nightly実行で保存するJSONの構造契約 |
 
-`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本です。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
+`research_window.json`はPythonが確定したTDnet調査対象期間です。`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
 
 日次ディレクトリには`strategy_snapshot.yaml`を保存します。候補・推奨・Risk Engine結果へ同じ`strategy_version`と設定内容のSHA-256を引き継ぎ、別設定で作られた成果物の混在を拒否します。
 

@@ -35,9 +35,12 @@ from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_sbi_report
 from src.research import (
     MarketDataResearchAlignmentResult,
+    MarketResearchValidationResult,
     validate_market_records_against_research,
     validate_market_research,
+    validate_market_research_window_link,
 )
+from src.research_window import resolve_research_window
 from src.risk import OrderProposal, evaluate_order, not_applicable_result
 from src.screening import screen_market_record
 from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH, load_source_matrix, validate_source_matrix
@@ -72,12 +75,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     market_research_parser = subparsers.add_parser("validate-market-research")
     market_research_parser.add_argument("--market-research", required=True, type=Path)
+    market_research_parser.add_argument("--research-window", required=True, type=Path)
     market_research_parser.add_argument(
         "--source-matrix",
         type=Path,
         default=DEFAULT_SOURCE_MATRIX_PATH,
     )
     market_research_parser.add_argument("--output", required=True, type=Path)
+
+    research_window_parser = subparsers.add_parser("resolve-research-window")
+    research_window_parser.add_argument("--target-date", required=True)
+    research_window_parser.add_argument("--previous-trading-day", required=True)
+    research_window_parser.add_argument("--runs-dir", required=True, type=Path)
+    research_window_parser.add_argument(
+        "--source-matrix",
+        type=Path,
+        default=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    research_window_parser.add_argument("--output", required=True, type=Path)
 
     screen_parser = subparsers.add_parser("screen-market")
     screen_parser.add_argument("--market-data", required=True, type=Path)
@@ -104,8 +119,8 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument("--market-research", type=Path)
     risk_parser.add_argument("--output", required=True, type=Path)
     risk_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    risk_parser.add_argument("--current-positions", type=int, required=True)
-    risk_parser.add_argument("--trades-today", type=int, required=True)
+    risk_parser.add_argument("--current-positions", type=int)
+    risk_parser.add_argument("--trades-today", type=int)
 
     audit_parser = subparsers.add_parser("audit-official-ohlcv")
     audit_parser.add_argument("--market-data", required=True, type=Path)
@@ -159,6 +174,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-market-research":
         return _validate_market_research(
             args.market_research,
+            args.research_window,
+            args.source_matrix,
+            args.output,
+        )
+    if args.command == "resolve-research-window":
+        return _resolve_research_window(
+            args.target_date,
+            args.previous_trading_day,
+            args.runs_dir,
             args.source_matrix,
             args.output,
         )
@@ -341,8 +365,8 @@ def _risk_check(
     sources_path: Path,
     output_path: Path,
     config_path: Path,
-    current_positions: int,
-    trades_today: int,
+    current_positions: int | None,
+    trades_today: int | None,
     source_matrix_path: Path,
     market_research_path: Path | None,
 ) -> int:
@@ -352,6 +376,12 @@ def _risk_check(
     )
     candidates = load_json_document(candidates_path, "candidates.schema.json")
     validate_recommendation_candidate_link(recommendation, candidates)
+    decision = recommendation.get("decision")
+    if decision == "TRADE" and (current_positions is None or trades_today is None):
+        raise ValueError(
+            "current_positions and trades_today are required when "
+            "recommendation decision is TRADE"
+        )
     market_target_date, records, ledger_result, source_payload, source_matrix = _load_market_bundle(
         market_data_path,
         sources_path,
@@ -370,9 +400,8 @@ def _risk_check(
     if recommendation["config_sha256"] != config_digest:
         raise ValueError("recommendation config_sha256 does not match --config")
 
-    decision = recommendation.get("decision")
     if decision != "TRADE":
-        result = not_applicable_result(recommendation.get("ticker"))
+        result = not_applicable_result(None)
     else:
         ticker = str(recommendation.get("ticker", "")).strip()
         matches = [record for record in records if record.ticker == ticker]
@@ -413,6 +442,24 @@ def _risk_check(
     return 0
 
 
+def _resolve_research_window(
+    target_date: str,
+    previous_trading_day: str,
+    runs_dir: Path,
+    source_matrix_path: Path,
+    output_path: Path | None,
+) -> int:
+    source_matrix = load_source_matrix(source_matrix_path)
+    payload = resolve_research_window(
+        target_date=target_date,
+        previous_trading_day=previous_trading_day,
+        runs_dir=runs_dir,
+        source_matrix=source_matrix,
+    )
+    _write_json(output_path, payload.as_dict(), "research_window.schema.json")
+    return 0
+
+
 def _render_report(
     recommendation_path: Path,
     risk_result_path: Path,
@@ -447,6 +494,7 @@ def _validate_source_matrix(
 
 def _validate_market_research(
     market_research_path: Path,
+    research_window_path: Path,
     source_matrix_path: Path,
     output_path: Path,
 ) -> int:
@@ -454,8 +502,23 @@ def _validate_market_research(
         market_research_path,
         "market_research.schema.json",
     )
+    research_window = load_json_document(
+        research_window_path,
+        "research_window.schema.json",
+    )
     source_matrix = load_source_matrix(source_matrix_path)
     result = validate_market_research(market_research, source_matrix)
+    window_link_errors = validate_market_research_window_link(
+        market_research,
+        research_window,
+    )
+    if window_link_errors:
+        result = MarketResearchValidationResult(
+            False,
+            result.discovery_complete,
+            (*result.errors, *window_link_errors),
+            result.warnings,
+        )
     _write_json(
         output_path,
         result.as_dict(),

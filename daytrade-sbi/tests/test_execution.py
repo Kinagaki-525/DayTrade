@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -148,21 +150,33 @@ def test_build_trade_row_revalidates_market_data():
         )
 
 
-def test_append_trade_is_idempotent(tmp_path):
-    path = tmp_path / "trades.csv"
+def test_append_trade_is_idempotent():
+    path = _local_test_csv("append_trade_is_idempotent")
     row = build_row()
 
-    assert append_trade(row, path) is True
-    assert append_trade(row, path) is False
-    assert load_trades(path) == [row]
+    try:
+        assert append_trade(row, path) is True
+        assert append_trade(row, path) is False
+        assert load_trades(path) == [row]
+    finally:
+        path.unlink(missing_ok=True)
 
 
-def test_append_trade_rejects_conflicting_duplicate(tmp_path):
-    path = tmp_path / "trades.csv"
+def test_append_trade_rejects_conflicting_duplicate():
+    path = _local_test_csv("append_trade_rejects_conflicting_duplicate")
     row = build_row()
-    append_trade(row, path)
-    conflicting = deepcopy(row)
-    conflicting["entry_time"] = "09:11:00"
+    try:
+        append_trade(row, path)
+        conflicting = deepcopy(row)
+        conflicting["entry_time"] = "09:11:00"
 
-    with pytest.raises(ValueError, match="conflicting trade record"):
-        append_trade(conflicting, path)
+        with pytest.raises(ValueError, match="conflicting trade record"):
+            append_trade(conflicting, path)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _local_test_csv(test_name: str) -> Path:
+    directory = Path("tests") / ".tmp"
+    directory.mkdir(exist_ok=True)
+    return directory / f"{test_name}-{uuid4().hex}.csv"

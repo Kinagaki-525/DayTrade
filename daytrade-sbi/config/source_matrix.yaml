@@ -1,6 +1,7 @@
-source_matrix_schema_version: 1
-market_research_version: "market-research-v1"
+source_matrix_schema_version: 2
+market_research_version: "market-research-v2"
 default_research_cutoff_time: "20:00:00+09:00"
+tdnet_bootstrap_lookback_days: 1
 default_discovery_market_filter: ALL_MARKETS
 source_change_policy:
   managed_as_research_method_change: true

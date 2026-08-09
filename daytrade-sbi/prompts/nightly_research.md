@@ -26,6 +26,7 @@
 ```text
 runs/YYYY-MM-DD/
   strategy_snapshot.yaml
+  research_window.json
   market_research.json
   market_research_validation.json
   sources.json
@@ -45,6 +46,7 @@ JSONの構造は `schemas/` を参照する。確認不能な値は`null`にし�
 ```powershell
 py -B -m src.cli snapshot-config --output runs/YYYY-MM-DD/strategy_snapshot.yaml
 py -B -m src.cli validate-source-matrix --source-matrix config/source_matrix.yaml
+py -B -m src.cli resolve-research-window --target-date <対象日YYYY-MM-DD> --previous-trading-day <前営業日YYYY-MM-DD> --runs-dir runs --source-matrix config/source_matrix.yaml --output runs/<対象日YYYY-MM-DD>/research_window.json
 ```
 
 以降の`screen-market`と`risk-check`では、このスナップショットを`--config`へ指定し、市場データ検証系コマンドでは`--source-matrix config/source_matrix.yaml`と`--market-research runs/YYYY-MM-DD/market_research.json`を指定する。
@@ -55,12 +57,12 @@ py -B -m src.cli validate-source-matrix --source-matrix config/source_matrix.yam
 
 - Discovery経路は `VOLUME_RANKING`、`PRICE_GAIN_RANKING`、`TIMELY_DISCLOSURE` の3つだけに限定する。
 - Yahoo!ファイナンスの出来高ランキングTOP50と値上がり率ランキングTOP50は、Universe未確定のため市場フィルタ`ALL_MARKETS`を使用し、実際に使用したフィルタを保存する。
-- TDnetは前回cutoff以降から今回cutoffまでを確認する。初回など前回cutoffを確認できない場合は推測せず、調査経緯と未決定状態を記録する。
-- Discovery候補を銘柄コード単位でUnionし、`discovered_by`と発見理由をすべて`market_research.json`へ保存する。
+- TDnetは `resolve-research-window` が出力した `research_window.window_start` から `research_window.window_end` までを確認する。`FIRST_RUN` は設定済みの24時間初回補完期間であり、それだけを理由に `DATA_UNAVAILABLE` にしない。`HISTORY_INVALID` の場合は初回補完せず停止する。
+- Discovery候補を銘柄コード単位でUnionし、`research_window.json`の `research_cutoff` と `research_window`、`discovered_by`、発見理由をすべて`market_research.json`へ保存する。
 - Discovery順位や表示値は、最終Rankingの評価値として使わない。
 
 ```powershell
-py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
+py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --research-window runs/YYYY-MM-DD/research_window.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
 ```
 
 ### 2. Candidate Research
@@ -112,10 +114,18 @@ py -B -m src.cli screen-market --market-data runs/YYYY-MM-DD/market_data.json --
 
 ### 6. Risk Engineとレポート
 
-Risk Engine実行前に、対象日開始時点の保有数と対象日の取引済み回数を人間へ確認する。確認できない場合は0と推測せず、作業停止または`DATA_UNAVAILABLE`として記録する。以下の`<確認済み保有数>`と`<確認済み当日取引数>`を確認値へ置き換える。
+`TRADE`の場合だけ、Risk Engine実行前に、対象日開始時点の保有数と対象日の取引済み回数を人間へ確認する。確認できない場合は0と推測せず作業停止する。以下の`<確認済み保有数>`と`<確認済み当日取引数>`を確認値へ置き換える。
 
 ```powershell
 py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/risk_result.json --current-positions <確認済み保有数> --trades-today <確認済み当日取引数>
+py -B -m src.cli render-report --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --output runs/YYYY-MM-DD/recommendation.md
+py -B -m src.cli record-recommendation --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json
+```
+
+`NO_TRADE`または`DATA_UNAVAILABLE`の場合は、人間へ保有数・当日取引数を確認しない。入力値なしで次を実行し、`NOT_APPLICABLE`を生成する。
+
+```powershell
+py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/risk_result.json
 py -B -m src.cli render-report --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --output runs/YYYY-MM-DD/recommendation.md
 py -B -m src.cli record-recommendation --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json
 ```

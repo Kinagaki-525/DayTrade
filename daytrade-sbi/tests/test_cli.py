@@ -8,6 +8,7 @@ from src.contracts import validate_json_document
 from src.market import SourceLedgerValidationResult
 from src.source_matrix import load_source_matrix
 from tests.factories import make_market_record
+from tests.test_market_research import complete_candidate_research, market_research_payload
 
 
 def config_metadata():
@@ -68,6 +69,98 @@ def test_validate_source_matrix_command_reports_valid(monkeypatch):
 
     assert result == 0
     assert captured["valid"] is True
+
+
+def test_resolve_research_window_command_writes_schema_payload(monkeypatch):
+    captured = {}
+
+    class StubWindow:
+        def as_dict(self):
+            return {
+                "schema_version": 1,
+                "target_date": "2026-08-10",
+                "previous_trading_day": "2026-08-07",
+                "research_cutoff": "2026-08-07T20:00:00+09:00",
+                "research_window": {
+                    "run_type": "FIRST_RUN",
+                    "window_start": "2026-08-06T20:00:00+09:00",
+                    "window_end": "2026-08-07T20:00:00+09:00",
+                    "previous_research_cutoff": None,
+                    "previous_run_date": None,
+                    "bootstrap_lookback_days": 1,
+                },
+            }
+
+    monkeypatch.setattr(cli, "load_source_matrix", lambda path: {"source": "matrix"})
+    monkeypatch.setattr(cli, "resolve_research_window", lambda **kwargs: StubWindow())
+    monkeypatch.setattr(
+        cli,
+        "_write_json",
+        lambda path, payload, schema: captured.update(
+            {"path": path, "payload": payload, "schema": schema}
+        ),
+    )
+
+    result = cli.main(
+        [
+            "resolve-research-window",
+            "--target-date",
+            "2026-08-10",
+            "--previous-trading-day",
+            "2026-08-07",
+            "--runs-dir",
+            "runs",
+            "--output",
+            "runs/2026-08-10/research_window.json",
+        ]
+    )
+
+    assert result == 0
+    assert captured["schema"] == "research_window.schema.json"
+    assert captured["payload"]["research_window"]["run_type"] == "FIRST_RUN"
+
+
+def test_validate_market_research_command_rejects_window_file_mismatch(monkeypatch):
+    captured = {}
+    market_research = complete_candidate_research(market_research_payload())
+    resolved_window = {
+        "schema_version": 1,
+        "target_date": market_research["target_date"],
+        "previous_trading_day": market_research["previous_trading_day"],
+        "research_cutoff": market_research["research_cutoff"],
+        "research_window": {
+            **market_research["research_window"],
+            "window_start": "2026-08-06T21:00:00+09:00",
+        },
+    }
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "research_window.schema.json":
+            return resolved_window
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    with pytest.raises(ValueError, match="research_window.json"):
+        cli.main(
+            [
+                "validate-market-research",
+                "--market-research",
+                "market_research.json",
+                "--research-window",
+                "research_window.json",
+                "--output",
+                "market_research_validation.json",
+            ]
+        )
+
+    assert captured["valid"] is False
+    assert captured["errors"] == [
+        "market_research.research_window must match research_window.json",
+    ]
 
 
 def test_risk_check_command_generates_pass_payload(monkeypatch):
@@ -216,16 +309,67 @@ def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
             "sources.json",
             "--output",
             "risk_result.json",
-            "--current-positions",
-            "0",
-            "--trades-today",
-            "0",
         ]
     )
 
     assert result == 0
     assert captured["decision"] == "DATA_UNAVAILABLE"
     assert captured["status"] == "NOT_APPLICABLE"
+    assert captured["ticker"] is None
+
+
+def test_risk_check_requires_position_inputs_for_trade(monkeypatch):
+    strategy_version, config_sha256 = config_metadata()
+    recommendation = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "decision": "TRADE",
+        "ticker": "1234",
+        "company_name": "Example Co.",
+        "strategy_type": "previous_day_high_breakout",
+        "previous_high": "400",
+        "tick_size": "1",
+        "entry_trigger": "401",
+        "entry_limit": "402",
+        "take_profit": "410",
+        "stop_loss": "397",
+        "shares": 100,
+        "selection_reasons": ["test reason"],
+        "source_urls": ["https://example.test/source"],
+        "notes": None,
+    }
+    candidates = {
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "candidates": [{"ticker": "1234", "status": "ELIGIBLE"}],
+    }
+    monkeypatch.setattr(
+        cli,
+        "load_json_document",
+        lambda path, schema: recommendation
+        if schema == "recommendation.schema.json"
+        else candidates,
+    )
+
+    with pytest.raises(ValueError, match="current_positions and trades_today"):
+        cli.main(
+            [
+                "risk-check",
+                "--recommendation",
+                "recommendation.json",
+                "--candidates",
+                "candidates.json",
+                "--market-data",
+                "market_data.json",
+                "--sources",
+                "sources.json",
+                "--output",
+                "risk_result.json",
+            ]
+        )
 
 
 def test_risk_check_rejects_schema_invalid_recommendation(monkeypatch):

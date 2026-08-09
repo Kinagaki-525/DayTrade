@@ -71,6 +71,8 @@ $prepare-daytrade-planを明示実行
   ↓
 Source Matrixを検証
   ↓
+PythonがTDnet調査期間を確定
+  ↓
 メインCodexが読み取り専用サブエージェントへWeb調査を委譲
   ↓ 固定Discovery経路をmarket_research.jsonへ保存
 Source Matrix順にCandidate Research
@@ -144,11 +146,11 @@ VS Code上のCodexへ次のように依頼します。
 
 > `$prepare-daytrade-plan`
 
-詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。Skillは[prompts/nightly_research.md](prompts/nightly_research.md)を既存の詳細手順として読みます。CodexはWeb調査で確認した事実と評価を分け、すべての重要数値にURL・取得日時・取引日を保存します。
+詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。Skillは[prompts/nightly_research.md](prompts/nightly_research.md)を既存の詳細手順として読みます。CodexはWeb調査で確認した事実と評価を分け、すべての重要数値にURL・取得日時・取引日を保存します。TDnetの調査対象期間はPythonの`resolve-research-window`で確定し、初回だけ設定済みの24時間初回補完期間を使います。
 
 Pythonツールは外部Web接続なしで実行できます。直接実行する場合のコマンドは[prompts/nightly_research.md](prompts/nightly_research.md)を正本とします。
 
-保有数と当日取引数は人間が確認した値を明示し、未確認時に0と仮定しません。
+`TRADE`の場合、保有数と当日取引数は人間が確認した値を明示し、未確認時に0と仮定しません。`NO_TRADE`または`DATA_UNAVAILABLE`の場合は、これらを確認せずRisk Engine結果を`NOT_APPLICABLE`として保存します。
 `candidates.json`、`recommendation.json`、`risk_result.json`には戦略バージョンと設定内容のSHA-256を保存し、異なる実行日のファイルや設定を混在させた場合は処理を停止します。
 
 ## 記録と集計
