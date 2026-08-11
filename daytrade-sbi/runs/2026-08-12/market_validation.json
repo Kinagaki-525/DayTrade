@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "source_ledger": {
+    "valid": true,
+    "errors": []
+  },
+  "results": [
+    {
+      "ticker": "2146",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "2181",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3277",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3323",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3350",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3422",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3664",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3753",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "3926",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4005",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4052",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4169",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4360",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4406",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4564",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4597",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4689",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4755",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "4813",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "5401",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "543A",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "6425",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "6444",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "6740",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "6836",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "7201",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "7244",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "7567",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "8410",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "8729",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "8783",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "8918",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "9432",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "9434",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    },
+    {
+      "ticker": "9501",
+      "data_status": "VERIFIED",
+      "valid_for_trade": true,
+      "errors": [],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    }
+  ]
+}

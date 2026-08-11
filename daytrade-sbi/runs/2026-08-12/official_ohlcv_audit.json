@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "generated_at": "2026-08-11T13:32:18.072604+00:00",
+  "results": [
+    {
+      "ticker": "2146",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "2181",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3277",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3323",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3350",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3422",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3664",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3753",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "3926",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4005",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4052",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4169",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4360",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4406",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4564",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4597",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4689",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4755",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "4813",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "5401",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "543A",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "6425",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "6444",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "6740",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "6836",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "7201",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "7244",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "7567",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "8410",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "8729",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "8783",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "8918",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "9432",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "9434",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    },
+    {
+      "ticker": "9501",
+      "audit_status": "NOT_YET_AVAILABLE",
+      "differences": []
+    }
+  ]
+}

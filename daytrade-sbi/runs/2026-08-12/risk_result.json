@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "decision": "NO_TRADE",
+  "strategy_version": "v1",
+  "config_sha256": "d3631bc50e9dc52d61fe562d32ec8574d2c07a1cbf1128cd063696e293e140df",
+  "status": "NOT_APPLICABLE",
+  "ticker": null,
+  "required_capital_yen": null,
+  "expected_loss_yen": null,
+  "violations": []
+}
