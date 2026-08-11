@@ -7,6 +7,11 @@ from typing import Any
 
 from src.contracts import validate_json_document
 from src.source_matrix import DISCOVERY_SOURCE_IDS, DISCOVERY_TYPES, source_by_id
+from src.source_checks import (
+    INCOMPLETE_SOURCE_STATUSES,
+    list_text,
+    source_check_contract_errors,
+)
 from src.stage1 import (
     source_attempt_ids_from_payload,
     source_backed_stage1_reject,
@@ -16,8 +21,22 @@ from src.stage1 import (
 
 
 DISCOVERY_ORDER = ("VOLUME_RANKING", "PRICE_GAIN_RANKING")
-
-
+BLOCKING_DATA_STATUSES = {
+    "DATA_UNAVAILABLE",
+    "CONFLICT",
+    "SINGLE_SOURCE_ONLY",
+    "SOURCE_POLICY_UNDEFINED",
+}
+EXTERNAL_SOURCE_FAILURE_STATUSES = {
+    "NOT_FOUND",
+    "NOT_YET_AVAILABLE",
+    "ACCESS_FAILED",
+    "PARSE_FAILED",
+    "STALE",
+    "CONFLICT",
+    "SINGLE_SOURCE_ONLY",
+    "SOURCE_POLICY_UNDEFINED",
+}
 @dataclass(frozen=True)
 class MarketResearchValidationResult:
     valid: bool
@@ -156,13 +175,35 @@ def validate_market_research(
             "candidate_research is missing Discovery candidate ticker(s): "
             + ", ".join(missing_research)
         )
-        if payload["overall_status"] == "COMPLETE":
+        if discovery_complete and payload["overall_status"] != "PIPELINE_INCOMPLETE":
             errors.append(message)
         else:
             warnings.append(message)
 
+    unmerged_subagent_tickers = _unmerged_subagent_tickers(payload)
+    if unmerged_subagent_tickers and payload["overall_status"] != "PIPELINE_INCOMPLETE":
+        errors.append(
+            "subagent results were returned but not merged for ticker(s): "
+            + ", ".join(unmerged_subagent_tickers)
+        )
+
     for research in payload["candidate_research"]:
         errors.extend(stage1_contract_errors(research))
+        errors.extend(source_check_contract_errors(research))
+        errors.extend(
+            _source_check_reference_errors(
+                research,
+                valid_source_refs=valid_source_refs,
+                valid_source_attempt_ids=valid_source_attempt_ids,
+            )
+        )
+        if _research_is_incomplete(research):
+            ticker = str(research.get("ticker", "")).strip() or "<unknown>"
+            if payload["overall_status"] != "PIPELINE_INCOMPLETE":
+                errors.append(
+                    f"{ticker} has incomplete Candidate Research but "
+                    "overall_status is not PIPELINE_INCOMPLETE"
+                )
         source_policy_status = research.get("source_policy_status")
         if (
             source_policy_status == "SOURCE_POLICY_UNDEFINED"
@@ -182,6 +223,16 @@ def validate_market_research(
             errors.append(
                 f"{research['ticker']} has stage1_status=REJECTED without "
                 "source-backed stage1_checks"
+            )
+        if (
+            research.get("data_status") in BLOCKING_DATA_STATUSES
+            and research.get("stage1_status") != "REJECTED"
+            and not _has_data_unavailable_evidence(research)
+        ):
+            ticker = str(research.get("ticker", "")).strip() or "<unknown>"
+            errors.append(
+                f"{ticker} has data_status={research.get('data_status')} without "
+                "attempted source_checks or source_attempt_ids"
             )
 
     return MarketResearchValidationResult(
@@ -347,6 +398,100 @@ def _normalized_discovery_candidate(candidate: dict[str, Any]) -> dict[str, Any]
 
 def _stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _research_is_incomplete(research: dict[str, Any]) -> bool:
+    if any(
+        research.get(field_name) is None
+        for field_name in (
+            "source_policy_status",
+            "stage1_status",
+            "stage2_status",
+            "context_research_status",
+        )
+    ):
+        return True
+    if source_check_contract_errors(research):
+        return True
+    if research.get("universe_status") == "NOT_STARTED":
+        return True
+    if research.get("stage1_status") in {"NOT_STARTED"}:
+        return True
+    if research.get("stage2_status") == "IN_PROGRESS":
+        return True
+    if (
+        research.get("stage1_status") == "PASSED"
+        and research.get("stage2_status") == "NOT_STARTED"
+    ):
+        return True
+    if research.get("context_research_status") == "IN_PROGRESS":
+        return True
+    return any(
+        check.get("status") in INCOMPLETE_SOURCE_STATUSES
+        for check in research.get("source_checks", [])
+        if isinstance(check, dict)
+    )
+
+
+def _has_data_unavailable_evidence(research: dict[str, Any]) -> bool:
+    for check in research.get("source_checks", []):
+        if not isinstance(check, dict):
+            continue
+        if check.get("status") not in EXTERNAL_SOURCE_FAILURE_STATUSES:
+            continue
+        if list_text(check.get("source_attempt_ids")) or list_text(
+            check.get("source_refs")
+        ):
+            return True
+    return False
+
+
+def _source_check_reference_errors(
+    research: dict[str, Any],
+    *,
+    valid_source_refs: set[str] | None,
+    valid_source_attempt_ids: set[str] | None,
+) -> list[str]:
+    if valid_source_refs is None and valid_source_attempt_ids is None:
+        return []
+    ticker = str(research.get("ticker", "")).strip() or "<unknown>"
+    errors: list[str] = []
+    for index, check in enumerate(research.get("source_checks", [])):
+        if not isinstance(check, dict):
+            continue
+        missing_refs = [
+            item
+            for item in list_text(check.get("source_refs"))
+            if valid_source_refs is not None and item not in valid_source_refs
+        ]
+        missing_attempts = [
+            item
+            for item in list_text(check.get("source_attempt_ids"))
+            if valid_source_attempt_ids is not None and item not in valid_source_attempt_ids
+        ]
+        if missing_refs:
+            errors.append(
+                f"{ticker} source_checks[{index}].source_refs missing from "
+                "sources.json: " + ", ".join(missing_refs)
+            )
+        if missing_attempts:
+            errors.append(
+                f"{ticker} source_checks[{index}].source_attempt_ids missing from "
+                "sources.json: " + ", ".join(missing_attempts)
+            )
+    return errors
+
+
+def _unmerged_subagent_tickers(payload: dict[str, Any]) -> list[str]:
+    unmerged: set[str] = set()
+    for batch in payload.get("subagent_batches", []):
+        if not isinstance(batch, dict):
+            continue
+        returned = set(list_text(batch.get("returned_candidate_codes")))
+        merged = set(list_text(batch.get("merged_candidate_codes")))
+        if batch.get("lifecycle_status") in {"RETURNED", "VALIDATED"}:
+            unmerged.update(returned - merged)
+    return sorted(unmerged)
 
 
 def _research_window_errors(

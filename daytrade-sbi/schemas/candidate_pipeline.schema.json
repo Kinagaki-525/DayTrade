@@ -46,7 +46,14 @@
         "data_unavailable",
         "screened",
         "eligible",
-        "rejected"
+        "rejected",
+        "pipeline_complete",
+        "stage2_target_count",
+        "stage2_completed_count",
+        "stage2_unavailable_count",
+        "stage2_incomplete_count",
+        "coverage_rate",
+        "research_incomplete_reason_counts"
       ],
       "properties": {
         "discovered": {"type": "integer", "minimum": 0},
@@ -55,9 +62,30 @@
         "data_unavailable": {"type": "integer", "minimum": 0},
         "screened": {"type": "integer", "minimum": 0},
         "eligible": {"type": "integer", "minimum": 0},
-        "rejected": {"type": "integer", "minimum": 0}
+        "rejected": {"type": "integer", "minimum": 0},
+        "pipeline_complete": {"type": "boolean"},
+        "stage2_target_count": {"type": "integer", "minimum": 0},
+        "stage2_completed_count": {"type": "integer", "minimum": 0},
+        "stage2_unavailable_count": {"type": "integer", "minimum": 0},
+        "stage2_incomplete_count": {"type": "integer", "minimum": 0},
+        "coverage_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "research_incomplete_reason_counts": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/researchIncompleteReason"},
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
       },
       "additionalProperties": false
+    },
+    "researchIncompleteReason": {
+      "enum": [
+        "NOT_STARTED",
+        "IN_PROGRESS",
+        "SUBAGENT_RESULT_NOT_MERGED",
+        "DEPENDENCY_NOT_READY",
+        "EXECUTION_FAILED",
+        "UNKNOWN"
+      ]
     },
     "discoveryReason": {
       "type": "object",
@@ -87,7 +115,8 @@
         "completed_checks",
         "failed_checks",
         "source_attempt_ids",
-        "source_refs"
+        "source_refs",
+        "research_incomplete_reason"
       ],
       "properties": {
         "ticker": {"type": "string", "minLength": 1},
@@ -122,6 +151,12 @@
         "source_refs": {
           "type": "array",
           "items": {"type": "string", "minLength": 1}
+        },
+        "research_incomplete_reason": {
+          "oneOf": [
+            {"$ref": "#/$defs/researchIncompleteReason"},
+            {"type": "null"}
+          ]
         }
       },
       "additionalProperties": false

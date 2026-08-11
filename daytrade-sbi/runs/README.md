@@ -12,10 +12,14 @@ runs/YYYY-MM-DD/
   market_data.json
   market_validation.json
   candidates.json
+  candidate_pipeline.json
+  performance.json
   research.md
   recommendation.json
   recommendation.md
   risk_result.json
+  report.md
+  official_ohlcv_audit.json
   execution_result.json  # 完全決済済み取引がある場合だけ
 ```
 

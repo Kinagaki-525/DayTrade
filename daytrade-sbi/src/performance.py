@@ -39,6 +39,7 @@ def build_performance_payload(
     for candidate in candidate_pipeline.get("candidates", []):
         status = candidate["pipeline_status"]
         candidate_status_counts[status] = candidate_status_counts.get(status, 0) + 1
+    pipeline_summary = candidate_pipeline.get("summary", {})
 
     return {
         "schema_version": 1,
@@ -65,6 +66,16 @@ def build_performance_payload(
                 )
             ),
             "stage2_candidate_count": _count_stage2_candidates(candidate_research),
+            "stage2_completed_count": int(
+                pipeline_summary.get("stage2_completed_count", 0)
+            ),
+            "stage2_unavailable_count": int(
+                pipeline_summary.get("stage2_unavailable_count", 0)
+            ),
+            "stage2_incomplete_count": int(
+                pipeline_summary.get("stage2_incomplete_count", 0)
+            ),
+            "research_coverage_rate": pipeline_summary.get("coverage_rate"),
             "context_research_candidate_count": sum(
                 1
                 for research in candidate_research

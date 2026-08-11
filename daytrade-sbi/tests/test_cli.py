@@ -16,6 +16,39 @@ def config_metadata():
     return config["strategy_version"], strategy_config_sha256(config)
 
 
+def complete_pipeline_summary(**overrides):
+    summary = {
+        "discovered": 1,
+        "research_complete": 1,
+        "research_incomplete": 0,
+        "data_unavailable": 0,
+        "screened": 1,
+        "eligible": 1,
+        "rejected": 0,
+        "pipeline_complete": True,
+        "stage2_target_count": 1,
+        "stage2_completed_count": 1,
+        "stage2_unavailable_count": 0,
+        "stage2_incomplete_count": 0,
+        "coverage_rate": 1,
+        "research_incomplete_reason_counts": {},
+    }
+    summary.update(overrides)
+    return summary
+
+
+def complete_candidate_pipeline(strategy_version, config_sha256, **summary_overrides):
+    return {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "generated_at": "2026-08-09T00:00:00+00:00",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "summary": complete_pipeline_summary(**summary_overrides),
+        "candidates": [],
+    }
+
+
 def capture_validated_payload(captured):
     def capture(path, payload, schema):
         validate_json_document(payload, schema)
@@ -78,6 +111,13 @@ def test_build_candidate_pipeline_command_writes_payload(monkeypatch):
             "screened": 0,
             "eligible": 0,
             "rejected": 0,
+            "pipeline_complete": True,
+            "stage2_target_count": 0,
+            "stage2_completed_count": 0,
+            "stage2_unavailable_count": 0,
+            "stage2_incomplete_count": 0,
+            "coverage_rate": None,
+            "research_incomplete_reason_counts": {},
         },
         "candidates": [],
     }
@@ -135,11 +175,15 @@ def test_build_performance_command_writes_payload(monkeypatch):
             "cache_hit_count": 0,
             "discovery_candidate_count": 0,
             "stage1_candidate_count": 0,
-            "stage1_rejected_count": 0,
-            "stage2_candidate_count": 0,
-            "context_research_candidate_count": 0,
-            "candidate_status_counts": {},
-        },
+                "stage1_rejected_count": 0,
+                "stage2_candidate_count": 0,
+                "stage2_completed_count": 0,
+                "stage2_unavailable_count": 0,
+                "stage2_incomplete_count": 0,
+                "research_coverage_rate": None,
+                "context_research_candidate_count": 0,
+                "candidate_status_counts": {},
+            },
         "timings": {
             "total": None,
             "calendar_check": None,
@@ -182,6 +226,216 @@ def test_build_performance_command_writes_payload(monkeypatch):
 
     assert result == 0
     assert captured["counts"]["source_request_count"] == 0
+
+
+def test_render_research_command_writes_structured_report(monkeypatch):
+    captured = {}
+    strategy_version, config_sha256 = config_metadata()
+    market_research = {
+        "target_date": "2026-08-10",
+        "previous_trading_day": "2026-08-07",
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "discovery": [],
+    }
+    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    sources = {"target_date": "2026-08-10", "sources": [], "source_attempts": []}
+    performance = {
+        "target_date": "2026-08-10",
+        "counts": {
+            "source_request_count": 0,
+            "adopted_source_count": 0,
+            "cache_hit_count": 0,
+        },
+    }
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        if schema == "sources.schema.json":
+            return sources
+        if schema == "performance.schema.json":
+            return performance
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+    monkeypatch.setattr(
+        cli,
+        "atomic_write_text",
+        lambda path, text: captured.update({"path": path, "text": text}),
+    )
+
+    result = cli.main(
+        [
+            "render-research",
+            "--market-research",
+            "market_research.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
+            "--sources",
+            "sources.json",
+            "--performance",
+            "performance.json",
+            "--output",
+            "research.md",
+        ]
+    )
+
+    assert result == 0
+    assert captured["path"] == Path("research.md")
+    assert "市場調査レポート" in captured["text"]
+
+
+def test_render_research_rejects_mismatched_performance_date(monkeypatch):
+    strategy_version, config_sha256 = config_metadata()
+    market_research = {
+        "target_date": "2026-08-10",
+        "previous_trading_day": "2026-08-07",
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "discovery": [],
+    }
+    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    sources = {"target_date": "2026-08-10", "sources": [], "source_attempts": []}
+    performance = {"target_date": "2026-08-11", "counts": {}}
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        if schema == "sources.schema.json":
+            return sources
+        if schema == "performance.schema.json":
+            return performance
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+
+    with pytest.raises(ValueError, match="market_research/performance"):
+        cli.main(
+            [
+                "render-research",
+                "--market-research",
+                "market_research.json",
+                "--candidate-pipeline",
+                "candidate_pipeline.json",
+                "--sources",
+                "sources.json",
+                "--performance",
+                "performance.json",
+                "--output",
+                "research.md",
+            ]
+        )
+
+
+def test_render_daily_report_command_writes_structured_report(monkeypatch):
+    captured = {}
+    strategy_version, config_sha256 = config_metadata()
+    market_research = {
+        "target_date": "2026-08-10",
+        "previous_trading_day": "2026-08-07",
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "discovery": [],
+    }
+    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    sources = {"target_date": "2026-08-10", "sources": [], "source_attempts": []}
+    performance = {
+        "target_date": "2026-08-10",
+        "counts": {
+            "source_request_count": 0,
+            "adopted_source_count": 0,
+            "cache_hit_count": 0,
+        },
+    }
+    recommendation = {
+        "target_date": "2026-08-10",
+        "decision": "NO_TRADE",
+        "ticker": None,
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "selection_reasons": ["該当候補なし"],
+        "source_urls": [],
+        "pipeline_summary": candidate_pipeline["summary"],
+    }
+    risk_result = {
+        "target_date": "2026-08-10",
+        "decision": "NO_TRADE",
+        "ticker": None,
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "status": "NOT_APPLICABLE",
+    }
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        if schema == "sources.schema.json":
+            return sources
+        if schema == "performance.schema.json":
+            return performance
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "risk_result.schema.json":
+            return risk_result
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+    monkeypatch.setattr(
+        cli,
+        "atomic_write_text",
+        lambda path, text: captured.update({"path": path, "text": text}),
+    )
+
+    result = cli.main(
+        [
+            "render-daily-report",
+            "--market-research",
+            "market_research.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
+            "--sources",
+            "sources.json",
+            "--performance",
+            "performance.json",
+            "--recommendation",
+            "recommendation.json",
+            "--risk-result",
+            "risk_result.json",
+            "--output",
+            "report.md",
+        ]
+    )
+
+    assert result == 0
+    assert captured["path"] == Path("report.md")
+    assert "日次デイトレ計画レポート" in captured["text"]
+
+
+def test_validate_run_artifacts_command_rejects_unexpected_files(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        cli,
+        "validate_run_artifact_allowlist",
+        lambda run_dir: ("tmp_pydeps",),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_emit_json",
+        lambda payload, output_path=None: captured.update(payload),
+    )
+
+    with pytest.raises(ValueError, match="unexpected artifact"):
+        cli.main(["validate-run-artifacts", "--run-dir", "runs/2026-08-10"])
+
+    assert captured == {
+        "status": "INVALID",
+        "unexpected_files": ["tmp_pydeps"],
+    }
 
 
 def test_validate_source_matrix_command_reports_valid(monkeypatch):
@@ -377,12 +631,20 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
         "config_sha256": config_sha256,
         "candidates": [{"ticker": "1234", "status": "ELIGIBLE"}],
     }
+    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    recommendation["pipeline_summary"] = candidate_pipeline["summary"]
+
+    def load_document(path, schema):
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        return candidates
+
     monkeypatch.setattr(
         cli,
         "load_json_document",
-        lambda path, schema: recommendation
-        if schema == "recommendation.schema.json"
-        else candidates,
+        load_document,
     )
     monkeypatch.setattr(
         cli,
@@ -413,6 +675,8 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
             "recommendation.json",
             "--candidates",
             "candidates.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
             "--market-data",
             "market_data.json",
             "--sources",
@@ -461,12 +725,29 @@ def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
         "config_sha256": config_sha256,
         "candidates": [{"ticker": "1234", "status": "DATA_UNAVAILABLE"}],
     }
+    candidate_pipeline = complete_candidate_pipeline(
+        strategy_version,
+        config_sha256,
+        research_complete=0,
+        data_unavailable=1,
+        screened=0,
+        eligible=0,
+        stage2_completed_count=0,
+        stage2_unavailable_count=1,
+    )
+    recommendation["pipeline_summary"] = candidate_pipeline["summary"]
+
+    def load_document(path, schema):
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        return candidates
+
     monkeypatch.setattr(
         cli,
         "load_json_document",
-        lambda path, schema: recommendation
-        if schema == "recommendation.schema.json"
-        else candidates,
+        load_document,
     )
     monkeypatch.setattr(
         cli,
@@ -488,6 +769,8 @@ def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
             "recommendation.json",
             "--candidates",
             "candidates.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
             "--market-data",
             "market_data.json",
             "--sources",
@@ -501,6 +784,77 @@ def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
     assert captured["decision"] == "DATA_UNAVAILABLE"
     assert captured["status"] == "NOT_APPLICABLE"
     assert captured["ticker"] is None
+
+
+def test_risk_check_rejects_incomplete_candidate_pipeline(monkeypatch):
+    strategy_version, config_sha256 = config_metadata()
+    recommendation = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "decision": "NO_TRADE",
+        "ticker": None,
+        "company_name": None,
+        "strategy_type": None,
+        "previous_high": None,
+        "tick_size": None,
+        "entry_trigger": None,
+        "entry_limit": None,
+        "take_profit": None,
+        "stop_loss": None,
+        "shares": None,
+        "selection_reasons": ["pipeline incomplete"],
+        "source_urls": [],
+        "notes": None,
+    }
+    candidates = {
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "candidates": [],
+    }
+    candidate_pipeline = complete_candidate_pipeline(
+        strategy_version,
+        config_sha256,
+        research_complete=0,
+        research_incomplete=1,
+        screened=0,
+        eligible=0,
+        pipeline_complete=False,
+        stage2_completed_count=0,
+        stage2_incomplete_count=1,
+        coverage_rate=0,
+        research_incomplete_reason_counts={"NOT_STARTED": 1},
+    )
+
+    def load_document(path, schema):
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        return candidates
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+
+    with pytest.raises(ValueError, match="candidate_pipeline is not complete"):
+        cli.main(
+            [
+                "risk-check",
+                "--recommendation",
+                "recommendation.json",
+                "--candidates",
+                "candidates.json",
+                "--candidate-pipeline",
+                "candidate_pipeline.json",
+                "--market-data",
+                "market_data.json",
+                "--sources",
+                "sources.json",
+                "--output",
+                "risk_result.json",
+            ]
+        )
 
 
 def test_risk_check_requires_position_inputs_for_trade(monkeypatch):
@@ -531,12 +885,20 @@ def test_risk_check_requires_position_inputs_for_trade(monkeypatch):
         "config_sha256": config_sha256,
         "candidates": [{"ticker": "1234", "status": "ELIGIBLE"}],
     }
+    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    recommendation["pipeline_summary"] = candidate_pipeline["summary"]
+
+    def load_document(path, schema):
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        return candidates
+
     monkeypatch.setattr(
         cli,
         "load_json_document",
-        lambda path, schema: recommendation
-        if schema == "recommendation.schema.json"
-        else candidates,
+        load_document,
     )
 
     with pytest.raises(ValueError, match="current_positions and trades_today"):
@@ -547,6 +909,8 @@ def test_risk_check_requires_position_inputs_for_trade(monkeypatch):
                 "recommendation.json",
                 "--candidates",
                 "candidates.json",
+                "--candidate-pipeline",
+                "candidate_pipeline.json",
                 "--market-data",
                 "market_data.json",
                 "--sources",
@@ -568,11 +932,13 @@ def test_risk_check_rejects_schema_invalid_recommendation(monkeypatch):
             [
                 "risk-check",
                 "--recommendation",
-                str(Path("recommendation.json")),
-                "--candidates",
-                str(Path("candidates.json")),
-                "--market-data",
-                str(Path("market_data.json")),
+                    str(Path("recommendation.json")),
+                    "--candidates",
+                    str(Path("candidates.json")),
+                    "--candidate-pipeline",
+                    str(Path("candidate_pipeline.json")),
+                    "--market-data",
+                    str(Path("market_data.json")),
                 "--sources",
                 str(Path("sources.json")),
                 "--output",

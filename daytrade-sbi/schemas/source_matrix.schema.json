@@ -62,6 +62,7 @@
           "enum": [
             "TRADING_CALENDAR",
             "LISTED_COMPANY",
+            "TRADING_UNIT",
             "VOLUME_RANKING",
             "PRICE_GAIN_RANKING",
             "OHLCV",

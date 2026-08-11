@@ -14,6 +14,12 @@ from src.stage1 import (
     stage1_contract_errors,
     stage1_reject_evidence_error,
 )
+from src.source_checks import (
+    INCOMPLETE_SOURCE_STATUSES,
+    list_text,
+    normalize_source_checks,
+    source_check_contract_errors,
+)
 
 
 PIPELINE_STATUSES = (
@@ -60,6 +66,7 @@ def build_candidate_pipeline(
     sources = source_payload.get("sources", [])
     valid_source_refs = source_refs_from_payload(source_payload)
     valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
+    unmerged_subagent_tickers = _unmerged_subagent_tickers(market_research)
 
     pipeline_candidates = []
     for discovery_candidate in market_research.get("discovery_candidates", []):
@@ -84,8 +91,16 @@ def build_candidate_pipeline(
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
         )
+        if ticker in unmerged_subagent_tickers:
+            status = "RESEARCH_IN_PROGRESS"
         reasons = _status_reasons(research, screening)
         missing = _missing_requirements(status, research, record, reasons)
+        incomplete_reason = _research_incomplete_reason(
+            ticker,
+            status,
+            research,
+            unmerged_subagent_tickers,
+        )
         source_attempt_ids = _source_attempt_ids(ticker, research, source_attempts)
         source_refs = _source_refs(ticker, sources, record, research)
         pipeline_candidates.append(
@@ -95,7 +110,13 @@ def build_candidate_pipeline(
                 "market": discovery_candidate.get("market"),
                 "discovery_reasons": discovery_candidate["discovery_reasons"],
                 "pipeline_status": status,
-                "reason_codes": _reason_codes(status, reasons, missing, research),
+                "reason_codes": _reason_codes(
+                    status,
+                    reasons,
+                    missing,
+                    research,
+                    incomplete_reason,
+                ),
                 "missing_requirements": missing,
                 "completed_checks": _completed_checks(research, record, screening),
                 "failed_checks": _failed_checks(
@@ -107,10 +128,16 @@ def build_candidate_pipeline(
                 ),
                 "source_attempt_ids": source_attempt_ids,
                 "source_refs": source_refs,
+                "research_incomplete_reason": incomplete_reason,
             }
         )
 
-    summary = _summary(pipeline_candidates, screening_by_ticker)
+    summary = _summary(
+        pipeline_candidates,
+        screening_by_ticker,
+        research_by_ticker,
+        unmerged_subagent_tickers,
+    )
     return {
         "schema_version": 1,
         "target_date": market_research["target_date"],
@@ -136,6 +163,10 @@ def _pipeline_status(
         return "SCREENED"
     if research is None:
         return "DISCOVERED"
+    if _has_incomplete_research_contract(research):
+        return "RESEARCH_IN_PROGRESS"
+    if _has_incomplete_source_check(research):
+        return "RESEARCH_IN_PROGRESS"
     if research.get("stage1_status") == "REJECTED":
         if source_backed_stage1_reject(
             research,
@@ -149,6 +180,11 @@ def _pipeline_status(
         research.get("stage2_status"),
         research.get("context_research_status"),
     }:
+        return "RESEARCH_IN_PROGRESS"
+    if (
+        research.get("stage1_status") == "PASSED"
+        and research.get("stage2_status") == "NOT_STARTED"
+    ):
         return "RESEARCH_IN_PROGRESS"
     data_status = research.get("data_status")
     if data_status == "VERIFIED":
@@ -225,6 +261,7 @@ def _reason_codes(
     reasons: list[str],
     missing: list[str],
     research: dict[str, Any] | None,
+    incomplete_reason: str | None,
 ) -> list[str]:
     codes = []
     if research is not None:
@@ -240,6 +277,8 @@ def _reason_codes(
         codes = [f"{item.upper()}_UNAVAILABLE" for item in missing]
     if status == "DISCOVERED":
         codes.append("RESEARCH_NOT_STARTED")
+    if incomplete_reason and incomplete_reason not in codes:
+        codes.append(incomplete_reason)
     return _unique(code for code in codes if code)
 
 
@@ -292,6 +331,10 @@ def _failed_checks(
     if status not in {"DATA_UNAVAILABLE", "REJECTED", "RESEARCH_IN_PROGRESS"}:
         return failed
     failed.extend(f"missing:{requirement}" for requirement in missing)
+    for check in _source_checks(research):
+        if check["status"] in {"FOUND", "NOT_REQUIRED"}:
+            continue
+        failed.append(f"source:{check['check_id']}:{check['status']}")
     return _unique(failed)
 
 
@@ -359,24 +402,146 @@ def _list_field(mapping: dict[str, Any], field_name: str) -> list[str]:
 def _summary(
     pipeline_candidates: list[dict[str, Any]],
     screening_by_ticker: dict[str, dict[str, Any]],
-) -> dict[str, int]:
+    research_by_ticker: dict[str, dict[str, Any]],
+    unmerged_subagent_tickers: set[str],
+) -> dict[str, Any]:
     status_counts: dict[str, int] = {status: 0 for status in PIPELINE_STATUSES}
     for candidate in pipeline_candidates:
         status_counts[candidate["pipeline_status"]] += 1
+    stage2_target_tickers = {
+        candidate["ticker"]
+        for candidate in pipeline_candidates
+        if research_by_ticker.get(candidate["ticker"], {}).get("stage1_status")
+        == "PASSED"
+    }
+    stage2_completed_count = sum(
+        1
+        for candidate in pipeline_candidates
+        if candidate["ticker"] in stage2_target_tickers
+        and candidate["pipeline_status"]
+        in {"RESEARCH_COMPLETE", "SCREENED", "ELIGIBLE", "REJECTED"}
+    )
+    stage2_unavailable_count = sum(
+        1
+        for candidate in pipeline_candidates
+        if candidate["ticker"] in stage2_target_tickers
+        and candidate["pipeline_status"] == "DATA_UNAVAILABLE"
+    )
+    stage2_target_count = len(stage2_target_tickers)
+    stage2_incomplete_count = max(
+        0,
+        stage2_target_count - stage2_completed_count - stage2_unavailable_count,
+    )
+    coverage_rate = (
+        None
+        if stage2_target_count == 0
+        else (stage2_completed_count + stage2_unavailable_count) / stage2_target_count
+    )
+    incomplete_reason_counts: dict[str, int] = {}
+    for candidate in pipeline_candidates:
+        reason = candidate.get("research_incomplete_reason")
+        if reason is None:
+            continue
+        incomplete_reason_counts[reason] = incomplete_reason_counts.get(reason, 0) + 1
+    research_incomplete = sum(
+        status_counts[status] for status in ("DISCOVERED", "RESEARCH_IN_PROGRESS")
+    )
     return {
         "discovered": len(pipeline_candidates),
         "research_complete": sum(
             status_counts[status]
             for status in ("RESEARCH_COMPLETE", "SCREENED", "ELIGIBLE", "REJECTED")
         ),
-        "research_incomplete": sum(
-            status_counts[status] for status in ("DISCOVERED", "RESEARCH_IN_PROGRESS")
-        ),
+        "research_incomplete": research_incomplete,
         "data_unavailable": status_counts["DATA_UNAVAILABLE"],
         "screened": len(screening_by_ticker),
         "eligible": status_counts["ELIGIBLE"],
         "rejected": status_counts["REJECTED"],
+        "pipeline_complete": research_incomplete == 0 and not unmerged_subagent_tickers,
+        "stage2_target_count": stage2_target_count,
+        "stage2_completed_count": stage2_completed_count,
+        "stage2_unavailable_count": stage2_unavailable_count,
+        "stage2_incomplete_count": stage2_incomplete_count,
+        "coverage_rate": coverage_rate,
+        "research_incomplete_reason_counts": incomplete_reason_counts,
     }
+
+
+def _research_incomplete_reason(
+    ticker: str,
+    status: str,
+    research: dict[str, Any] | None,
+    unmerged_subagent_tickers: set[str],
+) -> str | None:
+    if status not in {"DISCOVERED", "RESEARCH_IN_PROGRESS"}:
+        return None
+    if ticker in unmerged_subagent_tickers:
+        return "SUBAGENT_RESULT_NOT_MERGED"
+    if research is None:
+        return "NOT_STARTED"
+    if _has_incomplete_research_contract(research):
+        return "NOT_STARTED"
+    source_statuses = {
+        check["status"]
+        for check in _source_checks(research)
+        if check["status"] in INCOMPLETE_SOURCE_STATUSES
+    }
+    if "EXECUTION_FAILED" in source_statuses:
+        return "EXECUTION_FAILED"
+    if "DEPENDENCY_NOT_READY" in source_statuses:
+        return "DEPENDENCY_NOT_READY"
+    if "IN_PROGRESS" in {
+        research.get("stage1_status"),
+        research.get("stage2_status"),
+        research.get("context_research_status"),
+    }:
+        return "IN_PROGRESS"
+    if "NOT_STARTED" in source_statuses:
+        return "NOT_STARTED"
+    if (
+        research.get("stage1_status") == "PASSED"
+        and research.get("stage2_status") == "NOT_STARTED"
+    ):
+        return "NOT_STARTED"
+    return "UNKNOWN"
+
+
+def _source_checks(research: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return normalize_source_checks(research)
+
+
+def _has_incomplete_research_contract(research: dict[str, Any]) -> bool:
+    required_statuses = (
+        "source_policy_status",
+        "stage1_status",
+        "stage2_status",
+        "context_research_status",
+    )
+    return any(
+        research.get(field_name) is None for field_name in required_statuses
+    ) or bool(
+        source_check_contract_errors(research)
+    )
+
+
+def _has_incomplete_source_check(research: dict[str, Any]) -> bool:
+    return any(
+        check["status"] in INCOMPLETE_SOURCE_STATUSES
+        for check in _source_checks(research)
+    )
+
+
+def _unmerged_subagent_tickers(market_research: dict[str, Any]) -> set[str]:
+    tickers: set[str] = set()
+    for batch in market_research.get("subagent_batches", []):
+        if not isinstance(batch, dict):
+            continue
+        if batch.get("lifecycle_status") not in {"RETURNED", "VALIDATED"}:
+            continue
+        returned = set(list_text(batch.get("returned_candidate_codes")))
+        merged = set(list_text(batch.get("merged_candidate_codes")))
+        tickers.update(returned - merged)
+    return tickers
 
 
 def _code_from_text(value: str) -> str:

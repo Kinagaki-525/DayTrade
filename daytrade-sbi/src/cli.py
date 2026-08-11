@@ -18,10 +18,14 @@ from src.contracts import (
     load_json_document,
     validate_candidate_pipeline_inputs,
     validate_json_document,
+    validate_daily_report_inputs,
     validate_performance_inputs,
     validate_recommendation_candidate_link,
+    validate_recommendation_pipeline_link,
     validate_recommendation_risk_link,
     validate_recommendation_sources,
+    validate_research_report_inputs,
+    validate_run_artifact_allowlist,
 )
 from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
@@ -36,7 +40,7 @@ from src.market import (
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
 from src.recommendations import append_recommendation, recommendation_to_row
-from src.reports import render_sbi_report
+from src.reports import render_daily_report, render_research_report, render_sbi_report
 from src.research import (
     MarketDataResearchAlignmentResult,
     MarketResearchValidationResult,
@@ -129,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser = subparsers.add_parser("risk-check")
     risk_parser.add_argument("--recommendation", required=True, type=Path)
     risk_parser.add_argument("--candidates", required=True, type=Path)
+    risk_parser.add_argument("--candidate-pipeline", required=True, type=Path)
     risk_parser.add_argument("--market-data", required=True, type=Path)
     risk_parser.add_argument("--sources", required=True, type=Path)
     risk_parser.add_argument(
@@ -157,6 +162,22 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--risk-result", required=True, type=Path)
     report_parser.add_argument("--output", required=True, type=Path)
 
+    research_report_parser = subparsers.add_parser("render-research")
+    research_report_parser.add_argument("--market-research", required=True, type=Path)
+    research_report_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    research_report_parser.add_argument("--sources", required=True, type=Path)
+    research_report_parser.add_argument("--performance", required=True, type=Path)
+    research_report_parser.add_argument("--output", required=True, type=Path)
+
+    daily_report_parser = subparsers.add_parser("render-daily-report")
+    daily_report_parser.add_argument("--market-research", required=True, type=Path)
+    daily_report_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    daily_report_parser.add_argument("--sources", required=True, type=Path)
+    daily_report_parser.add_argument("--performance", required=True, type=Path)
+    daily_report_parser.add_argument("--recommendation", required=True, type=Path)
+    daily_report_parser.add_argument("--risk-result", required=True, type=Path)
+    daily_report_parser.add_argument("--output", required=True, type=Path)
+
     record_parser = subparsers.add_parser("record-recommendation")
     record_parser.add_argument("--recommendation", required=True, type=Path)
     record_parser.add_argument("--risk-result", required=True, type=Path)
@@ -173,6 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_parser = subparsers.add_parser("calculate-metrics")
     metrics_parser.add_argument("--csv", type=Path, default=DEFAULT_TRADES_PATH)
     metrics_parser.add_argument("--output", type=Path)
+
+    run_artifacts_parser = subparsers.add_parser("validate-run-artifacts")
+    run_artifacts_parser.add_argument("--run-dir", required=True, type=Path)
+    run_artifacts_parser.add_argument("--output", type=Path)
     return parser
 
 
@@ -237,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         return _risk_check(
             args.recommendation,
             args.candidates,
+            args.candidate_pipeline,
             args.market_data,
             args.sources,
             args.output,
@@ -255,6 +281,24 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "render-report":
         return _render_report(args.recommendation, args.risk_result, args.output)
+    if args.command == "render-research":
+        return _render_research(
+            args.market_research,
+            args.candidate_pipeline,
+            args.sources,
+            args.performance,
+            args.output,
+        )
+    if args.command == "render-daily-report":
+        return _render_daily_report(
+            args.market_research,
+            args.candidate_pipeline,
+            args.sources,
+            args.performance,
+            args.recommendation,
+            args.risk_result,
+            args.output,
+        )
     if args.command == "record-recommendation":
         return _record_recommendation(args.recommendation, args.risk_result, args.csv)
     if args.command == "validate-execution":
@@ -284,6 +328,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "calculate-metrics":
         _emit_json(calculate_metrics_from_csv(args.csv), args.output)
+        return 0
+    if args.command == "validate-run-artifacts":
+        unexpected = validate_run_artifact_allowlist(args.run_dir)
+        payload = {
+            "status": "VALID" if not unexpected else "INVALID",
+            "unexpected_files": list(unexpected),
+        }
+        _emit_json(payload, args.output)
+        if unexpected:
+            raise ValueError(
+                "run directory contains unexpected artifact(s): "
+                + ", ".join(unexpected)
+            )
         return 0
     raise ValueError(f"Unknown command: {args.command}")
 
@@ -405,6 +462,7 @@ def _screen_market(
 def _risk_check(
     recommendation_path: Path,
     candidates_path: Path,
+    candidate_pipeline_path: Path,
     market_data_path: Path,
     sources_path: Path,
     output_path: Path,
@@ -419,7 +477,12 @@ def _risk_check(
         "recommendation.schema.json",
     )
     candidates = load_json_document(candidates_path, "candidates.schema.json")
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path,
+        "candidate_pipeline.schema.json",
+    )
     validate_recommendation_candidate_link(recommendation, candidates)
+    validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
     decision = recommendation.get("decision")
     if decision == "TRADE" and (current_positions is None or trades_today is None):
         raise ValueError(
@@ -589,6 +652,87 @@ def _render_report(
     atomic_write_text(
         output_path,
         render_sbi_report(recommendation, risk_result),
+    )
+    return 0
+
+
+def _render_research(
+    market_research_path: Path,
+    candidate_pipeline_path: Path,
+    sources_path: Path,
+    performance_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path,
+        "candidate_pipeline.schema.json",
+    )
+    sources = load_json_document(sources_path, "sources.schema.json")
+    performance = load_json_document(performance_path, "performance.schema.json")
+    validate_research_report_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=sources,
+        performance=performance,
+    )
+    atomic_write_text(
+        output_path,
+        render_research_report(
+            market_research,
+            candidate_pipeline,
+            sources,
+            performance,
+        ),
+    )
+    return 0
+
+
+def _render_daily_report(
+    market_research_path: Path,
+    candidate_pipeline_path: Path,
+    sources_path: Path,
+    performance_path: Path,
+    recommendation_path: Path,
+    risk_result_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path,
+        "candidate_pipeline.schema.json",
+    )
+    sources = load_json_document(sources_path, "sources.schema.json")
+    performance = load_json_document(performance_path, "performance.schema.json")
+    recommendation = load_json_document(
+        recommendation_path,
+        "recommendation.schema.json",
+    )
+    risk_result = load_json_document(risk_result_path, "risk_result.schema.json")
+    validate_daily_report_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=sources,
+        performance=performance,
+        recommendation=recommendation,
+        risk_result=risk_result,
+    )
+    atomic_write_text(
+        output_path,
+        render_daily_report(
+            market_research,
+            candidate_pipeline,
+            sources,
+            performance,
+            recommendation,
+            risk_result,
+        ),
     )
     return 0
 

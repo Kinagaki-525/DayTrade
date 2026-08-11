@@ -1,0 +1,43 @@
+config_schema_version: 2
+strategy_version: "v1"
+validation_status: unvalidated
+
+account:
+  broker: sbi
+  market: japanese_stocks
+  account_type: cash
+
+capital:
+  total_yen: 50000
+  position_size: 100
+
+risk:
+  max_loss_per_trade_yen: 500
+  max_positions: 1
+  max_trades_per_day: 1
+  averaging_down: false
+  overnight_hold: false
+  short_selling: false
+  margin_trading: false
+
+strategy:
+  allowed:
+    - previous_day_high_breakout
+
+previous_day_high_breakout:
+  trigger_ticks: 1
+  entry_limit_offset_ticks: 1
+
+exit:
+  take_profit_yen: 800
+
+screening:
+  minimum_volume: null
+  minimum_turnover: null
+  minimum_price: null
+  maximum_price: null
+  maximum_spread: null
+  minimum_daily_range: null
+  maximum_gap_percent: null
+  exclude_earnings: null
+  exclude_special_disclosures: null

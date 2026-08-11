@@ -80,6 +80,7 @@
         "security_type": {"type": ["string", "null"]},
         "source_policy_status": {
           "enum": [
+            "NOT_STARTED",
             "FOUND",
             "NOT_FOUND",
             "NOT_YET_AVAILABLE",
@@ -89,6 +90,9 @@
             "CONFLICT",
             "SINGLE_SOURCE_ONLY",
             "SOURCE_POLICY_UNDEFINED",
+            "NOT_REQUIRED",
+            "DEPENDENCY_NOT_READY",
+            "EXECUTION_FAILED",
             null
           ]
         },
@@ -146,6 +150,10 @@
             "CONFLICT",
             "SINGLE_SOURCE_ONLY",
             "SOURCE_POLICY_UNDEFINED",
+            "NOT_STARTED",
+            "NOT_REQUIRED",
+            "DEPENDENCY_NOT_READY",
+            "EXECUTION_FAILED",
             "NOT_YET_AVAILABLE",
             "PARSE_FAILED",
             "ACCESS_FAILED",

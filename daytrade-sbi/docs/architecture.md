@@ -28,7 +28,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/source_matrix.py` | Source Matrixの構造検証と標準Source ID管理 |
 | `src/research_window.py` | TDnet調査期間を、初回補完期間または前回cutoffから決定 |
 | `src/research.py` | Discovery成果物の検証とDiscovery候補Union |
-| `src/market.py` | 市場データ、Source試行、OHLCV二重確認、後日監査 |
+| `src/market.py` | 市場データ、出典取得試行、OHLCV二重確認、後日監査 |
 | `src/candidate_pipeline.py` | Discovery後の候補を下流で消さず、候補単位のパイプライン状態と集計を生成 |
 | `src/performance.py` | Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に集計 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |

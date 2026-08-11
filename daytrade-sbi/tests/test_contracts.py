@@ -1,9 +1,14 @@
+from pathlib import Path
+import shutil
+
 import pytest
 
 from src.contracts import (
+    validate_run_artifact_allowlist,
     validate_candidate_pipeline_inputs,
     validate_performance_inputs,
     validate_recommendation_candidate_link,
+    validate_recommendation_pipeline_link,
     validate_recommendation_risk_link,
     validate_recommendation_sources,
 )
@@ -36,6 +41,72 @@ def test_data_unavailable_recommendation_does_not_require_eligible_candidate():
     }
 
     validate_recommendation_candidate_link(recommendation, candidates)
+
+
+def test_recommendation_pipeline_link_rejects_incomplete_pipeline():
+    recommendation = {
+        **METADATA,
+        "decision": "NO_TRADE",
+        "ticker": None,
+        "pipeline_summary": {
+            "discovered": 1,
+            "research_complete": 0,
+            "research_incomplete": 1,
+            "data_unavailable": 0,
+            "screened": 0,
+            "eligible": 0,
+            "rejected": 0,
+        },
+    }
+    candidate_pipeline = {
+        **METADATA,
+        "summary": {
+            "discovered": 1,
+            "research_complete": 0,
+            "research_incomplete": 1,
+            "data_unavailable": 0,
+            "screened": 0,
+            "eligible": 0,
+            "rejected": 0,
+            "pipeline_complete": False,
+        },
+    }
+
+    with pytest.raises(ValueError, match="not complete"):
+        validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+
+
+def test_recommendation_pipeline_link_requires_summary_counts_to_match():
+    recommendation = {
+        **METADATA,
+        "decision": "NO_TRADE",
+        "ticker": None,
+        "pipeline_summary": {
+            "discovered": 1,
+            "research_complete": 1,
+            "research_incomplete": 0,
+            "data_unavailable": 0,
+            "screened": 1,
+            "eligible": 0,
+            "rejected": 1,
+        },
+    }
+    candidate_pipeline = {
+        **METADATA,
+        "summary": {
+            "discovered": 1,
+            "research_complete": 1,
+            "research_incomplete": 0,
+            "data_unavailable": 0,
+            "screened": 1,
+            "eligible": 1,
+            "rejected": 0,
+            "pipeline_complete": True,
+        },
+    }
+
+    with pytest.raises(ValueError, match="eligible does not match"):
+        validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
 
 
 def test_recommendation_and_risk_result_must_use_same_config():
@@ -170,3 +241,20 @@ def test_performance_inputs_must_use_same_target_date():
             candidate_pipeline={"target_date": "2026-08-11"},
             source_payload={"target_date": "2026-08-10"},
         )
+
+
+def test_run_artifact_allowlist_detects_temporary_files():
+    run_dir = Path("tests/.tmp/run_allowlist")
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    try:
+        run_dir.mkdir(parents=True)
+        (run_dir / "market_research.json").write_text("{}", encoding="utf-8")
+        (run_dir / "tmp_pydeps").mkdir()
+        (run_dir / "parser.py").write_text("# temp", encoding="utf-8")
+
+        unexpected = validate_run_artifact_allowlist(run_dir)
+
+        assert unexpected == ("parser.py", "tmp_pydeps")
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)

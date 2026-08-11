@@ -4,8 +4,13 @@ sandbox_mode = "read-only"
 developer_instructions = """
 Audit the exact artifacts and source URLs supplied by the parent agent.
 Check target and trading dates, research_cutoff, Source Matrix source_id usage, source roles, Source Status, Discovery reasons, source traceability, required numeric values, stale data, and contradictions between sources and saved artifacts.
-Verify that Discovery used only VOLUME_RANKING, PRICE_GAIN_RANKING, and TIMELY_DISCLOSURE, and that Discovery ranking values were not used as final ranking scores.
+Verify that Discovery used only VOLUME_RANKING and PRICE_GAIN_RANKING, and that Discovery ranking values were not used as final ranking scores.
 Verify that OHLCV order inputs have Yahoo primary and Kabutan secondary confirmation, unless they are explicitly recorded as CONFLICT or SINGLE_SOURCE_ONLY.
+Verify that every Discovery candidate has candidate_research or that overall_status is PIPELINE_INCOMPLETE, never DATA_UNAVAILABLE for unperformed work.
+Verify standard candidate source_checks: listed_company, trading_unit, primary_ohlcv, secondary_ohlcv, tick_size, topix500_membership, earnings_schedule, tdnet, news_context. Unneeded checks should be NOT_REQUIRED.
+Verify JPX_TRADING_UNIT URL provenance for trading_unit, JPX_TOPIX500 URL provenance for TOPIX500 membership, and tick_size field_provenance source_refs to JPX_TICK_SIZE, a price input source, and JPX_TOPIX500 membership.
+Verify source_attempts distinguish NOT_STARTED, DEPENDENCY_NOT_READY, and EXECUTION_FAILED from external Source failures. FOUND/result_count=0 is valid for TDnet zero disclosures.
+Verify subagent_batches lifecycle state. RETURNED or VALIDATED candidate codes that are not merged must be reported as SUBAGENT_RESULT_NOT_MERGED and pipeline incomplete.
 Report concrete findings with file paths, fields, and source links. Distinguish errors from unresolved uncertainty.
 Do not fill missing values, choose a candidate, change strategy rules, modify files, run Morning Research, run order actions, or interact with SBI Securities.
 Return findings only; the parent agent owns all corrections and decisions.

@@ -104,6 +104,7 @@
   "$defs": {
     "sourceStatus": {
       "enum": [
+        "NOT_STARTED",
         "FOUND",
         "NOT_FOUND",
         "NOT_YET_AVAILABLE",
@@ -112,7 +113,10 @@
         "STALE",
         "CONFLICT",
         "SINGLE_SOURCE_ONLY",
-        "SOURCE_POLICY_UNDEFINED"
+        "SOURCE_POLICY_UNDEFINED",
+        "NOT_REQUIRED",
+        "DEPENDENCY_NOT_READY",
+        "EXECUTION_FAILED"
       ]
     },
     "pipelineSummary": {
@@ -124,7 +128,14 @@
         "data_unavailable",
         "screened",
         "eligible",
-        "rejected"
+        "rejected",
+        "pipeline_complete",
+        "stage2_target_count",
+        "stage2_completed_count",
+        "stage2_unavailable_count",
+        "stage2_incomplete_count",
+        "coverage_rate",
+        "research_incomplete_reason_counts"
       ],
       "properties": {
         "discovered": {"type": "integer", "minimum": 0},
@@ -133,7 +144,17 @@
         "data_unavailable": {"type": "integer", "minimum": 0},
         "screened": {"type": "integer", "minimum": 0},
         "eligible": {"type": "integer", "minimum": 0},
-        "rejected": {"type": "integer", "minimum": 0}
+        "rejected": {"type": "integer", "minimum": 0},
+        "pipeline_complete": {"type": "boolean"},
+        "stage2_target_count": {"type": "integer", "minimum": 0},
+        "stage2_completed_count": {"type": "integer", "minimum": 0},
+        "stage2_unavailable_count": {"type": "integer", "minimum": 0},
+        "stage2_incomplete_count": {"type": "integer", "minimum": 0},
+        "coverage_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "research_incomplete_reason_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
       },
       "additionalProperties": false
     },

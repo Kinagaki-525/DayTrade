@@ -18,6 +18,26 @@ from src.stage1 import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = PROJECT_ROOT / "schemas"
+RUN_ARTIFACT_ALLOWLIST = {
+    "strategy_snapshot.yaml",
+    "research_window.json",
+    "market_research.json",
+    "market_research_validation.json",
+    "sources.json",
+    "market_data.json",
+    "market_validation.json",
+    "candidates.json",
+    "candidate_pipeline.json",
+    "performance.json",
+    "research.md",
+    "recommendation.json",
+    "recommendation.md",
+    "risk_result.json",
+    "report.md",
+    "official_ohlcv_audit.json",
+    "execution_result.json",
+    "source_pages",
+}
 
 
 def load_json_document(path: str | Path, schema_name: str) -> dict[str, Any]:
@@ -119,6 +139,85 @@ def validate_recommendation_sources(
         )
 
 
+def validate_recommendation_pipeline_link(
+    recommendation: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+) -> None:
+    _require_equal(
+        recommendation,
+        candidate_pipeline,
+        "target_date",
+        "recommendation/candidate_pipeline",
+    )
+    _require_equal(
+        recommendation,
+        candidate_pipeline,
+        "strategy_version",
+        "recommendation/candidate_pipeline",
+    )
+    _require_equal(
+        recommendation,
+        candidate_pipeline,
+        "config_sha256",
+        "recommendation/candidate_pipeline",
+    )
+    summary = candidate_pipeline.get("summary", {})
+    if summary.get("pipeline_complete") is not True:
+        raise ValueError("candidate_pipeline is not complete")
+    recommendation_summary = recommendation.get("pipeline_summary")
+    if not isinstance(recommendation_summary, dict):
+        raise ValueError("recommendation pipeline_summary is required")
+    if recommendation_summary != summary:
+        for field_name in sorted(set(recommendation_summary) | set(summary)):
+            if recommendation_summary.get(field_name) != summary.get(field_name):
+                raise ValueError(
+                    "recommendation/candidate_pipeline pipeline_summary "
+                    f"{field_name} does not match"
+                )
+        raise ValueError(
+            "recommendation/candidate_pipeline pipeline_summary does not match"
+        )
+
+
+def validate_research_report_inputs(
+    *,
+    market_research: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    source_payload: dict[str, Any],
+    performance: dict[str, Any],
+) -> None:
+    validate_performance_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=source_payload,
+    )
+    _require_equal(
+        market_research,
+        performance,
+        "target_date",
+        "market_research/performance",
+    )
+
+
+def validate_daily_report_inputs(
+    *,
+    market_research: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    source_payload: dict[str, Any],
+    performance: dict[str, Any],
+    recommendation: dict[str, Any],
+    risk_result: dict[str, Any],
+) -> None:
+    validate_research_report_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        source_payload=source_payload,
+        performance=performance,
+    )
+    validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+    validate_recommendation_risk_link(recommendation, risk_result)
+
+
 def validate_candidate_pipeline_inputs(
     *,
     market_research: dict[str, Any],
@@ -179,6 +278,16 @@ def validate_performance_inputs(
         "target_date",
         "market_research/sources",
     )
+
+
+def validate_run_artifact_allowlist(run_dir: str | Path) -> tuple[str, ...]:
+    path = Path(run_dir)
+    unexpected: list[str] = []
+    for item in path.iterdir():
+        if item.name in RUN_ARTIFACT_ALLOWLIST:
+            continue
+        unexpected.append(item.name)
+    return tuple(sorted(unexpected))
 
 
 def validate_recommendation_risk_link(

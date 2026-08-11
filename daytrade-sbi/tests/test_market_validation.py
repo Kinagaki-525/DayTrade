@@ -154,6 +154,64 @@ def test_source_ledger_rejects_attempt_fields_that_do_not_match_source_matrix():
     assert any("information_type does not match" in error for error in result.errors)
 
 
+def test_source_ledger_checks_source_specific_url_patterns():
+    trading_unit = make_source_record(
+        field_name="share_unit",
+        value="100",
+        source_id="JPX_TRADING_UNIT",
+        source_role="PRIMARY",
+        information_type="TRADING_UNIT",
+    ).as_dict()
+    trading_unit["source_url"] = "https://www.jpx.co.jp/listing/co-search/"
+
+    topix_attempt = make_source_attempt(
+        source_id="JPX_TOPIX500",
+        source_role="PRIMARY",
+        criticality="TRADE_CRITICAL",
+        information_type="TOPIX500_MEMBERSHIP",
+    )
+    topix_attempt["url"] = "https://finance.yahoo.co.jp/quote/1234.T/history"
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [],
+        {
+            "target_date": "2026-08-10",
+            "sources": [trading_unit],
+            "source_attempts": [topix_attempt],
+        },
+    )
+
+    assert result.valid is False
+    assert any("JPX_TRADING_UNIT" in error for error in result.errors)
+    assert any("JPX_TOPIX500" in error for error in result.errors)
+
+
+def test_source_ledger_accepts_tdnet_found_zero_results():
+    record = make_market_record()
+    attempt = make_source_attempt(
+        source_id="JPX_TDNET",
+        source_role="CONTEXT",
+        criticality="CONTEXT",
+        information_type="TIMELY_DISCLOSURE",
+        status="FOUND",
+    )
+    attempt["values"] = []
+    attempt["result_count"] = 0
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [record],
+        {
+            "target_date": "2026-08-10",
+            "sources": [source.as_dict() for source in record.sources],
+            "source_attempts": [attempt],
+        },
+    )
+
+    assert result.valid is True
+
+
 def test_source_ledger_rejects_non_found_attempt_result_count_zero():
     record = make_market_record()
     attempt = make_source_attempt(
@@ -306,6 +364,7 @@ def test_field_provenance_accepts_verified_ohlcv_primary_and_secondary():
                     "source_refs": [primary.source_ref, secondary.source_ref],
                     "verified_at": "2026-08-09T20:01:00+09:00",
                 },
+                *record.field_provenance,
             ),
         )
     )
@@ -345,11 +404,38 @@ def test_field_provenance_compares_ohlcv_sources_as_numbers():
                     "source_refs": [primary.source_ref, secondary.source_ref],
                     "verified_at": "2026-08-09T20:01:00+09:00",
                 },
+                *record.field_provenance,
             ),
         )
     )
 
     assert result.valid_for_trade is True
+
+
+def test_tick_size_provenance_requires_topix500_membership_source():
+    record = make_market_record()
+    provenance = dict(record.field_provenance[0])
+    provenance["source_refs"] = [
+        source_ref
+        for source_ref in provenance["source_refs"]
+        if not str(source_ref).startswith("JPX_TOPIX500:")
+    ]
+
+    result = validate_market_data(replace(record, field_provenance=(provenance,)))
+
+    assert result.valid_for_trade is False
+    assert any("JPX_TOPIX500 primary membership" in error for error in result.errors)
+
+
+def test_tick_size_audit_only_provenance_is_not_tradable():
+    record = make_market_record()
+    provenance = dict(record.field_provenance[0])
+    provenance["status"] = "SINGLE_SOURCE_ONLY"
+
+    result = validate_market_data(replace(record, field_provenance=(provenance,)))
+
+    assert result.valid_for_trade is False
+    assert any("status must be VERIFIED" in error for error in result.errors)
 
 
 def test_field_provenance_rejects_conflict_with_verified_value():

@@ -13,6 +13,7 @@ from src.source_matrix import (
     SOURCE_ROLES,
     SOURCE_STATUSES,
     load_source_matrix,
+    source_by_id,
     source_definition_errors,
 )
 from src.strategy import exact_int, is_tick_aligned, to_decimal
@@ -239,6 +240,14 @@ DATA_BLOCKING_STATUSES = {
     "SINGLE_SOURCE_ONLY",
     "SOURCE_POLICY_UNDEFINED",
 }
+PRICE_INPUT_FIELDS = (
+    "open",
+    "high",
+    "low",
+    "close",
+    "previous_close",
+    "previous_high",
+)
 
 
 @dataclass(frozen=True)
@@ -528,6 +537,53 @@ def _validate_field_provenance(record: MarketDataRecord) -> list[str]:
                         )
         elif status == "CONFLICT" and verified_value is not None:
             errors.append(f"{prefix}.verified_value must be null when CONFLICT")
+    errors.extend(_validate_tick_size_provenance(record, source_by_ref))
+    return errors
+
+
+def _validate_tick_size_provenance(
+    record: MarketDataRecord,
+    source_by_ref: dict[str, SourceRecord],
+) -> list[str]:
+    if record.tick_size is None:
+        return []
+    tick_provenances = [
+        provenance
+        for provenance in record.field_provenance
+        if _optional_text(provenance.get("field_name")) == "tick_size"
+    ]
+    if not tick_provenances:
+        return ["field_provenance for tick_size is required"]
+
+    provenance = tick_provenances[0]
+    prefix = "field_provenance[tick_size]"
+    source_refs = provenance.get("source_refs", [])
+    if not isinstance(source_refs, list):
+        return [f"{prefix}.source_refs must be an array"]
+    sources = [
+        source
+        for source_ref in source_refs
+        if (source := source_by_ref.get(str(source_ref))) is not None
+    ]
+    errors: list[str] = []
+    if provenance.get("status") != "VERIFIED":
+        errors.append(f"{prefix}.status must be VERIFIED for a tradable tick_size")
+    if not any(
+        source.source_id == "JPX_TICK_SIZE" and source.source_role == "PRIMARY"
+        for source in sources
+    ):
+        errors.append(f"{prefix} must reference JPX_TICK_SIZE primary source")
+    if not any(
+        source.source_id == "JPX_TOPIX500" and source.source_role == "PRIMARY"
+        for source in sources
+    ):
+        errors.append(f"{prefix} must reference JPX_TOPIX500 primary membership source")
+    if not any(
+        source.field_name in PRICE_INPUT_FIELDS
+        and source.source_id in {"YAHOO_JP_HISTORY", "KABUTAN_HISTORY", "JPX_DAILY_REPORT"}
+        for source in sources
+    ):
+        errors.append(f"{prefix} must reference a price input source")
     return errors
 
 
@@ -596,6 +652,14 @@ def validate_source_ledger(
                 prefix=f"sources[{index}]",
             )
         )
+        errors.extend(
+            _source_url_template_errors(
+                _optional_text(source.get("source_id")),
+                _optional_text(source.get("source_url")),
+                effective_source_matrix,
+                f"sources[{index}]",
+            )
+        )
 
     canonical_ledger = [_canonical_source(source) for source in ledger_sources]
     duplicate_count = len(canonical_ledger) - len(set(canonical_ledger))
@@ -639,6 +703,14 @@ def validate_source_ledger(
             )
         )
         errors.extend(
+            _source_url_template_errors(
+                _optional_text(attempt.get("source_id")),
+                _optional_text(attempt.get("url")),
+                effective_source_matrix,
+                f"source_attempts[{index}]",
+            )
+        )
+        errors.extend(
             _source_page_path_errors(
                 attempt.get("source_page_path"),
                 source_base_dir,
@@ -646,6 +718,42 @@ def validate_source_ledger(
             )
         )
     return SourceLedgerValidationResult(not errors, tuple(errors))
+
+
+def _source_url_template_errors(
+    source_id: str | None,
+    source_url: str | None,
+    source_matrix: dict[str, Any],
+    prefix: str,
+) -> list[str]:
+    if source_id is None or source_url is None:
+        return []
+    definition = source_by_id(source_matrix).get(source_id)
+    if definition is None:
+        return []
+    url_template = _optional_text(definition.get("url_template"))
+    if url_template is None:
+        return []
+    if _url_matches_template(source_url, url_template):
+        return []
+    return [f"{prefix}.url does not match source_matrix.yaml url_template for {source_id}"]
+
+
+def _url_matches_template(source_url: str, url_template: str) -> bool:
+    if "{" not in url_template:
+        return (
+            source_url == url_template
+            or source_url.startswith(url_template.rstrip("/") + "/")
+            or source_url.startswith(url_template + "?")
+            or source_url.startswith(url_template + "#")
+        )
+    pattern = re.escape(url_template)
+    pattern = re.sub(r"\\\{[^}]+\\\}", r"[^/?#]+", pattern)
+    if url_template.endswith("/"):
+        pattern += r".*"
+    else:
+        pattern += r"([?#].*)?"
+    return re.fullmatch(pattern, source_url) is not None
 
 
 def _source_page_path_errors(

@@ -1,4 +1,6 @@
 from copy import deepcopy
+import json
+from pathlib import Path
 
 from src.research import (
     merge_discovery_candidates,
@@ -7,7 +9,11 @@ from src.research import (
     validate_market_research_window_link,
 )
 from src.source_matrix import load_source_matrix
-from tests.factories import make_market_record
+from tests.factories import (
+    make_candidate_research,
+    make_market_record,
+    make_standard_source_checks,
+)
 
 
 def market_research_payload():
@@ -39,13 +45,7 @@ def market_research_payload():
 def complete_candidate_research(payload):
     payload["discovery_candidates"] = merge_discovery_candidates(payload["discovery"])
     payload["candidate_research"] = [
-        {
-            "ticker": candidate["ticker"],
-            "data_status": "VERIFIED",
-            "status_reasons": [],
-            "universe_status": "PASSED",
-            "source_policy_status": "FOUND",
-        }
+        make_candidate_research(candidate["ticker"])
         for candidate in payload["discovery_candidates"]
     ]
     return payload
@@ -86,6 +86,16 @@ def test_market_research_accepts_two_yahoo_top50_routes():
 
     assert result.valid is True
     assert result.discovery_complete is True
+
+
+def test_market_research_requires_all_standard_source_checks():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0]["source_checks"].pop()
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("source_checks" in error for error in result.errors)
 
 
 def test_market_research_accepts_100_candidates_from_two_yahoo_routes():
@@ -275,13 +285,7 @@ def test_market_research_requires_discovery_candidate_union():
 def test_market_research_rejects_candidate_research_outside_discovery():
     payload = complete_candidate_research(market_research_payload())
     payload["candidate_research"].append(
-        {
-            "ticker": "9999",
-            "data_status": "VERIFIED",
-            "status_reasons": [],
-            "universe_status": "PASSED",
-            "source_policy_status": "FOUND",
-        }
+        make_candidate_research("9999")
     )
 
     result = validate_market_research(payload, load_source_matrix())
@@ -343,11 +347,13 @@ def test_market_research_rejects_stage1_reject_with_unrecorded_source_ref():
 def test_market_research_accepts_source_backed_stage1_reject():
     payload = complete_candidate_research(market_research_payload())
     payload["candidate_research"][0].update(
-        {
-            "universe_status": "PASSED",
-            "stage1_status": "REJECTED",
-            "reason_codes": ["SHARE_UNIT_NOT_100"],
-            "missing_requirements": [],
+            {
+                "universe_status": "PASSED",
+                "stage1_status": "REJECTED",
+                "stage2_status": "SKIPPED",
+                "context_research_status": "SKIPPED",
+                "reason_codes": ["SHARE_UNIT_NOT_100"],
+                "missing_requirements": [],
             "stage1_checks": [
                 {
                     "check_id": "share_unit",
@@ -379,11 +385,13 @@ def test_market_research_accepts_source_backed_stage1_reject():
 def test_market_research_accepts_generic_capital_limit_stage1_reject():
     payload = complete_candidate_research(market_research_payload())
     payload["candidate_research"][0].update(
-        {
-            "universe_status": "PASSED",
-            "stage1_status": "REJECTED",
-            "reason_codes": ["CAPITAL_LIMIT_EXCEEDED"],
-            "missing_requirements": [],
+            {
+                "universe_status": "PASSED",
+                "stage1_status": "REJECTED",
+                "stage2_status": "SKIPPED",
+                "context_research_status": "SKIPPED",
+                "reason_codes": ["CAPITAL_LIMIT_EXCEEDED"],
+                "missing_requirements": [],
             "stage1_checks": [
                 {
                     "check_id": "capital_limit",
@@ -580,10 +588,10 @@ def test_market_research_rejects_missing_candidate_research():
     assert any(missing_ticker in error for error in result.errors)
 
 
-def test_market_research_allows_missing_candidate_research_when_incomplete():
+def test_market_research_allows_missing_candidate_research_only_as_pipeline_incomplete():
     payload = complete_candidate_research(market_research_payload())
     missing_ticker = payload["candidate_research"].pop()["ticker"]
-    payload["overall_status"] = "DATA_UNAVAILABLE"
+    payload["overall_status"] = "PIPELINE_INCOMPLETE"
 
     result = validate_market_research(payload, load_source_matrix())
 
@@ -591,16 +599,120 @@ def test_market_research_allows_missing_candidate_research_when_incomplete():
     assert any(missing_ticker in warning for warning in result.warnings)
 
 
+def test_market_research_rejects_missing_candidate_research_as_data_unavailable():
+    payload = complete_candidate_research(market_research_payload())
+    missing_ticker = payload["candidate_research"].pop()["ticker"]
+    payload["overall_status"] = "DATA_UNAVAILABLE"
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any(missing_ticker in error for error in result.errors)
+
+
+def test_market_research_rejects_data_unavailable_without_attempted_source_check():
+    payload = complete_candidate_research(market_research_payload())
+    payload["overall_status"] = "DATA_UNAVAILABLE"
+    payload["candidate_research"][0].update(
+        {
+            "data_status": "DATA_UNAVAILABLE",
+            "status_reasons": ["secondary OHLCV source missing"],
+            "source_policy_status": "SINGLE_SOURCE_ONLY",
+        }
+    )
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("without attempted source_checks" in error for error in result.errors)
+
+
+def test_market_research_accepts_data_unavailable_with_external_source_check():
+    payload = complete_candidate_research(market_research_payload())
+    payload["overall_status"] = "DATA_UNAVAILABLE"
+    payload["candidate_research"][0].update(
+        {
+            "data_status": "DATA_UNAVAILABLE",
+            "status_reasons": ["secondary OHLCV source access failed"],
+            "source_policy_status": "ACCESS_FAILED",
+            "source_checks": make_standard_source_checks(
+                secondary_ohlcv={
+                    "status": "ACCESS_FAILED",
+                    "source_id": "KABUTAN_HISTORY",
+                    "information_type": "OHLCV",
+                    "reason_code": "SECONDARY_OHLCV_ACCESS_FAILED",
+                    "source_attempt_ids": ["kabutan-1000-access-failed"],
+                }
+            ),
+        }
+    )
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is True
+
+
+def test_2026_08_12_regression_detects_old_data_unavailable_as_incomplete():
+    path = Path("regression/2026-08-12-data-unavailable/runs/2026-08-12/market_research.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any(
+        "candidate_research is missing Discovery candidate" in error
+        or "required property" in error
+        for error in result.errors
+    )
+
+
+def test_market_research_rejects_returned_unmerged_subagent_result():
+    payload = complete_candidate_research(market_research_payload())
+    payload["subagent_batches"] = [
+        {
+            "batch_id": "stage2-a",
+            "agent_name": "market-researcher",
+            "lifecycle_status": "RETURNED",
+            "candidate_codes": ["1000"],
+            "returned_candidate_codes": ["1000"],
+            "merged_candidate_codes": [],
+        }
+    ]
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("not merged" in error for error in result.errors)
+
+
+def test_market_research_allows_returned_unmerged_subagent_only_as_pipeline_incomplete():
+    payload = complete_candidate_research(market_research_payload())
+    payload["overall_status"] = "PIPELINE_INCOMPLETE"
+    payload["subagent_batches"] = [
+        {
+            "batch_id": "stage2-a",
+            "agent_name": "market-researcher",
+            "lifecycle_status": "RETURNED",
+            "candidate_codes": ["1000"],
+            "returned_candidate_codes": ["1000"],
+            "merged_candidate_codes": [],
+        }
+    ]
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is True
+
+
 def test_market_data_research_alignment_requires_matching_statuses():
     payload = complete_candidate_research(market_research_payload())
     payload["candidate_research"] = [
-        {
-            "ticker": "1234",
-            "data_status": "DATA_UNAVAILABLE",
-            "status_reasons": ["missing secondary source"],
-            "universe_status": "PASSED",
-            "source_policy_status": "SINGLE_SOURCE_ONLY",
-        }
+        make_candidate_research(
+            "1234",
+            data_status="DATA_UNAVAILABLE",
+            status_reasons=["missing secondary source"],
+            source_policy_status="SINGLE_SOURCE_ONLY",
+        )
     ]
 
     result = validate_market_records_against_research([make_market_record()], payload)

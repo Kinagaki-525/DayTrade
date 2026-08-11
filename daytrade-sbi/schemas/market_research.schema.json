@@ -29,7 +29,8 @@
         "COMPLETE",
         "DISCOVERY_INCOMPLETE",
         "DATA_UNAVAILABLE",
-        "SOURCE_POLICY_UNDEFINED"
+        "SOURCE_POLICY_UNDEFINED",
+        "PIPELINE_INCOMPLETE"
       ]
     },
     "discovery": {
@@ -47,12 +48,17 @@
       "type": "array",
       "items": {"$ref": "#/$defs/candidateResearch"}
     },
+    "subagent_batches": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/subagentBatch"}
+    },
     "notes": {"type": "array", "items": {"type": "string"}}
   },
   "additionalProperties": false,
   "$defs": {
     "sourceStatus": {
       "enum": [
+        "NOT_STARTED",
         "FOUND",
         "NOT_FOUND",
         "NOT_YET_AVAILABLE",
@@ -61,7 +67,10 @@
         "STALE",
         "CONFLICT",
         "SINGLE_SOURCE_ONLY",
-        "SOURCE_POLICY_UNDEFINED"
+        "SOURCE_POLICY_UNDEFINED",
+        "NOT_REQUIRED",
+        "DEPENDENCY_NOT_READY",
+        "EXECUTION_FAILED"
       ]
     },
     "researchWindow": {
@@ -228,7 +237,18 @@
     },
     "candidateResearch": {
       "type": "object",
-      "required": ["ticker", "data_status", "status_reasons", "universe_status"],
+      "required": [
+        "ticker",
+        "data_status",
+        "status_reasons",
+        "source_policy_status",
+        "universe_status",
+        "stage1_status",
+        "stage2_status",
+        "context_research_status",
+        "source_checks",
+        "source_attempt_ids"
+      ],
       "properties": {
         "ticker": {"type": "string", "minLength": 1},
         "data_status": {"$ref": "#/$defs/dataStatus"},
@@ -260,10 +280,88 @@
         "context_research_status": {
           "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE", "SKIPPED"]
         },
+        "source_checks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/sourceCheck"}
+        },
         "source_attempt_ids": {
           "type": "array",
           "items": {"type": "string", "minLength": 1}
         }
+      },
+      "additionalProperties": false
+    },
+    "sourceCheckId": {
+      "enum": [
+        "listed_company",
+        "trading_unit",
+        "primary_ohlcv",
+        "secondary_ohlcv",
+        "tick_size",
+        "topix500_membership",
+        "earnings_schedule",
+        "tdnet",
+        "news_context"
+      ]
+    },
+    "sourceCheck": {
+      "type": "object",
+      "required": [
+        "check_id",
+        "status",
+        "source_refs",
+        "source_attempt_ids"
+      ],
+      "properties": {
+        "check_id": {"$ref": "#/$defs/sourceCheckId"},
+        "status": {"$ref": "#/$defs/sourceStatus"},
+        "source_id": {"type": ["string", "null"], "pattern": "^[A-Z0-9_]+$"},
+        "information_type": {"type": ["string", "null"]},
+        "reason_code": {"type": ["string", "null"], "minLength": 1},
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "subagentLifecycleStatus": {
+      "enum": ["REQUESTED", "RETURNED", "VALIDATED", "MERGED"]
+    },
+    "subagentBatch": {
+      "type": "object",
+      "required": [
+        "batch_id",
+        "agent_name",
+        "lifecycle_status",
+        "candidate_codes",
+        "returned_candidate_codes",
+        "merged_candidate_codes"
+      ],
+      "properties": {
+        "batch_id": {"type": "string", "minLength": 1},
+        "agent_name": {"type": "string", "minLength": 1},
+        "lifecycle_status": {"$ref": "#/$defs/subagentLifecycleStatus"},
+        "candidate_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "returned_candidate_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "merged_candidate_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
       },
       "additionalProperties": false
     },

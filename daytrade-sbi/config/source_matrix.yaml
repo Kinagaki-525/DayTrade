@@ -26,6 +26,15 @@ sources:
     update_timing: JPX_PUBLICATION
     zero_results_are_found: false
 
+  - source_id: JPX_TRADING_UNIT
+    information_type: TRADING_UNIT
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Trading Unit
+    url_template: "https://www.jpx.co.jp/equities/trading/domestic/03.html"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
   - source_id: JPX_LISTED_COMPANY_AUDIT
     information_type: LISTED_COMPANY
     role: AUDIT
