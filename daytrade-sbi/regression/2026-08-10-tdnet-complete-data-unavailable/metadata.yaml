@@ -1,0 +1,11 @@
+target_date: 2026-08-10
+decision: DATA_UNAVAILABLE
+risk_status: NOT_APPLICABLE
+discovery_candidates: 972
+candidate_research_count: 972
+market_data_count: 0
+pipeline_candidates: 972
+source_request_count: 5
+eligible_candidates: 0
+pytest_result: "128 passed"
+purpose: "test run with TDnet full-page discovery"
