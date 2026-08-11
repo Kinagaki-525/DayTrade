@@ -153,10 +153,21 @@
         "coverage_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
         "research_incomplete_reason_counts": {
           "type": "object",
+          "propertyNames": {"$ref": "#/$defs/researchIncompleteReason"},
           "additionalProperties": {"type": "integer", "minimum": 0}
         }
       },
       "additionalProperties": false
+    },
+    "researchIncompleteReason": {
+      "enum": [
+        "NOT_STARTED",
+        "IN_PROGRESS",
+        "SUBAGENT_RESULT_NOT_MERGED",
+        "DEPENDENCY_NOT_READY",
+        "EXECUTION_FAILED",
+        "UNKNOWN"
+      ]
     },
     "sourceStatusRecord": {
       "type": "object",

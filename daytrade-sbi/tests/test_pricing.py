@@ -25,8 +25,9 @@ def test_entry_prices_with_half_yen_tick():
 
 
 def test_affordability_boundary():
-    assert is_affordable("500", 100, "50000") is True
-    assert is_affordable("500.5", 100, "50000") is False
+    assert is_affordable("999", 100, "100000") is True
+    assert is_affordable("1000", 100, "100000") is True
+    assert is_affordable("1000.01", 100, "100000") is False
 
 
 def test_exit_prices_are_rounded_without_weakening_amounts():

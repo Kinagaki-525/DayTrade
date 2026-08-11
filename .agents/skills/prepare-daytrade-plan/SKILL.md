@@ -23,15 +23,17 @@ Follow the nightly prompt as the procedural source of truth. Do not copy or repl
 
 1. Confirm the target and previous trading dates from authoritative evidence. Stop if either date is uncertain.
 2. Validate the fixed Source Matrix before research. Do not substitute undefined sources at runtime.
-3. Delegate bounded Market Discovery and Candidate Research to `market_researcher` when available. Require source_ref, source_id, source role, information type, source status, source URL, retrieval time, trading date, ticker, field, exact value, standard source_checks, source_attempt attempt_id, subagent merge state, and correct result_count semantics. Wait for its summary; the subagent must not write files.
-4. Have the main agent follow the nightly prompt to snapshot config, resolve and save the Python-generated research window, save confirmed evidence, and run Python validation, official OHLCV audit, screening, candidate pipeline generation, and performance counter generation.
-5. Delegate a read-only audit of the saved dates, cutoff, sources, Source Status, Discovery reasons, required values, and contradictions to `source_auditor` when available. Wait for its findings. Correct only confirmed transcription errors and rerun affected Python steps; never fill missing facts.
-6. Confirm `candidate_pipeline.summary.pipeline_complete=true` and `research_incomplete=0` before writing a recommendation for the Risk Engine. If the pipeline is incomplete, correct the missing research or stop as incomplete.
-7. Have the main agent compare only `ELIGIBLE` candidates and write one `TRADE` recommendation, `NO_TRADE`, or `DATA_UNAVAILABLE`.
-8. If the recommendation decision is `TRADE`, ask the user for confirmed current positions and trades already made that day before the Risk Engine. Do not assume zero. Stop if either value is unavailable.
-9. If the recommendation decision is `NO_TRADE` or `DATA_UNAVAILABLE`, run the non-TRADE Risk Engine path without asking for current positions or trades today; it must produce `NOT_APPLICABLE`.
-10. Complete the Risk Engine, `research.md`, `recommendation.md`, `report.md`, `official_ohlcv_audit.json`, run artifact allowlist validation, and recommendation recording exactly as specified by the nightly prompt.
-11. Present a manual-entry candidate only for `TRADE` plus `PASS`. Keep `NO_TRADE`, `DATA_UNAVAILABLE`, or `REJECTED` unchanged and report the reason.
+3. Have the main agent follow the nightly prompt to snapshot config, resolve and save the Python-generated research window, and delegate bounded Market Discovery to `market_researcher` when available. Require source_ref, source_id, source role, information type, source status, source URL, retrieval time, trading date, ticker, field, exact value, source_attempt attempt_id, and correct result_count semantics. Wait for its summary; the subagent must not write files.
+4. After Discovery union is saved, run `init-candidate-research` so every Discovery Candidate has a `candidate_research[]` entry before Stage 1 or Stage 2 work continues.
+5. Save confirmed Stage 1 evidence, run `apply-stage1`, run `plan-stage2-batches`, then delegate bounded Stage 2 Candidate Research batches to `market_researcher` when available. Require standard source_checks and subagent merge state. Wait for its summary; the subagent must not write files.
+6. Have the main agent run Python validation, official OHLCV audit, screening, candidate pipeline generation, and performance counter generation.
+7. Delegate a read-only audit of the saved dates, cutoff, sources, Source Status, Discovery reasons, required values, and contradictions to `source_auditor` when available. Wait for its findings. Correct only confirmed transcription errors and rerun affected Python steps; never fill missing facts.
+8. Confirm `candidate_pipeline.summary.pipeline_complete=true` and `research_incomplete=0` before writing a recommendation for the Risk Engine. If the pipeline is incomplete, correct the missing research or stop as incomplete.
+9. Have the main agent compare only `ELIGIBLE` candidates and write one `TRADE` recommendation, `NO_TRADE`, or `DATA_UNAVAILABLE`.
+10. If the recommendation decision is `TRADE`, ask the user for confirmed current positions and trades already made that day before the Risk Engine. Do not assume zero. Stop if either value is unavailable.
+11. If the recommendation decision is `NO_TRADE` or `DATA_UNAVAILABLE`, run the non-TRADE Risk Engine path without asking for current positions or trades today; it must produce `NOT_APPLICABLE`.
+12. Complete the Risk Engine, `research.md`, `recommendation.md`, `report.md`, `official_ohlcv_audit.json`, run artifact allowlist validation, and recommendation recording exactly as specified by the nightly prompt.
+13. Present a manual-entry candidate only for `TRADE` plus `PASS`. Keep `NO_TRADE`, `DATA_UNAVAILABLE`, or `REJECTED` unchanged and report the reason.
 
 ## Boundaries
 

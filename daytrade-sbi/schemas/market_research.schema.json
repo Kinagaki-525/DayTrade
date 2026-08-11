@@ -126,6 +126,7 @@
     },
     "dataStatus": {
       "enum": [
+        "NOT_STARTED",
         "VERIFIED",
         "DATA_UNAVAILABLE",
         "CONFLICT",
@@ -261,6 +262,7 @@
           "type": "array",
           "items": {"type": "string", "minLength": 1}
         },
+        "required_capital_yen": {"$ref": "#/$defs/decimalOrNull"},
         "source_policy_status": {"$ref": "#/$defs/sourceStatus"},
         "universe_status": {
           "enum": ["NOT_STARTED", "PASSED", "REJECTED", "DATA_UNAVAILABLE", "SKIPPED"]
@@ -290,6 +292,13 @@
         }
       },
       "additionalProperties": false
+    },
+    "decimalOrNull": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"},
+        {"type": "null"}
+      ]
     },
     "sourceCheckId": {
       "enum": [

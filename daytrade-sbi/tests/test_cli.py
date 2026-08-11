@@ -6,8 +6,9 @@ import src.cli as cli
 from src.config import load_strategy_config, strategy_config_sha256
 from src.contracts import validate_json_document
 from src.market import SourceLedgerValidationResult
+from src.research import merge_discovery_candidates
 from src.source_matrix import load_source_matrix
-from tests.factories import make_market_record
+from tests.factories import make_candidate_research, make_market_record
 from tests.test_market_research import complete_candidate_research, market_research_payload
 
 
@@ -57,6 +58,96 @@ def capture_validated_payload(captured):
     return capture
 
 
+def market_research_with_candidates(tickers):
+    payload = market_research_payload()
+    payload["discovery"][0]["items"] = [
+        {
+            "ticker": ticker,
+            "company_name": f"Example {ticker}",
+            "market": "TSE Prime",
+            "rank": index + 1,
+            "display_value": f"volume-{index + 1}",
+            "disclosure_datetime": None,
+            "title": None,
+            "source_url": f"https://example.test/volume/{ticker}",
+            "retrieved_at": "2026-08-07T20:15:00+09:00",
+        }
+        for index, ticker in enumerate(tickers)
+    ]
+    payload["discovery"][0]["result_count"] = len(tickers)
+    payload["discovery"][1]["items"] = []
+    payload["discovery"][1]["result_count"] = 0
+    payload["discovery_candidates"] = merge_discovery_candidates(payload["discovery"])
+    payload["candidate_research"] = []
+    payload["overall_status"] = "PIPELINE_INCOMPLETE"
+    return payload
+
+
+def not_started_candidate_research(ticker="1234"):
+    return {
+        **make_candidate_research(
+            ticker,
+            data_status="NOT_STARTED",
+            stage1_status="NOT_STARTED",
+            stage2_status="NOT_STARTED",
+            context_research_status="NOT_STARTED",
+        ),
+        "required_capital_yen": None,
+    }
+
+
+def source_payload_from_record(record, *, include_share_unit=True):
+    return {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "sources": [
+            source.as_dict()
+            for source in record.sources
+            if include_share_unit or source.field_name != "share_unit"
+        ],
+        "source_attempts": [],
+    }
+
+
+def run_apply_stage1_command(
+    monkeypatch,
+    captured,
+    *,
+    record,
+    source_payload=None,
+):
+    market_research = market_research_with_candidates([record.ticker])
+    market_research["candidate_research"] = [
+        not_started_candidate_research(record.ticker)
+    ]
+    source_payload = source_payload or source_payload_from_record(record)
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "sources.schema.json":
+            return source_payload
+        return {"schema_version": 1, "target_date": "2026-08-10", "records": []}
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+    monkeypatch.setattr(cli, "load_market_data", lambda path: ("2026-08-10", [record]))
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    return cli.main(
+        [
+            "apply-stage1",
+            "--market-research",
+            "market_research.json",
+            "--market-data",
+            "market_data.json",
+            "--sources",
+            "sources.json",
+            "--output",
+            "market_research.json",
+        ]
+    )
+
+
 def test_screen_market_command_generates_candidate_payload(monkeypatch):
     captured = {}
     monkeypatch.setattr(
@@ -92,6 +183,165 @@ def test_screen_market_command_generates_candidate_payload(monkeypatch):
     assert captured["candidates"][0]["status"] == "ELIGIBLE"
     assert captured["strategy_version"] == "v1"
     assert len(captured["config_sha256"]) == 64
+
+
+def test_init_candidate_research_command_adds_every_discovery_candidate(monkeypatch):
+    captured = {}
+    market_research = market_research_with_candidates(["1234", "5678"])
+
+    monkeypatch.setattr(
+        cli,
+        "load_json_document",
+        lambda path, schema: market_research,
+    )
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    result = cli.main(
+        [
+            "init-candidate-research",
+            "--market-research",
+            "market_research.json",
+            "--output",
+            "market_research.json",
+        ]
+    )
+
+    assert result == 0
+    assert [item["ticker"] for item in captured["candidate_research"]] == [
+        "1234",
+        "5678",
+    ]
+    assert all(
+        item["stage1_status"] == "NOT_STARTED"
+        for item in captured["candidate_research"]
+    )
+    assert captured["overall_status"] == "PIPELINE_INCOMPLETE"
+
+
+def test_apply_stage1_command_classifies_capital_boundary(monkeypatch):
+    captured = {}
+    record = make_market_record(previous_high="998", tick_size="1")
+
+    result = run_apply_stage1_command(monkeypatch, captured, record=record)
+
+    assert result == 0
+    research = captured["candidate_research"][0]
+    assert research["stage1_status"] == "PASSED"
+    assert research["required_capital_yen"] == "100000"
+
+
+def test_apply_stage1_command_requires_source_backed_share_unit(monkeypatch):
+    captured = {}
+    record = make_market_record(previous_high="998", tick_size="1")
+    source_payload = source_payload_from_record(record, include_share_unit=False)
+
+    result = run_apply_stage1_command(
+        monkeypatch,
+        captured,
+        record=record,
+        source_payload=source_payload,
+    )
+
+    assert result == 0
+    research = captured["candidate_research"][0]
+    assert research["stage1_status"] == "NOT_STARTED"
+    assert research["required_capital_yen"] is None
+
+
+def test_apply_stage1_command_rejects_over_capital_limit(monkeypatch):
+    captured = {}
+    record = make_market_record(previous_high="999", tick_size="1")
+
+    result = run_apply_stage1_command(monkeypatch, captured, record=record)
+
+    assert result == 0
+    research = captured["candidate_research"][0]
+    assert research["stage1_status"] == "REJECTED"
+    assert research["reason_codes"] == ["CAPITAL_LIMIT_EXCEEDED"]
+    assert research["required_capital_yen"] == "100100"
+
+
+def test_plan_stage2_batches_command_assigns_unique_batches(monkeypatch):
+    captured = {}
+    market_research = market_research_with_candidates([f"{1000 + index}" for index in range(17)])
+    market_research["candidate_research"] = [
+        make_candidate_research(
+            f"{1000 + index}",
+            data_status="NOT_STARTED",
+            stage2_status="NOT_STARTED",
+            context_research_status="NOT_STARTED",
+        )
+        for index in range(17)
+    ]
+
+    monkeypatch.setattr(cli, "load_json_document", lambda path, schema: market_research)
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    result = cli.main(
+        [
+            "plan-stage2-batches",
+            "--market-research",
+            "market_research.json",
+            "--output",
+            "market_research.json",
+        ]
+    )
+
+    assert result == 0
+    assert [len(batch["candidate_codes"]) for batch in captured["subagent_batches"]] == [
+        8,
+        8,
+        1,
+    ]
+    assigned = [
+        ticker
+        for batch in captured["subagent_batches"]
+        for ticker in batch["candidate_codes"]
+    ]
+    assert len(assigned) == len(set(assigned)) == 17
+
+
+def test_plan_stage2_batches_command_rejects_duplicate_assignment(monkeypatch):
+    market_research = market_research_with_candidates(["1234"])
+    market_research["candidate_research"] = [
+        make_candidate_research(
+            "1234",
+            data_status="NOT_STARTED",
+            stage2_status="NOT_STARTED",
+            context_research_status="NOT_STARTED",
+        )
+    ]
+    market_research["subagent_batches"] = [
+        {
+            "batch_id": "stage2-a",
+            "agent_name": "market_researcher",
+            "lifecycle_status": "REQUESTED",
+            "candidate_codes": ["1234"],
+            "returned_candidate_codes": [],
+            "merged_candidate_codes": [],
+        },
+        {
+            "batch_id": "stage2-b",
+            "agent_name": "market_researcher",
+            "lifecycle_status": "REQUESTED",
+            "candidate_codes": ["1234"],
+            "returned_candidate_codes": [],
+            "merged_candidate_codes": [],
+        },
+    ]
+
+    monkeypatch.setattr(cli, "load_json_document", lambda path, schema: market_research)
+
+    with pytest.raises(ValueError, match="multiple Stage 2 batches"):
+        cli.main(
+            [
+                "plan-stage2-batches",
+                "--market-research",
+                "market_research.json",
+                "--output",
+                "market_research.json",
+            ]
+        )
 
 
 def test_build_candidate_pipeline_command_writes_payload(monkeypatch):
@@ -552,7 +802,7 @@ def test_validate_market_research_command_rejects_unrecorded_stage1_source_ref(m
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": "SHARE_UNIT_NOT_100",
-                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
             ],

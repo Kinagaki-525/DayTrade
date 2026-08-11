@@ -9,6 +9,9 @@ ALLOWED_STAGE1_REJECTS = {
     "share_unit": {"SHARE_UNIT_NOT_100"},
     "capital_limit": {"CAPITAL_LIMIT_EXCEEDED"},
 }
+STAGE1_CHECK_REQUIRED_SOURCE_IDS = {
+    "share_unit": {"JPX_TRADING_UNIT"},
+}
 
 POST_STAGE1_ACTIVE_STATUSES = {"IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE"}
 
@@ -31,11 +34,30 @@ def source_attempt_ids_from_payload(source_payload: dict[str, Any]) -> set[str]:
     }
 
 
+def source_ids_by_evidence_id_from_payload(
+    source_payload: dict[str, Any],
+) -> dict[str, str]:
+    source_ids: dict[str, str] = {}
+    for collection_name, evidence_field in (
+        ("sources", "source_ref"),
+        ("source_attempts", "attempt_id"),
+    ):
+        for item in source_payload.get(collection_name, []):
+            if not isinstance(item, dict):
+                continue
+            evidence_id = _text(item.get(evidence_field))
+            source_id = _text(item.get("source_id"))
+            if evidence_id and source_id:
+                source_ids[evidence_id] = source_id
+    return source_ids
+
+
 def source_backed_stage1_reject(
     research: dict[str, Any],
     *,
     valid_source_refs: set[str] | None = None,
     valid_source_attempt_ids: set[str] | None = None,
+    source_ids_by_evidence_id: dict[str, str] | None = None,
 ) -> bool:
     if research.get("stage1_status") != "REJECTED":
         return False
@@ -44,6 +66,7 @@ def source_backed_stage1_reject(
             research,
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
+            source_ids_by_evidence_id=source_ids_by_evidence_id,
         )
     )
 
@@ -53,6 +76,7 @@ def rejected_stage1_check_ids(
     *,
     valid_source_refs: set[str] | None = None,
     valid_source_attempt_ids: set[str] | None = None,
+    source_ids_by_evidence_id: dict[str, str] | None = None,
 ) -> list[str]:
     if research is None:
         return []
@@ -62,7 +86,12 @@ def rejected_stage1_check_ids(
     for check in research.get("stage1_checks", []):
         if not isinstance(check, dict) or check.get("status") != "REJECTED":
             continue
-        if _has_backing(check, valid_source_refs, valid_source_attempt_ids):
+        if _has_backing(
+            check,
+            valid_source_refs,
+            valid_source_attempt_ids,
+            source_ids_by_evidence_id=source_ids_by_evidence_id,
+        ):
             failed.append(f"stage1:{check.get('check_id', 'unknown')}")
     return _unique(failed)
 
@@ -72,6 +101,7 @@ def stage1_reject_evidence_error(
     *,
     valid_source_refs: set[str],
     valid_source_attempt_ids: set[str],
+    source_ids_by_evidence_id: dict[str, str] | None = None,
 ) -> str | None:
     if research.get("stage1_status") != "REJECTED":
         return None
@@ -79,6 +109,7 @@ def stage1_reject_evidence_error(
         research,
         valid_source_refs=valid_source_refs,
         valid_source_attempt_ids=valid_source_attempt_ids,
+        source_ids_by_evidence_id=source_ids_by_evidence_id,
     ):
         return None
     ticker = str(research.get("ticker", "")).strip() or "<unknown>"
@@ -168,9 +199,40 @@ def _has_backing(
     check: dict[str, Any],
     valid_source_refs: set[str] | None,
     valid_source_attempt_ids: set[str] | None,
+    *,
+    source_ids_by_evidence_id: dict[str, str] | None = None,
 ) -> bool:
-    return _has_matching_item(check.get("source_refs"), valid_source_refs) or (
-        _has_matching_item(check.get("source_attempt_ids"), valid_source_attempt_ids)
+    if not (
+        _has_matching_item(check.get("source_refs"), valid_source_refs)
+        or _has_matching_item(check.get("source_attempt_ids"), valid_source_attempt_ids)
+    ):
+        return False
+    required_source_ids = STAGE1_CHECK_REQUIRED_SOURCE_IDS.get(
+        _text(check.get("check_id"))
+    )
+    if required_source_ids is None:
+        return True
+    if source_ids_by_evidence_id is None:
+        return True
+    return _has_required_stage1_source(
+        check,
+        required_source_ids,
+        source_ids_by_evidence_id=source_ids_by_evidence_id,
+    )
+
+
+def _has_required_stage1_source(
+    check: dict[str, Any],
+    required_source_ids: set[str],
+    *,
+    source_ids_by_evidence_id: dict[str, str],
+) -> bool:
+    return any(
+        source_ids_by_evidence_id.get(item) in required_source_ids
+        for item in (
+            _text_items(check.get("source_refs"))
+            + _text_items(check.get("source_attempt_ids"))
+        )
     )
 
 

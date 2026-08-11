@@ -20,6 +20,16 @@ INCOMPLETE_SOURCE_STATUSES = {
     "DEPENDENCY_NOT_READY",
     "EXECUTION_FAILED",
 }
+EXTERNAL_SOURCE_FAILURE_STATUSES = {
+    "NOT_FOUND",
+    "NOT_YET_AVAILABLE",
+    "ACCESS_FAILED",
+    "PARSE_FAILED",
+    "STALE",
+    "CONFLICT",
+    "SINGLE_SOURCE_ONLY",
+    "SOURCE_POLICY_UNDEFINED",
+}
 
 
 def normalize_source_checks(research: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -75,6 +85,37 @@ def source_check_contract_errors(research: dict[str, Any]) -> list[str]:
     return errors
 
 
+def has_data_unavailable_evidence(
+    research: dict[str, Any],
+    *,
+    valid_source_refs: set[str] | None,
+    source_attempt_statuses: dict[str, str] | None,
+) -> bool:
+    top_level_attempts = list_text(research.get("source_attempt_ids"))
+    if _has_failed_attempt(top_level_attempts, source_attempt_statuses):
+        return True
+    for check in normalize_source_checks(research):
+        if check["status"] not in EXTERNAL_SOURCE_FAILURE_STATUSES:
+            continue
+        if _has_recorded_ref(check["source_refs"], valid_source_refs):
+            return True
+        if _has_failed_attempt(check["source_attempt_ids"], source_attempt_statuses):
+            return True
+    return False
+
+
+def source_attempt_statuses_from_payload(
+    source_payload: dict[str, Any],
+) -> dict[str, str]:
+    return {
+        attempt_id: status
+        for attempt in source_payload.get("source_attempts", [])
+        if isinstance(attempt, dict)
+        for attempt_id in _text_items([attempt.get("attempt_id")])
+        for status in _text_items([attempt.get("status")])
+    }
+
+
 def list_text(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -86,3 +127,27 @@ def optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _has_recorded_ref(items: list[str], valid_items: set[str] | None) -> bool:
+    if valid_items is None:
+        return bool(items)
+    return any(item in valid_items for item in items)
+
+
+def _has_failed_attempt(
+    attempt_ids: list[str],
+    source_attempt_statuses: dict[str, str] | None,
+) -> bool:
+    if source_attempt_statuses is None:
+        return bool(attempt_ids)
+    return any(
+        source_attempt_statuses.get(attempt_id) in EXTERNAL_SOURCE_FAILURE_STATUSES
+        for attempt_id in attempt_ids
+    )
+
+
+def _text_items(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := optional_text(item))]

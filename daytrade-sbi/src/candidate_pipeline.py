@@ -10,15 +10,18 @@ from src.stage1 import (
     rejected_stage1_check_ids,
     source_attempt_ids_from_payload,
     source_backed_stage1_reject,
+    source_ids_by_evidence_id_from_payload,
     source_refs_from_payload,
     stage1_contract_errors,
     stage1_reject_evidence_error,
 )
 from src.source_checks import (
     INCOMPLETE_SOURCE_STATUSES,
+    has_data_unavailable_evidence,
     list_text,
     normalize_source_checks,
     source_check_contract_errors,
+    source_attempt_statuses_from_payload,
 )
 
 
@@ -66,6 +69,8 @@ def build_candidate_pipeline(
     sources = source_payload.get("sources", [])
     valid_source_refs = source_refs_from_payload(source_payload)
     valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
+    source_ids_by_evidence_id = source_ids_by_evidence_id_from_payload(source_payload)
+    source_attempt_statuses = source_attempt_statuses_from_payload(source_payload)
     unmerged_subagent_tickers = _unmerged_subagent_tickers(market_research)
 
     pipeline_candidates = []
@@ -82,6 +87,7 @@ def build_candidate_pipeline(
                 research,
                 valid_source_refs=valid_source_refs,
                 valid_source_attempt_ids=valid_source_attempt_ids,
+                source_ids_by_evidence_id=source_ids_by_evidence_id,
             )
             if evidence_error is not None:
                 raise ValueError(evidence_error)
@@ -90,6 +96,8 @@ def build_candidate_pipeline(
             screening,
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
+            source_ids_by_evidence_id=source_ids_by_evidence_id,
+            source_attempt_statuses=source_attempt_statuses,
         )
         if ticker in unmerged_subagent_tickers:
             status = "RESEARCH_IN_PROGRESS"
@@ -130,6 +138,7 @@ def build_candidate_pipeline(
                     research,
                     valid_source_refs=valid_source_refs,
                     valid_source_attempt_ids=valid_source_attempt_ids,
+                    source_ids_by_evidence_id=source_ids_by_evidence_id,
                 ),
                 "source_attempt_ids": source_attempt_ids,
                 "source_refs": source_refs,
@@ -160,6 +169,8 @@ def _pipeline_status(
     *,
     valid_source_refs: set[str],
     valid_source_attempt_ids: set[str],
+    source_ids_by_evidence_id: dict[str, str],
+    source_attempt_statuses: dict[str, str],
 ) -> str:
     if screening is not None:
         status = screening["status"]
@@ -170,15 +181,16 @@ def _pipeline_status(
         return "DISCOVERED"
     if _has_incomplete_research_contract(research):
         return "RESEARCH_IN_PROGRESS"
-    if _has_incomplete_source_check(research):
-        return "RESEARCH_IN_PROGRESS"
     if research.get("stage1_status") == "REJECTED":
         if source_backed_stage1_reject(
             research,
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
+            source_ids_by_evidence_id=source_ids_by_evidence_id,
         ):
             return "REJECTED"
+        return "RESEARCH_IN_PROGRESS"
+    if _has_incomplete_source_check(research):
         return "RESEARCH_IN_PROGRESS"
     if "IN_PROGRESS" in {
         research.get("stage1_status"),
@@ -195,7 +207,13 @@ def _pipeline_status(
     if data_status == "VERIFIED":
         return "RESEARCH_COMPLETE"
     if data_status in BLOCKING_DATA_STATUSES:
-        return "DATA_UNAVAILABLE"
+        if has_data_unavailable_evidence(
+            research,
+            valid_source_refs=valid_source_refs,
+            source_attempt_statuses=source_attempt_statuses,
+        ):
+            return "DATA_UNAVAILABLE"
+        return "RESEARCH_IN_PROGRESS"
     return "RESEARCH_IN_PROGRESS"
 
 
@@ -327,11 +345,13 @@ def _failed_checks(
     *,
     valid_source_refs: set[str],
     valid_source_attempt_ids: set[str],
+    source_ids_by_evidence_id: dict[str, str],
 ) -> list[str]:
     failed = rejected_stage1_check_ids(
         research,
         valid_source_refs=valid_source_refs,
         valid_source_attempt_ids=valid_source_attempt_ids,
+        source_ids_by_evidence_id=source_ids_by_evidence_id,
     )
     if status not in {"DATA_UNAVAILABLE", "REJECTED", "RESEARCH_IN_PROGRESS"}:
         return failed

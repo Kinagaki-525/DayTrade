@@ -8,7 +8,7 @@ account:
   account_type: cash
 
 capital:
-  total_yen: 50000
+  total_yen: 100000
   position_size: 100
 
 risk:

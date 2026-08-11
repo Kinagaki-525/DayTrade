@@ -327,7 +327,7 @@ def test_market_research_rejects_stage1_reject_with_unrecorded_source_ref():
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": "SHARE_UNIT_NOT_100",
-                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
             ],
@@ -359,6 +359,45 @@ def test_market_research_accepts_source_backed_stage1_reject():
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "JPX_TRADING_UNIT:1000:share_unit",
+                    "source_id": "JPX_TRADING_UNIT",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is True
+
+
+def test_market_research_rejects_share_unit_stage1_reject_with_listed_source():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "stage2_status": "SKIPPED",
+            "context_research_status": "SKIPPED",
+            "reason_codes": ["SHARE_UNIT_NOT_100"],
+            "missing_requirements": [],
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
                     "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
@@ -373,13 +412,15 @@ def test_market_research_accepts_source_backed_stage1_reject():
             "sources": [
                 {
                     "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                    "source_id": "JPX_LISTED_COMPANY",
                 }
             ],
             "source_attempts": [],
         },
     )
 
-    assert result.valid is True
+    assert result.valid is False
+    assert any("source-backed stage1_checks" in error for error in result.errors)
 
 
 def test_market_research_accepts_generic_capital_limit_stage1_reject():
@@ -466,7 +507,7 @@ def test_market_research_rejects_unapproved_stage1_reason_code():
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": "LOW_VOLUME",
-                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
             ],
@@ -479,7 +520,8 @@ def test_market_research_rejects_unapproved_stage1_reason_code():
         {
             "sources": [
                 {
-                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                    "source_ref": "JPX_TRADING_UNIT:1000:share_unit",
+                    "source_id": "JPX_TRADING_UNIT",
                 }
             ],
             "source_attempts": [],
@@ -501,7 +543,7 @@ def test_market_research_rejects_stage1_reject_without_reason_code():
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": None,
-                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
             ],
@@ -514,7 +556,8 @@ def test_market_research_rejects_stage1_reject_without_reason_code():
         {
             "sources": [
                 {
-                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                    "source_ref": "JPX_TRADING_UNIT:1000:share_unit",
+                    "source_id": "JPX_TRADING_UNIT",
                 }
             ],
             "source_attempts": [],
@@ -538,7 +581,7 @@ def test_market_research_rejects_stage2_after_stage1_reject():
                     "check_id": "share_unit",
                     "status": "REJECTED",
                     "reason_code": "SHARE_UNIT_NOT_100",
-                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_refs": ["JPX_TRADING_UNIT:1000:share_unit"],
                     "source_attempt_ids": [],
                 }
             ],
@@ -551,7 +594,8 @@ def test_market_research_rejects_stage2_after_stage1_reject():
         {
             "sources": [
                 {
-                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                    "source_ref": "JPX_TRADING_UNIT:1000:share_unit",
+                    "source_id": "JPX_TRADING_UNIT",
                 }
             ],
             "source_attempts": [],
@@ -647,9 +691,61 @@ def test_market_research_accepts_data_unavailable_with_external_source_check():
         }
     )
 
-    result = validate_market_research(payload, load_source_matrix())
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [],
+            "source_attempts": [
+                {
+                    "attempt_id": "kabutan-1000-access-failed",
+                    "source_id": "KABUTAN_HISTORY",
+                    "status": "ACCESS_FAILED",
+                }
+            ],
+        },
+    )
 
     assert result.valid is True
+
+
+def test_market_research_rejects_data_unavailable_with_successful_attempt_only():
+    payload = complete_candidate_research(market_research_payload())
+    payload["overall_status"] = "DATA_UNAVAILABLE"
+    payload["candidate_research"][0].update(
+        {
+            "data_status": "DATA_UNAVAILABLE",
+            "status_reasons": ["secondary OHLCV source access failed"],
+            "source_policy_status": "ACCESS_FAILED",
+            "source_checks": make_standard_source_checks(
+                secondary_ohlcv={
+                    "status": "ACCESS_FAILED",
+                    "source_id": "KABUTAN_HISTORY",
+                    "information_type": "OHLCV",
+                    "reason_code": "SECONDARY_OHLCV_ACCESS_FAILED",
+                    "source_attempt_ids": ["kabutan-1000-found"],
+                }
+            ),
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [],
+            "source_attempts": [
+                {
+                    "attempt_id": "kabutan-1000-found",
+                    "source_id": "KABUTAN_HISTORY",
+                    "status": "FOUND",
+                }
+            ],
+        },
+    )
+
+    assert result.valid is False
+    assert any("without attempted source_checks" in error for error in result.errors)
 
 
 def test_2026_08_12_regression_detects_old_data_unavailable_as_incomplete():

@@ -38,6 +38,14 @@ def test_pipeline_keeps_discovery_candidate_without_market_data():
                     data_status="DATA_UNAVAILABLE",
                     status_reasons=["secondary OHLCV source missing"],
                     source_policy_status="SINGLE_SOURCE_ONLY",
+                    source_checks=make_standard_source_checks(
+                        secondary_ohlcv={
+                            "status": "SINGLE_SOURCE_ONLY",
+                            "source_attempt_ids": [
+                                "kabutan_history-1234-single_source_only"
+                            ],
+                        }
+                    ),
                 )
             ],
         },
@@ -53,7 +61,15 @@ def test_pipeline_keeps_discovery_candidate_without_market_data():
                     information_type="VOLUME_RANKING",
                     candidate_code=None,
                     status="PARSE_FAILED",
-                )
+                ),
+                make_source_attempt(
+                    source_id="KABUTAN_HISTORY",
+                    source_role="SECONDARY",
+                    criticality="TRADE_CRITICAL",
+                    information_type="OHLCV",
+                    candidate_code="1234",
+                    status="SINGLE_SOURCE_ONLY",
+                ),
             ],
         },
         config=load_strategy_config(),
@@ -95,12 +111,32 @@ def test_pipeline_prefers_structured_research_reasons_and_missing_requirements()
                     status_reasons=["long human-readable fallback"],
                     reason_codes=["SECONDARY_OHLCV_MISSING"],
                     missing_requirements=["secondary_ohlcv"],
+                    source_checks=make_standard_source_checks(
+                        secondary_ohlcv={
+                            "status": "ACCESS_FAILED",
+                            "source_attempt_ids": [
+                                "kabutan_history-1234-access_failed"
+                            ],
+                        }
+                    ),
                 )
             ],
         },
         market_records=[],
         candidates_payload={"candidates": []},
-        source_payload={"sources": [], "source_attempts": []},
+        source_payload={
+            "sources": [],
+            "source_attempts": [
+                make_source_attempt(
+                    source_id="KABUTAN_HISTORY",
+                    source_role="SECONDARY",
+                    criticality="TRADE_CRITICAL",
+                    information_type="OHLCV",
+                    candidate_code="1234",
+                    status="ACCESS_FAILED",
+                )
+            ],
+        },
         config=load_strategy_config(),
     )
 
@@ -242,7 +278,7 @@ def test_stage1_reject_requires_source_backed_check():
                                 "status": "REJECTED",
                                 "reason_code": "SHARE_UNIT_NOT_100",
                                 "source_refs": [
-                                    "JPX_LISTED_COMPANY:1234:share_unit"
+                                    "JPX_TRADING_UNIT:1234:share_unit"
                                 ],
                                 "source_attempt_ids": [],
                             }
@@ -270,7 +306,7 @@ def test_stage1_reject_requires_source_backed_check():
                             "check_id": "share_unit",
                             "status": "REJECTED",
                             "reason_code": "SHARE_UNIT_NOT_100",
-                            "source_refs": ["JPX_LISTED_COMPANY:1234:share_unit"],
+                            "source_refs": ["JPX_TRADING_UNIT:1234:share_unit"],
                             "source_attempt_ids": [],
                         }
                     ],
@@ -282,7 +318,8 @@ def test_stage1_reject_requires_source_backed_check():
         source_payload={
             "sources": [
                 {
-                    "source_ref": "JPX_LISTED_COMPANY:1234:share_unit",
+                    "source_ref": "JPX_TRADING_UNIT:1234:share_unit",
+                    "source_id": "JPX_TRADING_UNIT",
                 }
             ],
             "source_attempts": [],
@@ -294,7 +331,7 @@ def test_stage1_reject_requires_source_backed_check():
     assert candidate["pipeline_status"] == "REJECTED"
     assert candidate["reason_codes"] == ["SHARE_UNIT_NOT_100"]
     assert candidate["failed_checks"] == ["stage1:share_unit"]
-    assert candidate["source_refs"] == ["JPX_LISTED_COMPANY:1234:share_unit"]
+    assert candidate["source_refs"] == ["JPX_TRADING_UNIT:1234:share_unit"]
 
 
 def test_pipeline_distinguishes_screening_results():

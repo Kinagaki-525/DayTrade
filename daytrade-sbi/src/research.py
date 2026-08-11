@@ -9,12 +9,15 @@ from src.contracts import validate_json_document
 from src.source_matrix import DISCOVERY_SOURCE_IDS, DISCOVERY_TYPES, source_by_id
 from src.source_checks import (
     INCOMPLETE_SOURCE_STATUSES,
+    has_data_unavailable_evidence,
     list_text,
     source_check_contract_errors,
+    source_attempt_statuses_from_payload,
 )
 from src.stage1 import (
     source_attempt_ids_from_payload,
     source_backed_stage1_reject,
+    source_ids_by_evidence_id_from_payload,
     source_refs_from_payload,
     stage1_contract_errors,
 )
@@ -23,16 +26,6 @@ from src.stage1 import (
 DISCOVERY_ORDER = ("VOLUME_RANKING", "PRICE_GAIN_RANKING")
 BLOCKING_DATA_STATUSES = {
     "DATA_UNAVAILABLE",
-    "CONFLICT",
-    "SINGLE_SOURCE_ONLY",
-    "SOURCE_POLICY_UNDEFINED",
-}
-EXTERNAL_SOURCE_FAILURE_STATUSES = {
-    "NOT_FOUND",
-    "NOT_YET_AVAILABLE",
-    "ACCESS_FAILED",
-    "PARSE_FAILED",
-    "STALE",
     "CONFLICT",
     "SINGLE_SOURCE_ONLY",
     "SOURCE_POLICY_UNDEFINED",
@@ -79,6 +72,16 @@ def validate_market_research(
     )
     valid_source_attempt_ids = (
         source_attempt_ids_from_payload(source_payload)
+        if source_payload is not None
+        else None
+    )
+    source_ids_by_evidence_id = (
+        source_ids_by_evidence_id_from_payload(source_payload)
+        if source_payload is not None
+        else None
+    )
+    source_attempt_statuses = (
+        source_attempt_statuses_from_payload(source_payload)
         if source_payload is not None
         else None
     )
@@ -218,6 +221,7 @@ def validate_market_research(
                 research,
                 valid_source_refs=valid_source_refs,
                 valid_source_attempt_ids=valid_source_attempt_ids,
+                source_ids_by_evidence_id=source_ids_by_evidence_id,
             )
         ):
             errors.append(
@@ -227,7 +231,11 @@ def validate_market_research(
         if (
             research.get("data_status") in BLOCKING_DATA_STATUSES
             and research.get("stage1_status") != "REJECTED"
-            and not _has_data_unavailable_evidence(research)
+            and not has_data_unavailable_evidence(
+                research,
+                valid_source_refs=valid_source_refs,
+                source_attempt_statuses=source_attempt_statuses,
+            )
         ):
             ticker = str(research.get("ticker", "")).strip() or "<unknown>"
             errors.append(
@@ -431,19 +439,6 @@ def _research_is_incomplete(research: dict[str, Any]) -> bool:
         for check in research.get("source_checks", [])
         if isinstance(check, dict)
     )
-
-
-def _has_data_unavailable_evidence(research: dict[str, Any]) -> bool:
-    for check in research.get("source_checks", []):
-        if not isinstance(check, dict):
-            continue
-        if check.get("status") not in EXTERNAL_SOURCE_FAILURE_STATUSES:
-            continue
-        if list_text(check.get("source_attempt_ids")) or list_text(
-            check.get("source_refs")
-        ):
-            return True
-    return False
 
 
 def _source_check_reference_errors(

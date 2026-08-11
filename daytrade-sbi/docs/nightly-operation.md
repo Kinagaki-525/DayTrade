@@ -25,16 +25,18 @@ py -B -m pytest
 6. `config/source_matrix.yaml`を検証
 7. PythonでTDnet調査期間を確定し、`research_window.json`を保存
 8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
-9. Discovery CandidatesだけをUniverse判定・Stage 1・Full Candidate Researchへ進め、`sources.json`と`market_data.json`を保存
-10. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と`candidates.json`を生成
-11. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-12. `candidate_pipeline.summary.pipeline_complete=true`を確認してから、確認済み情報だけで候補を比較
-13. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
-14. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-15. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
-16. `recommendation.md`と`report.md`を生成
-17. run artifact allowlistを検証し、`trades/recommendations.csv`へ推奨履歴を追加
-18. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
+10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
+11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
+12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と`candidates.json`を生成
+13. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
+14. `candidate_pipeline.summary.pipeline_complete=true`を確認してから、確認済み情報だけで候補を比較
+15. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
+16. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+17. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+18. `recommendation.md`と`report.md`を生成
+19. run artifact allowlistを検証し、`trades/recommendations.csv`へ推奨履歴を追加
+20. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 

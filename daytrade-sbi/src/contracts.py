@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from src.config import strategy_config_sha256
 from src.stage1 import (
     source_attempt_ids_from_payload,
+    source_ids_by_evidence_id_from_payload,
     source_refs_from_payload,
     stage1_contract_errors,
     stage1_reject_evidence_error,
@@ -247,6 +248,7 @@ def validate_candidate_pipeline_inputs(
         raise ValueError("candidates config_sha256 does not match --config")
     valid_source_refs = source_refs_from_payload(source_payload)
     valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
+    source_ids_by_evidence_id = source_ids_by_evidence_id_from_payload(source_payload)
     for research in market_research.get("candidate_research", []):
         contract_errors = stage1_contract_errors(research)
         if contract_errors:
@@ -255,6 +257,7 @@ def validate_candidate_pipeline_inputs(
             research,
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
+            source_ids_by_evidence_id=source_ids_by_evidence_id,
         )
         if evidence_error is not None:
             raise ValueError(evidence_error)

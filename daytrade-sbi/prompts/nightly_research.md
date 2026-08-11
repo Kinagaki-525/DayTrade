@@ -7,7 +7,7 @@
 1. 最初に `AGENTS.md`、`config/strategy.yaml`、`TODO.md` を読む。
 2. PythonからWeb取得、LLM API、外部市場データAPIを呼ばない。Web調査はCodexまたは読み取り専用subagentが行い、Pythonは検証、計算、レンダリングを担当する。
 3. `config/source_matrix.yaml` に定義された Source ID、role、criticality、information_type だけを使う。実行時に代替サイトを採用しない。
-4. Discovery経路、売買ルール、資金50,000円、100株固定、Weekend Cutoff、`previous_day_high_breakout` は変更しない。
+4. Discovery経路、売買ルール、資金100,000円、100株固定、Weekend Cutoff、`previous_day_high_breakout` は変更しない。
 5. Discovery順位や表示値は候補発見理由として保存するだけで、最終Rankingの評価値として使わない。
 6. 未取得値、日付不明、更新時刻不明、根拠不足は推測で埋めない。`NOT_STARTED`、`DEPENDENCY_NOT_READY`、`EXECUTION_FAILED`、`DATA_UNAVAILABLE`、`CONFLICT`、`SINGLE_SOURCE_ONLY` などで明示する。
 7. `DATA_UNAVAILABLE` は、必要Source checkを試行済みで外部要因が記録されている場合だけ使う。未実施や未mergeは `PIPELINE_INCOMPLETE` として扱う。
@@ -60,6 +60,11 @@ py -B -m src.cli resolve-research-window --target-date YYYY-MM-DD --previous-tra
 - 各ランキングはTOP50を保存する。2ランキングを証券コード単位でUnion/Dedupし、Discovery Candidateは最大100銘柄とする。
 - TDnet単独候補、ニュース、検索、SNS、アクセスランキング、AI選定テーマからDiscovery Candidateを追加しない。
 - `discovery_candidates` はDiscovery unionと完全一致させる。
+- Discovery unionを保存したら、次を実行して全Discovery Candidate分の `candidate_research[]` を初期化する。
+
+```powershell
+py -B -m src.cli init-candidate-research --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
+```
 
 ## Candidate Research
 
@@ -83,6 +88,14 @@ news_context
 - 未実施は `NOT_STARTED`、上流依存待ちは `DEPENDENCY_NOT_READY`、実行失敗は `EXECUTION_FAILED` とし、外部出典不足とは分ける。
 - Stage 1通過候補は必ず `RESEARCH_COMPLETE`、`DATA_UNAVAILABLE`、`ELIGIBLE`、`REJECTED` の終端状態に到達させる。
 - Stage 1 rejectは `stage1_checks[]` に `check_id`、`status`、`reason_code`、`source_refs`、`source_attempt_ids` を保存する。Source根拠なしのrejectは使わない。
+- Stage 1の取得済み事実を保存したら、次を実行して100株条件と100,000円資金条件をSource根拠付きで分類する。
+
+```powershell
+py -B -m src.cli apply-stage1 --market-research runs/YYYY-MM-DD/market_research.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/market_research.json
+py -B -m src.cli plan-stage2-batches --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
+```
+
+- `plan-stage2-batches` が作成した `subagent_batches[]` の候補を勝手に減らさない。必要な場合だけ `--batch-size` を明示して調整する。
 - 売買単位は `JPX_TRADING_UNIT` を使う。`JPX_LISTED_COMPANY` を売買単位Sourceとして流用しない。
 - TOPIX500 membershipは既存の `JPX_TOPIX500` を使う。
 - Tick sizeは `JPX_TICK_SIZE`、価格入力Source、`JPX_TOPIX500` membership Sourceを `field_provenance.source_refs` で追跡する。audit-only根拠だけなら `SINGLE_SOURCE_ONLY` のまま取引不可とする。

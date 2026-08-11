@@ -33,30 +33,30 @@ def evaluate(item, *, current_positions=0, trades_today=0):
     )
 
 
-def test_entry_limit_500_for_100_shares_passes():
+def test_entry_limit_1000_for_100_shares_passes():
     result = evaluate(
         proposal(
-            previous_high="498",
-            entry_trigger="499",
-            entry_limit="500",
-            take_profit="508",
-            stop_loss="495",
+            previous_high="998",
+            entry_trigger="999",
+            entry_limit="1000",
+            take_profit="1008",
+            stop_loss="995",
         )
     )
 
     assert result.status == "PASS"
-    assert str(result.required_capital_yen) == "50000"
+    assert str(result.required_capital_yen) == "100000"
 
 
-def test_entry_limit_500_5_for_100_shares_is_rejected():
+def test_entry_limit_1000_5_for_100_shares_is_rejected():
     result = evaluate(
         proposal(
-            previous_high="499.5",
+            previous_high="999.5",
             tick_size="0.5",
-            entry_trigger="500.0",
-            entry_limit="500.5",
-            take_profit="508.5",
-            stop_loss="495.5",
+            entry_trigger="1000.0",
+            entry_limit="1000.5",
+            take_profit="1008.5",
+            stop_loss="995.5",
         )
     )
 

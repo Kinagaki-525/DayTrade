@@ -24,7 +24,7 @@ Codexは出典付き市場調査から1銘柄の`TRADE`案、`NO_TRADE`、また
 | `strategy_version` | 適用ルールの版 | SBI入力項目ではない。推奨・実取引記録へ残す |
 | `validation_status` | 戦略の検証状態 | `unvalidated`は有効性未確認を示す |
 | `account.account_type` | 口座・取引区分 | `cash`のため現物買候補のみ |
-| `capital.total_yen` | 運用資金上限 | 必要資金が50,000円以内かRisk Engineが検証 |
+| `capital.total_yen` | 運用資金上限 | 必要資金が100,000円以内かRisk Engineが検証 |
 | `capital.position_size` | 株数 | 100株でなければRisk Engineが拒否 |
 | `previous_day_high_breakout.trigger_ticks` | 前日高値からの発動ティック数 | 発動価格をPythonが再計算 |
 | `previous_day_high_breakout.entry_limit_offset_ticks` | 発動価格から買い上限までのティック数 | 買い上限をPythonが再計算 |
@@ -44,7 +44,7 @@ Codexは出典付き市場調査から1銘柄の`TRADE`案、`NO_TRADE`、また
 - 前日高値と呼値が市場データに一致
 - 発動価格、買い上限、利確、損切りが設定からの再計算値に一致
 - 100株
-- 買い上限 × 100株が50,000円以内
+- 買い上限 × 100株が100,000円以内
 - 発動価格が買い上限以下
 - 損切りが買い上限未満
 - 利確が買い上限より大きい

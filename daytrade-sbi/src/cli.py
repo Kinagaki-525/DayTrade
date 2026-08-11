@@ -14,6 +14,11 @@ from src.config import (
     strategy_config_sha256,
 )
 from src.candidate_pipeline import build_candidate_pipeline
+from src.candidate_research import (
+    apply_stage1_payload,
+    init_candidate_research_payload,
+    plan_stage2_batches_payload,
+)
 from src.contracts import (
     load_json_document,
     validate_candidate_pipeline_inputs,
@@ -91,6 +96,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SOURCE_MATRIX_PATH,
     )
     market_research_parser.add_argument("--output", required=True, type=Path)
+
+    init_candidate_research_parser = subparsers.add_parser("init-candidate-research")
+    init_candidate_research_parser.add_argument(
+        "--market-research",
+        required=True,
+        type=Path,
+    )
+    init_candidate_research_parser.add_argument("--output", required=True, type=Path)
+
+    stage1_parser = subparsers.add_parser("apply-stage1")
+    stage1_parser.add_argument("--market-research", required=True, type=Path)
+    stage1_parser.add_argument("--market-data", required=True, type=Path)
+    stage1_parser.add_argument("--sources", required=True, type=Path)
+    stage1_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    stage1_parser.add_argument("--output", required=True, type=Path)
+
+    stage2_batches_parser = subparsers.add_parser("plan-stage2-batches")
+    stage2_batches_parser.add_argument("--market-research", required=True, type=Path)
+    stage2_batches_parser.add_argument("--output", required=True, type=Path)
+    stage2_batches_parser.add_argument("--batch-size", type=int, default=8)
+    stage2_batches_parser.add_argument("--agent-name", default="market_researcher")
 
     research_window_parser = subparsers.add_parser("resolve-research-window")
     research_window_parser.add_argument("--target-date", required=True)
@@ -224,6 +250,23 @@ def main(argv: list[str] | None = None) -> int:
             args.source_matrix,
             args.output,
         )
+    if args.command == "init-candidate-research":
+        return _init_candidate_research(args.market_research, args.output)
+    if args.command == "apply-stage1":
+        return _apply_stage1(
+            args.market_research,
+            args.market_data,
+            args.sources,
+            args.config,
+            args.output,
+        )
+    if args.command == "plan-stage2-batches":
+        return _plan_stage2_batches(
+            args.market_research,
+            args.output,
+            args.batch_size,
+            args.agent_name,
+        )
     if args.command == "resolve-research-window":
         return _resolve_research_window(
             args.target_date,
@@ -350,6 +393,63 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--recommendation", required=True, type=Path)
     parser.add_argument("--risk-result", required=True, type=Path)
     parser.add_argument("--market-data", required=True, type=Path)
+
+
+def _init_candidate_research(
+    market_research_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    payload = init_candidate_research_payload(market_research)
+    _write_json(output_path, payload, "market_research.schema.json")
+    return 0
+
+
+def _apply_stage1(
+    market_research_path: Path,
+    market_data_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    load_json_document(market_data_path, "market_data.schema.json")
+    _, records = load_market_data(market_data_path)
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    config = load_strategy_config(config_path)
+    payload = apply_stage1_payload(
+        market_research=market_research,
+        market_records=records,
+        source_payload=source_payload,
+        config=config,
+    )
+    _write_json(output_path, payload, "market_research.schema.json")
+    return 0
+
+
+def _plan_stage2_batches(
+    market_research_path: Path,
+    output_path: Path,
+    batch_size: int,
+    agent_name: str,
+) -> int:
+    market_research = load_json_document(
+        market_research_path,
+        "market_research.schema.json",
+    )
+    payload = plan_stage2_batches_payload(
+        market_research=market_research,
+        batch_size=batch_size,
+        agent_name=agent_name,
+    )
+    _write_json(output_path, payload, "market_research.schema.json")
+    return 0
 
 
 def _validate_market(

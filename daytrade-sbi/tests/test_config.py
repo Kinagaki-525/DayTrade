@@ -19,7 +19,8 @@ def test_v2_config_preserves_v1_fixed_rule_values():
     current = load_strategy_config()
     archived = load_yaml(PROJECT_ROOT / "rules" / "versions" / "v1.yaml")
 
-    assert current["capital"]["total_yen"] == archived["capital"]
+    assert archived["capital"] == 50000
+    assert current["capital"]["total_yen"] == 100000
     assert current["capital"]["position_size"] == archived["position_size"]
     assert current["risk"]["max_loss_per_trade_yen"] == archived["risk"]["max_loss_per_trade_yen"]
     assert current["previous_day_high_breakout"]["trigger_ticks"] == archived["entry"]["trigger_ticks"]

@@ -211,7 +211,7 @@ def test_candidate_pipeline_inputs_rejects_unrecorded_stage1_source_refs():
                                 "status": "REJECTED",
                                 "reason_code": "SHARE_UNIT_NOT_100",
                                 "source_refs": [
-                                    "JPX_LISTED_COMPANY:1234:share_unit"
+                                    "JPX_TRADING_UNIT:1234:share_unit"
                                 ],
                                 "source_attempt_ids": [],
                             }
