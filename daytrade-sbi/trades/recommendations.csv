@@ -1,2 +1,1 @@
 target_date,strategy_version,config_sha256,ticker,decision,strategy_type,entry_trigger,entry_limit,take_profit,stop_loss,risk_result,order_submitted,entry_triggered,entry_filled,notes
-2026-08-12,v1,d3631bc50e9dc52d61fe562d32ec8574d2c07a1cbf1128cd063696e293e140df,,NO_TRADE,,,,,,NOT_APPLICABLE,,,,"NO_TRADEは市場データ不足ではなく、最終候補選定ルール未決定による。SBIログイン、画面操作、注文送信は行っていない。"

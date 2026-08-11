@@ -1,0 +1,17 @@
+target_date: 2026-08-12
+decision: NO_TRADE
+risk_status: NOT_APPLICABLE
+discovery_candidates: 96
+candidate_research_count: 96
+market_data_count: 35
+pipeline_candidates: 96
+source_count: 883
+source_attempt_count: 77
+eligible_candidates: 35
+rejected_candidates: 61
+research_incomplete: 0
+pipeline_complete: true
+artifact_validation: "VALID"
+canonical_run_dir: "runs/2026-08-12"
+related_issue_doc: "docs/run-issues/2026-08-12.md"
+purpose: "2026-08-12 final prepare-daytrade-plan run preserved as regression data after complete candidate research; NO_TRADE because final single-candidate selection rule remained unresolved"
