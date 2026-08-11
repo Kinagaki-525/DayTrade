@@ -33,6 +33,16 @@ def complete_pipeline_summary(**overrides):
         "stage2_incomplete_count": 0,
         "coverage_rate": 1,
         "research_incomplete_reason_counts": {},
+        "screening_input_count": 1,
+        "screening_pass_count": 1,
+        "screening_reject_count": 0,
+        "screening_data_unavailable_count": 0,
+        "screening_incomplete_count": 0,
+        "screening_complete": True,
+        "candidate_count_consistent": True,
+        "all_enabled_rules_evaluated": True,
+        "screening_rule_counts": [],
+        "ranking_complete": False,
     }
     summary.update(overrides)
     return summary
@@ -353,22 +363,17 @@ def test_build_candidate_pipeline_command_writes_payload(monkeypatch):
         "generated_at": "2026-08-09T00:00:00+00:00",
         "strategy_version": strategy_version,
         "config_sha256": config_sha256,
-        "summary": {
-            "discovered": 0,
-            "research_complete": 0,
-            "research_incomplete": 0,
-            "data_unavailable": 0,
-            "screened": 0,
-            "eligible": 0,
-            "rejected": 0,
-            "pipeline_complete": True,
-            "stage2_target_count": 0,
-            "stage2_completed_count": 0,
-            "stage2_unavailable_count": 0,
-            "stage2_incomplete_count": 0,
-            "coverage_rate": None,
-            "research_incomplete_reason_counts": {},
-        },
+        "summary": complete_pipeline_summary(
+            discovered=0,
+            research_complete=0,
+            screened=0,
+            eligible=0,
+            stage2_target_count=0,
+            stage2_completed_count=0,
+            coverage_rate=None,
+            screening_input_count=0,
+            screening_pass_count=0,
+        ),
         "candidates": [],
     }
 
@@ -432,6 +437,7 @@ def test_build_performance_command_writes_payload(monkeypatch):
                 "stage2_incomplete_count": 0,
                 "research_coverage_rate": None,
                 "context_research_candidate_count": 0,
+                "screening_source_request_count": 0,
                 "candidate_status_counts": {},
             },
         "timings": {
@@ -852,7 +858,7 @@ def test_validate_market_research_command_rejects_unrecorded_stage1_source_ref(m
     assert any("source-backed stage1_checks" in error for error in captured["errors"])
 
 
-def test_risk_check_command_generates_pass_payload(monkeypatch):
+def test_risk_check_rejects_trade_while_ranking_is_incomplete(monkeypatch):
     captured = {}
     strategy_version, config_sha256 = config_metadata()
     recommendation = {
@@ -898,52 +904,32 @@ def test_risk_check_command_generates_pass_payload(monkeypatch):
     )
     monkeypatch.setattr(
         cli,
-        "_load_market_bundle",
-        lambda market, sources, source_matrix: (
-            "2026-08-10",
-            [make_market_record()],
-            SourceLedgerValidationResult(True, ()),
-            {
-                "target_date": "2026-08-10",
-                "sources": [
-                    {"source_url": "https://example.test/source"},
-                ],
-            },
-            load_source_matrix(),
-        ),
-    )
-    monkeypatch.setattr(
-        cli,
         "_write_json",
         capture_validated_payload(captured),
     )
 
-    result = cli.main(
-        [
-            "risk-check",
-            "--recommendation",
-            "recommendation.json",
-            "--candidates",
-            "candidates.json",
-            "--candidate-pipeline",
-            "candidate_pipeline.json",
-            "--market-data",
-            "market_data.json",
-            "--sources",
-            "sources.json",
-            "--output",
-            "risk_result.json",
-            "--current-positions",
-            "0",
-            "--trades-today",
-            "0",
-        ]
-    )
-
-    assert result == 0
-    assert captured["status"] == "PASS"
-    assert captured["expected_loss_yen"] == "500"
-    assert captured["config_sha256"] == config_sha256
+    with pytest.raises(ValueError, match="ranking_complete"):
+        cli.main(
+            [
+                "risk-check",
+                "--recommendation",
+                "recommendation.json",
+                "--candidates",
+                "candidates.json",
+                "--candidate-pipeline",
+                "candidate_pipeline.json",
+                "--market-data",
+                "market_data.json",
+                "--sources",
+                "sources.json",
+                "--output",
+                "risk_result.json",
+                "--current-positions",
+                "0",
+                "--trades-today",
+                "0",
+            ]
+        )
 
 
 def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
@@ -1135,7 +1121,11 @@ def test_risk_check_requires_position_inputs_for_trade(monkeypatch):
         "config_sha256": config_sha256,
         "candidates": [{"ticker": "1234", "status": "ELIGIBLE"}],
     }
-    candidate_pipeline = complete_candidate_pipeline(strategy_version, config_sha256)
+    candidate_pipeline = complete_candidate_pipeline(
+        strategy_version,
+        config_sha256,
+        ranking_complete=True,
+    )
     recommendation["pipeline_summary"] = candidate_pipeline["summary"]
 
     def load_document(path, schema):

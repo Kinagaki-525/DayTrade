@@ -82,6 +82,7 @@ def build_performance_payload(
                 if research.get("context_research_status")
                 in {"IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE"}
             ),
+            "screening_source_request_count": 0,
             "candidate_status_counts": candidate_status_counts,
         },
         "timings": _timings(timings_payload),

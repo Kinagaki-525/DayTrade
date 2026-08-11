@@ -1,6 +1,37 @@
 from src.reports import render_daily_report, render_research_report, render_sbi_report
 
 
+def pipeline_summary(**overrides):
+    summary = {
+        "discovered": 1,
+        "research_complete": 1,
+        "research_incomplete": 0,
+        "data_unavailable": 0,
+        "screened": 1,
+        "eligible": 1,
+        "rejected": 0,
+        "pipeline_complete": True,
+        "stage2_target_count": 1,
+        "stage2_completed_count": 1,
+        "stage2_unavailable_count": 0,
+        "stage2_incomplete_count": 0,
+        "coverage_rate": 1,
+        "research_incomplete_reason_counts": {},
+        "screening_input_count": 1,
+        "screening_pass_count": 1,
+        "screening_reject_count": 0,
+        "screening_data_unavailable_count": 0,
+        "screening_incomplete_count": 0,
+        "screening_complete": True,
+        "candidate_count_consistent": True,
+        "all_enabled_rules_evaluated": True,
+        "screening_rule_counts": [],
+        "ranking_complete": False,
+    }
+    summary.update(overrides)
+    return summary
+
+
 def test_passed_trade_report_contains_manual_order_warning():
     recommendation = {
         "target_date": "2026-08-10",
@@ -59,15 +90,15 @@ def test_data_unavailable_report_is_not_no_trade():
             "decision": "DATA_UNAVAILABLE",
             "research_cutoff": "2026-08-07T20:00:00+09:00",
             "post_cutoff_information_status": "OUT_OF_SCOPE",
-            "pipeline_summary": {
-                "discovered": 99,
-                "research_complete": 0,
-                "research_incomplete": 0,
-                "data_unavailable": 99,
-                "screened": 0,
-                "eligible": 0,
-                "rejected": 0,
-            },
+            "pipeline_summary": pipeline_summary(
+                discovered=99,
+                research_complete=0,
+                data_unavailable=99,
+                screened=0,
+                eligible=0,
+                screening_input_count=0,
+                screening_pass_count=0,
+            ),
             "source_statuses": [
                 {
                     "source_id": "JPX_TDNET",
@@ -106,20 +137,7 @@ def test_structured_research_and_daily_reports_do_not_keep_intermediate_notes():
         ],
     }
     candidate_pipeline = {
-        "summary": {
-            "discovered": 1,
-            "research_complete": 1,
-            "research_incomplete": 0,
-            "data_unavailable": 0,
-            "eligible": 1,
-            "rejected": 0,
-            "pipeline_complete": True,
-            "stage2_target_count": 1,
-            "stage2_completed_count": 1,
-            "stage2_unavailable_count": 0,
-            "stage2_incomplete_count": 0,
-            "research_incomplete_reason_counts": {},
-        },
+        "summary": pipeline_summary(),
         "candidates": [],
     }
     source_payload = {"source_attempts": []}
@@ -160,3 +178,5 @@ def test_structured_research_and_daily_reports_do_not_keep_intermediate_notes():
     assert "may screen" not in combined
     assert "order-plan preview" not in combined
     assert "調査パイプライン完了: はい" in combined
+    assert "Screening PASS: 1件" in combined
+    assert "Ranking未実装のためTRADE候補は確定しない。" in combined

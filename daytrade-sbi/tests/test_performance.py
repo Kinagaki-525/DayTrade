@@ -70,6 +70,7 @@ def test_performance_counts_stage_candidates_and_duplicate_requests():
     assert payload["counts"]["stage1_rejected_count"] == 1
     assert payload["counts"]["stage2_candidate_count"] == 1
     assert payload["counts"]["context_research_candidate_count"] == 1
+    assert payload["counts"]["screening_source_request_count"] == 0
     assert payload["timings"]["total"] is None
 
 

@@ -144,8 +144,11 @@ def render_research_report(
             "## Rankingに使わなかったDiscovery情報",
             "- Discovery順位と表示値は候補発見理由としてのみ保存し、最終Rankingの評価値として使わない。",
             "",
+            "## Hard Screening",
+            *_screening_summary_lines(summary),
+            "",
             "## Codexによる比較評価",
-            "- 比較対象はPython screening後のELIGIBLE候補だけとする。",
+            "- Ranking未実装のため、Hard Screening PASS候補があってもTRADEへ進めない。",
             "- この文書は最終構造化成果物から生成し、途中判断や注文プレビューは残さない。",
         ]
     )
@@ -178,6 +181,7 @@ def render_daily_report(
         f"- DATA_UNAVAILABLE: {summary.get('data_unavailable', 0)}件",
         f"- ELIGIBLE: {summary.get('eligible', 0)}件",
         f"- REJECTED: {summary.get('rejected', 0)}件",
+        *_screening_summary_lines(summary),
         "",
         "## 判断理由",
     ]
@@ -257,6 +261,7 @@ def _append_pipeline_sections(lines: list[str], recommendation: dict[str, Any]) 
             f"DATA_UNAVAILABLE: {summary.get('data_unavailable', 0)}件",
             f"ELIGIBLE: {summary.get('eligible', 0)}件",
             f"REJECTED: {summary.get('rejected', 0)}件",
+            *(_screening_summary_lines(summary, bullet=False)),
         ]
         if "pipeline_complete" in summary:
             values.append(f"調査パイプライン完了: {_yes_no(summary.get('pipeline_complete'))}")
@@ -309,6 +314,26 @@ def _yes_no(value: Any) -> str:
     if value is False:
         return "いいえ"
     return "不明"
+
+
+def _screening_summary_lines(
+    summary: dict[str, Any],
+    *,
+    bullet: bool = True,
+) -> list[str]:
+    prefix = "- " if bullet else ""
+    lines = [
+        f"{prefix}Screening対象: {summary.get('screening_input_count', 0)}件",
+        f"{prefix}Screening PASS: {summary.get('screening_pass_count', 0)}件",
+        f"{prefix}Screening REJECT: {summary.get('screening_reject_count', 0)}件",
+        f"{prefix}Screening DATA_UNAVAILABLE: {summary.get('screening_data_unavailable_count', 0)}件",
+        f"{prefix}Screening未完了: {summary.get('screening_incomplete_count', 0)}件",
+        f"{prefix}Screening完了: {_yes_no(summary.get('screening_complete'))}",
+        f"{prefix}Ranking完了: {_yes_no(summary.get('ranking_complete'))}",
+    ]
+    if summary.get("ranking_complete") is not True:
+        lines.append(f"{prefix}Ranking未実装のためTRADE候補は確定しない。")
+    return lines
 
 
 def _source_attempt_status_lines(source_payload: dict[str, Any]) -> list[str]:

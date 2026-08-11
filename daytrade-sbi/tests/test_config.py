@@ -2,17 +2,29 @@ from pathlib import Path
 
 import pytest
 
-from src.config import load_strategy_config, load_yaml, validate_strategy_config
+from src.config import (
+    SCREENING_KEYS,
+    load_strategy_config,
+    load_yaml,
+    normalize_screening_rules,
+    validate_strategy_config,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v2_config_keeps_unresolved_screening_values_null():
+def test_v2_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
     assert config["strategy_version"] == "v1"
-    assert all(value is None for value in config["screening"].values())
+    rules = normalize_screening_rules(config["screening"])
+    assert set(rules) == set(SCREENING_KEYS)
+    assert all(rule["enabled"] is False for rule in rules.values())
+    assert all(rule["threshold"] is None for rule in rules.values())
+    assert rules["maximum_gap_percent"]["phase"] == "entry_gate"
+    assert rules["maximum_spread"]["phase"] == "execution_gate"
+    assert rules["exclude_earnings"]["phase"] == "event_gate"
 
 
 def test_v2_config_preserves_v1_fixed_rule_values():
@@ -38,3 +50,21 @@ def test_config_rejects_relaxed_position_limit():
 def test_strategy_loader_rejects_duplicate_yaml_keys():
     with pytest.raises(ValueError, match="Duplicate YAML key: capital"):
         load_strategy_config(PROJECT_ROOT / "tests" / "fixtures" / "strategy_duplicate_key.yaml")
+
+
+def test_enabled_screening_rule_requires_threshold():
+    config = load_strategy_config()
+    config["screening"]["minimum_volume"]["enabled"] = True
+
+    with pytest.raises(ValueError, match="threshold is required"):
+        validate_strategy_config(config)
+
+
+def test_legacy_null_screening_values_remain_read_only_compatible():
+    config = load_strategy_config()
+    config["screening"]["minimum_volume"] = None
+
+    rules = normalize_screening_rules(config["screening"])
+
+    assert rules["minimum_volume"]["enabled"] is False
+    assert rules["minimum_volume"]["threshold"] is None

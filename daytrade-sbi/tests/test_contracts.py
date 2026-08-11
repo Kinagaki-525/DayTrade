@@ -22,6 +22,37 @@ METADATA = {
 }
 
 
+def complete_summary(**overrides):
+    summary = {
+        "discovered": 1,
+        "research_complete": 1,
+        "research_incomplete": 0,
+        "data_unavailable": 0,
+        "screened": 1,
+        "eligible": 1,
+        "rejected": 0,
+        "pipeline_complete": True,
+        "stage2_target_count": 1,
+        "stage2_completed_count": 1,
+        "stage2_unavailable_count": 0,
+        "stage2_incomplete_count": 0,
+        "coverage_rate": 1,
+        "research_incomplete_reason_counts": {},
+        "screening_input_count": 1,
+        "screening_pass_count": 1,
+        "screening_reject_count": 0,
+        "screening_data_unavailable_count": 0,
+        "screening_incomplete_count": 0,
+        "screening_complete": True,
+        "candidate_count_consistent": True,
+        "all_enabled_rules_evaluated": True,
+        "screening_rule_counts": [],
+        "ranking_complete": False,
+    }
+    summary.update(overrides)
+    return summary
+
+
 def test_trade_recommendation_must_reference_an_eligible_candidate():
     recommendation = {**METADATA, "decision": "TRADE", "ticker": "1234"}
     candidates = {
@@ -48,28 +79,26 @@ def test_recommendation_pipeline_link_rejects_incomplete_pipeline():
         **METADATA,
         "decision": "NO_TRADE",
         "ticker": None,
-        "pipeline_summary": {
-            "discovered": 1,
-            "research_complete": 0,
-            "research_incomplete": 1,
-            "data_unavailable": 0,
-            "screened": 0,
-            "eligible": 0,
-            "rejected": 0,
-        },
+        "pipeline_summary": complete_summary(
+            research_complete=0,
+            research_incomplete=1,
+            screened=0,
+            eligible=0,
+            screening_input_count=0,
+            screening_pass_count=0,
+        ),
     }
     candidate_pipeline = {
         **METADATA,
-        "summary": {
-            "discovered": 1,
-            "research_complete": 0,
-            "research_incomplete": 1,
-            "data_unavailable": 0,
-            "screened": 0,
-            "eligible": 0,
-            "rejected": 0,
-            "pipeline_complete": False,
-        },
+        "summary": complete_summary(
+            research_complete=0,
+            research_incomplete=1,
+            screened=0,
+            eligible=0,
+            pipeline_complete=False,
+            screening_input_count=0,
+            screening_pass_count=0,
+        ),
     }
 
     with pytest.raises(ValueError, match="not complete"):
@@ -81,31 +110,27 @@ def test_recommendation_pipeline_link_requires_summary_counts_to_match():
         **METADATA,
         "decision": "NO_TRADE",
         "ticker": None,
-        "pipeline_summary": {
-            "discovered": 1,
-            "research_complete": 1,
-            "research_incomplete": 0,
-            "data_unavailable": 0,
-            "screened": 1,
-            "eligible": 0,
-            "rejected": 1,
-        },
+        "pipeline_summary": complete_summary(eligible=0, rejected=1),
     }
     candidate_pipeline = {
         **METADATA,
-        "summary": {
-            "discovered": 1,
-            "research_complete": 1,
-            "research_incomplete": 0,
-            "data_unavailable": 0,
-            "screened": 1,
-            "eligible": 1,
-            "rejected": 0,
-            "pipeline_complete": True,
-        },
+        "summary": complete_summary(),
     }
 
     with pytest.raises(ValueError, match="eligible does not match"):
+        validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+
+
+def test_trade_recommendation_requires_completed_ranking():
+    recommendation = {
+        **METADATA,
+        "decision": "TRADE",
+        "ticker": "1234",
+        "pipeline_summary": complete_summary(),
+    }
+    candidate_pipeline = {**METADATA, "summary": complete_summary()}
+
+    with pytest.raises(ValueError, match="ranking_complete"):
         validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
 
 

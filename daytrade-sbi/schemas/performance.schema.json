@@ -29,6 +29,7 @@
         "stage2_incomplete_count",
         "research_coverage_rate",
         "context_research_candidate_count",
+        "screening_source_request_count",
         "candidate_status_counts"
       ],
       "properties": {
@@ -49,6 +50,7 @@
           "maximum": 1
         },
         "context_research_candidate_count": {"type": "integer", "minimum": 0},
+        "screening_source_request_count": {"type": "integer", "minimum": 0},
         "candidate_status_counts": {
           "type": "object",
           "propertyNames": {

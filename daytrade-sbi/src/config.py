@@ -5,6 +5,7 @@ import json
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+import logging
 
 import yaml
 
@@ -25,6 +26,74 @@ SCREENING_KEYS = (
     "exclude_earnings",
     "exclude_special_disclosures",
 )
+SCREENING_PHASES = ("hard_screening", "event_gate", "entry_gate", "execution_gate")
+SCREENING_CRITICALITIES = ("TRADE_CRITICAL", "CONTEXT")
+SCREENING_OPERATORS = (">=", "<=", ">", "<", "==", "!=", "is", "is_not")
+SCREENING_RULE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "minimum_volume": {
+        "phase": "hard_screening",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("volume",),
+        "operator": ">=",
+        "reason_code": "VOLUME_BELOW_MINIMUM",
+    },
+    "minimum_turnover": {
+        "phase": "hard_screening",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("turnover",),
+        "operator": ">=",
+        "reason_code": "TURNOVER_BELOW_MINIMUM",
+    },
+    "minimum_price": {
+        "phase": "hard_screening",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("close",),
+        "operator": ">=",
+        "reason_code": "PRICE_BELOW_MINIMUM",
+    },
+    "maximum_price": {
+        "phase": "hard_screening",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("close",),
+        "operator": "<=",
+        "reason_code": "PRICE_ABOVE_MAXIMUM",
+    },
+    "maximum_spread": {
+        "phase": "execution_gate",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("spread",),
+        "operator": "<=",
+        "reason_code": "SPREAD_ABOVE_MAXIMUM",
+    },
+    "minimum_daily_range": {
+        "phase": "hard_screening",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("daily_range_yen",),
+        "operator": ">=",
+        "reason_code": "DAILY_RANGE_BELOW_MINIMUM",
+    },
+    "maximum_gap_percent": {
+        "phase": "entry_gate",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("opening_gap_pct",),
+        "operator": "<=",
+        "reason_code": "GAP_ABOVE_MAXIMUM",
+    },
+    "exclude_earnings": {
+        "phase": "event_gate",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("earnings_scheduled",),
+        "operator": "is_not",
+        "reason_code": "EARNINGS_SCHEDULED",
+    },
+    "exclude_special_disclosures": {
+        "phase": "event_gate",
+        "criticality": "TRADE_CRITICAL",
+        "input_fields": ("special_disclosures",),
+        "operator": "is_not",
+        "reason_code": "SPECIAL_DISCLOSURE_FOUND",
+    },
+}
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -132,6 +201,7 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
             f"strategy.allowed must contain only {SUPPORTED_STRATEGY!r}"
         )
 
+
     breakout = _required_mapping(config, SUPPORTED_STRATEGY)
     _non_negative_int(
         _required(breakout, "trigger_ticks", SUPPORTED_STRATEGY),
@@ -149,15 +219,95 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
     )
 
     screening = _required_mapping(config, "screening")
+    normalize_screening_rules(screening)
+
+
+def normalize_screening_rules(screening: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
     for key in SCREENING_KEYS:
         value = _required(screening, key, "screening")
-        if value is None:
-            continue
-        if key.startswith("exclude_"):
-            if not isinstance(value, bool):
-                raise ValueError(f"screening.{key} must be boolean or null")
+        normalized[key] = _normalize_screening_rule(key, value)
+    return normalized
+
+
+def _normalize_screening_rule(rule_id: str, value: Any) -> dict[str, Any]:
+    defaults = SCREENING_RULE_DEFAULTS[rule_id]
+    if value is None or not isinstance(value, dict):
+        threshold = value
+        if rule_id.startswith("exclude_") and threshold is not None:
+            if not isinstance(threshold, bool):
+                raise ValueError(f"screening.{rule_id} must be boolean or null")
+        elif threshold is not None:
+            _positive_decimal(threshold, f"screening.{rule_id}")
+        return {
+            "rule_id": rule_id,
+            "enabled": threshold is not None,
+            "phase": defaults["phase"],
+            "criticality": defaults["criticality"],
+            "input_fields": tuple(defaults["input_fields"]),
+            "operator": defaults["operator"],
+            "threshold": threshold,
+            "reason_code": defaults["reason_code"],
+            "legacy_scalar": True,
+        }
+
+    rule = dict(value)
+    enabled = _required_bool(rule, "enabled", f"screening.{rule_id}")
+    phase = _required_text_choice(
+        rule,
+        "phase",
+        f"screening.{rule_id}",
+        SCREENING_PHASES,
+    )
+    criticality = _required_text_choice(
+        rule,
+        "criticality",
+        f"screening.{rule_id}",
+        SCREENING_CRITICALITIES,
+    )
+    operator = _required_text_choice(
+        rule,
+        "operator",
+        f"screening.{rule_id}",
+        SCREENING_OPERATORS,
+    )
+    input_fields = _required_text_list(rule, "input_fields", f"screening.{rule_id}")
+    reason_code = _required_pattern_text(
+        rule,
+        "reason_code",
+        f"screening.{rule_id}",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_",
+    )
+    threshold = _required(rule, "threshold", f"screening.{rule_id}")
+    # 無効に設定された rule (enabled == False) は threshold を設定してはいけない
+    if enabled is False and threshold is not None:
+        # Backwards-compatible behavior: clear supplied threshold but warn.
+        logging.warning(
+            "screening.%s: disabled rule supplied threshold; clearing",
+            rule_id,
+        )
+        threshold = None
+    if enabled and threshold is None:
+        raise ValueError(f"screening.{rule_id}.threshold is required when enabled")
+    if threshold is not None:
+        if operator in {"is", "is_not"}:
+            if not isinstance(threshold, bool):
+                raise ValueError(
+                    f"screening.{rule_id}.threshold must be boolean for {operator}"
+                )
         else:
-            _positive_decimal(value, f"screening.{key}")
+            _positive_decimal(threshold, f"screening.{rule_id}.threshold")
+    return {
+        "rule_id": rule_id,
+        "enabled": enabled,
+        "phase": phase,
+        "criticality": criticality,
+        "input_fields": tuple(input_fields),
+        "operator": operator,
+        "threshold": threshold,
+        "reason_code": reason_code,
+        "legacy_scalar": False,
+    }
 
 
 def _to_decimal(value: Any, name: str) -> Decimal:
@@ -224,3 +374,44 @@ def _non_empty_string(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
     return value
+
+
+def _required_text_choice(
+    mapping: dict[str, Any],
+    key: str,
+    path: str,
+    choices: tuple[str, ...],
+) -> str:
+    value = _non_empty_string(_required(mapping, key, path), f"{path}.{key}")
+    if value not in choices:
+        raise ValueError(f"{path}.{key} must be one of: {', '.join(choices)}")
+    return value
+
+
+def _required_text_list(
+    mapping: dict[str, Any],
+    key: str,
+    path: str,
+) -> list[str]:
+    value = _required(mapping, key, path)
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item.strip() for item in value)
+    ):
+        raise ValueError(f"{path}.{key} must be a non-empty string list")
+    return [item.strip() for item in value]
+
+
+def _required_pattern_text(
+    mapping: dict[str, Any],
+    key: str,
+    path: str,
+    allowed_chars: str,
+) -> str:
+    value = _non_empty_string(_required(mapping, key, path), f"{path}.{key}")
+    if any(char not in allowed_chars for char in value):
+        raise ValueError(f"{path}.{key} contains invalid characters")
+    return value
+
+# Note: normalization logic implemented further below; helper removed.

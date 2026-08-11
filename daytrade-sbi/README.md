@@ -60,7 +60,7 @@ Codexが作成するものは注文候補です。注文判断・注文操作・
 
 ## 未決定項目
 
-[TODO.md](TODO.md)で管理します。`screening`の流動性、価格、スプレッド、ギャップ、決算・開示除外などの閾値はすべて`null`です。CodexやPythonが値を推測して補完してはいけません。
+[TODO.md](TODO.md)で管理します。`screening`の流動性、価格、スプレッド、ギャップ、決算・開示除外などはrule objectとして管理し、未採用ruleは`enabled: false`かつ`threshold: null`です。CodexやPythonが値を推測して補完してはいけません。
 
 ## 処理フロー
 
@@ -83,8 +83,8 @@ Pythonが固定条件でスクリーニング
   ↓
 Pythonが候補パイプラインと性能計測を保存
   ↓
-CodexがELIGIBLE銘柄を比較
-  ↓ TRADE 1銘柄、NO_TRADE、または DATA_UNAVAILABLE
+Hard Screening PASS候補と分析Featureを保存
+  ↓ Ranking未実装中はTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
 Python Risk Engineが注文案を再計算・検証
   ↓ PASS、REJECTED、または NOT_APPLICABLE
 MarkdownのSBI手入力候補を生成

@@ -21,10 +21,25 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["ticker", "status", "reasons", "unresolved_screening", "order_plan"],
+        "required": [
+          "ticker",
+          "status",
+          "screening_status",
+          "reasons",
+          "unresolved_screening",
+          "passed_rules",
+          "failed_rules",
+          "unavailable_rules",
+          "reason_codes",
+          "source_refs",
+          "rule_evaluations",
+          "features",
+          "order_plan"
+        ],
         "properties": {
           "ticker": {"type": ["string", "null"]},
           "status": {"enum": ["ELIGIBLE", "REJECTED", "DATA_UNAVAILABLE"]},
+          "screening_status": {"enum": ["PASS", "REJECT", "DATA_UNAVAILABLE"]},
           "reasons": {"type": "array", "items": {"type": "string"}},
           "unresolved_screening": {
             "type": "array",
@@ -43,6 +58,35 @@
               ]
             }
           },
+          "passed_rules": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/screeningRuleId"}
+          },
+          "failed_rules": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/screeningRuleId"}
+          },
+          "unavailable_rules": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/screeningRuleId"}
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "source_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "rule_evaluations": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/ruleEvaluation"}
+          },
+          "features": {"$ref": "#/$defs/screeningFeatures"},
           "order_plan": {
             "oneOf": [
               {"$ref": "#/$defs/orderPlan"},
@@ -79,6 +123,123 @@
         {"type": "number"},
         {"type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"}
       ]
+    },
+    "screeningRuleId": {
+      "enum": [
+        "minimum_volume",
+        "minimum_turnover",
+        "minimum_price",
+        "maximum_price",
+        "maximum_spread",
+        "minimum_daily_range",
+        "maximum_gap_percent",
+        "exclude_earnings",
+        "exclude_special_disclosures"
+      ]
+    },
+    "ruleEvaluation": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "enabled",
+        "phase",
+        "criticality",
+        "input_fields",
+        "operator",
+        "threshold",
+        "result",
+        "reason_code",
+        "input_values",
+        "source_refs",
+        "source_urls"
+      ],
+      "properties": {
+        "rule_id": {"$ref": "#/$defs/screeningRuleId"},
+        "enabled": {"type": "boolean"},
+        "phase": {
+          "enum": ["hard_screening", "event_gate", "entry_gate", "execution_gate"]
+        },
+        "criticality": {"enum": ["TRADE_CRITICAL", "CONTEXT"]},
+        "input_fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "operator": {"enum": [">=", "<=", ">", "<", "==", "!=", "is", "is_not"]},
+        "threshold": {
+          "oneOf": [
+            {"$ref": "#/$defs/decimal"},
+            {"type": "boolean"},
+            {"type": "null"}
+          ]
+        },
+        "result": {
+          "enum": [
+            "PASS",
+            "REJECT",
+            "DATA_UNAVAILABLE",
+            "DISABLED",
+            "SKIPPED_PHASE",
+            "SKIPPED_CRITICALITY"
+          ]
+        },
+        "reason_code": {"type": ["string", "null"], "minLength": 1},
+        "input_values": {"type": "object"},
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_urls": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^https?://"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "screeningFeatures": {
+      "type": "object",
+      "required": [
+        "previous_day_volume",
+        "required_capital_yen",
+        "daily_range_yen",
+        "daily_range_pct",
+        "previous_day_change_pct",
+        "estimated_turnover"
+      ],
+      "properties": {
+        "previous_day_volume": {"$ref": "#/$defs/featureValue"},
+        "required_capital_yen": {"$ref": "#/$defs/featureValue"},
+        "daily_range_yen": {"$ref": "#/$defs/featureValue"},
+        "daily_range_pct": {"$ref": "#/$defs/featureValue"},
+        "previous_day_change_pct": {"$ref": "#/$defs/featureValue"},
+        "estimated_turnover": {"$ref": "#/$defs/featureValue"}
+        ,
+        "turnover": {"$ref": "#/$defs/featureValue"}
+      },
+      "additionalProperties": false
+    },
+    "featureValue": {
+      "type": "object",
+      "required": ["value", "source_refs", "source_urls", "estimated"],
+      "properties": {
+        "value": {
+          "oneOf": [
+            {"$ref": "#/$defs/decimal"},
+            {"type": "boolean"},
+            {"type": "null"}
+          ]
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_urls": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^https?://"}
+        },
+        "estimated": {"type": "boolean"}
+      },
+      "additionalProperties": false
     },
     "orderPlan": {
       "type": "object",

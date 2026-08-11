@@ -31,7 +31,17 @@
     "stage2_unavailable_count": 0,
     "stage2_incomplete_count": 0,
     "coverage_rate": 1,
-    "research_incomplete_reason_counts": {}
+    "research_incomplete_reason_counts": {},
+    "screening_input_count": 1,
+    "screening_pass_count": 1,
+    "screening_reject_count": 0,
+    "screening_data_unavailable_count": 0,
+    "screening_incomplete_count": 0,
+    "screening_complete": true,
+    "candidate_count_consistent": true,
+    "all_enabled_rules_evaluated": true,
+    "screening_rule_counts": [],
+    "ranking_complete": false
   },
   "source_urls": ["https://example.test/source"],
   "notes": null

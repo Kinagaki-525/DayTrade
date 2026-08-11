@@ -32,12 +32,84 @@ exit:
   take_profit_yen: 800
 
 screening:
-  minimum_volume: null
-  minimum_turnover: null
-  minimum_price: null
-  maximum_price: null
-  maximum_spread: null
-  minimum_daily_range: null
-  maximum_gap_percent: null
-  exclude_earnings: null
-  exclude_special_disclosures: null
+  minimum_volume:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - volume
+    operator: ">="
+    threshold: null
+    reason_code: VOLUME_BELOW_MINIMUM
+  minimum_turnover:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - turnover
+    operator: ">="
+    threshold: null
+    reason_code: TURNOVER_BELOW_MINIMUM
+  minimum_price:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - close
+    operator: ">="
+    threshold: null
+    reason_code: PRICE_BELOW_MINIMUM
+  maximum_price:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - close
+    operator: "<="
+    threshold: null
+    reason_code: PRICE_ABOVE_MAXIMUM
+  maximum_spread:
+    enabled: false
+    phase: execution_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - spread
+    operator: "<="
+    threshold: null
+    reason_code: SPREAD_ABOVE_MAXIMUM
+  minimum_daily_range:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - daily_range_yen
+    operator: ">="
+    threshold: null
+    reason_code: DAILY_RANGE_BELOW_MINIMUM
+  maximum_gap_percent:
+    enabled: false
+    phase: entry_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - opening_gap_pct
+    operator: "<="
+    threshold: null
+    reason_code: GAP_ABOVE_MAXIMUM
+  exclude_earnings:
+    enabled: false
+    phase: event_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - earnings_scheduled
+    operator: "is_not"
+    threshold: null
+    reason_code: EARNINGS_SCHEDULED
+  exclude_special_disclosures:
+    enabled: false
+    phase: event_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - special_disclosures
+    operator: "is_not"
+    threshold: null
+    reason_code: SPECIAL_DISCLOSURE_FOUND

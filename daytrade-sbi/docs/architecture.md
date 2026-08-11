@@ -32,7 +32,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/candidate_pipeline.py` | Discovery後の候補を下流で消さず、候補単位のパイプライン状態と集計を生成 |
 | `src/performance.py` | Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に集計 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
-| `src/screening.py` | 資金条件を適用。未決定条件は未評価として残し、承認済み実装なしの値は拒否 |
+| `src/screening.py` | Candidate Research済みの検証済み値だけでHard Screeningを行い、Rule評価、Source Provenance、分析Featureを保存 |
 | `src/strategy.py` | 前日高値ブレイクの価格計算 |
 | `src/risk.py` | AI案から独立した固定リスク検証。値は修正しない |
 | `src/reports.py` | PASS・REJECTED・NO_TRADE・DATA_UNAVAILABLEに応じた手動確認レポート |
@@ -45,7 +45,7 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 
 `market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。Discovery CandidateはYahoo!ファイナンス出来高TOP50と値上がり率TOP50のUnion/Dedupだけで作り、TDnet単独銘柄は追加しません。Universe判定結果は`candidate_research[].universe_status`に保存します。Stage 1除外は、`sources.json`または`source_attempts`に存在する参照で裏付けられた許可済み`stage1_checks`がある場合だけ有効です。資金条件のStage 1除外は固定金額ではなく、設定済みの`capital.total_yen`と`capital.position_size`に対する`capital_limit`として扱います。
 
-`candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。
+`candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。`summary`にはHard Screening件数、Rule別件数、`screening_complete`、`ranking_complete=false`も保存します。
 
 `sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
 
@@ -54,10 +54,11 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 ## 状態
 
 - `ELIGIBLE`: 市場データ検証と設定済み固定条件を通過。取引推奨ではない。
+- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking完了までは取引推奨ではない。
+- `REJECT`: Hard Screeningの有効ruleにより候補から除外。
 - `TRADE`: Codexが比較結果として作った1銘柄の注文案。Risk Engine通過前は採用不可。
 - `NO_TRADE`: 適切な候補がない正常な結果。注文を作らない。
 - `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。
-- `PASS`: 注文案が固定リスク条件を通過。
 - `REJECTED`: 注文案またはデータが固定条件に違反。値を自動修正しない。
 - `NOT_APPLICABLE`: `NO_TRADE`または`DATA_UNAVAILABLE`のため注文リスク評価対象がない。
 

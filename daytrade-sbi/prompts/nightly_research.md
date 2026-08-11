@@ -11,7 +11,7 @@
 5. Discovery順位や表示値は候補発見理由として保存するだけで、最終Rankingの評価値として使わない。
 6. 未取得値、日付不明、更新時刻不明、根拠不足は推測で埋めない。`NOT_STARTED`、`DEPENDENCY_NOT_READY`、`EXECUTION_FAILED`、`DATA_UNAVAILABLE`、`CONFLICT`、`SINGLE_SOURCE_ONLY` などで明示する。
 7. `DATA_UNAVAILABLE` は、必要Source checkを試行済みで外部要因が記録されている場合だけ使う。未実施や未mergeは `PIPELINE_INCOMPLETE` として扱う。
-8. `screening` の `null` 値をCodex判断で補完しない。
+8. `screening` の `enabled: false` や `threshold: null` をCodex判断で補完しない。
 9. SBI証券へのログイン、画面操作、注文、送信は行わない。
 10. dependentなCLIは必ず逐次実行する。並列化してよいのは、互いに独立したWeb調査の読み取りだけ。
 
@@ -117,13 +117,14 @@ py -B -m src.cli build-performance --market-research runs/YYYY-MM-DD/market_rese
 py -B -m src.cli render-research --market-research runs/YYYY-MM-DD/market_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --sources runs/YYYY-MM-DD/sources.json --performance runs/YYYY-MM-DD/performance.json --output runs/YYYY-MM-DD/research.md
 ```
 
-`candidate_pipeline.summary.pipeline_complete=false` または `research_incomplete > 0` の場合、recommendationをRisk Engineへ進めない。未実施、欠落、未merge、Source記録不足を修正してから再実行する。
+`candidate_pipeline.summary.pipeline_complete=false`、`research_incomplete > 0`、または `screening_complete=false` の場合、recommendationをRisk Engineへ進めない。未実施、欠落、未merge、Source記録不足、Screening未完了を修正してから再実行する。
 
 ## Codex比較とRecommendation
 
-- 比較対象は `candidate_pipeline.candidates[].pipeline_status == "ELIGIBLE"` の候補だけ。
+- Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
+- `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。
 - `REJECTED` を候補へ戻さない。
-- 適切な候補があれば1銘柄だけ `TRADE`。候補がなければ `NO_TRADE`。必要データが外部要因で揃わない場合だけ `DATA_UNAVAILABLE`。
+- Ranking未実装中は、候補が残っている場合も `NO_TRADE` とし、理由にRanking未実装を記録する。必要データが外部要因で揃わない場合だけ `DATA_UNAVAILABLE`。
 - `recommendation.json` には `research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて `source_statuses` を保存する。
 - `pipeline_summary` は `candidate_pipeline.summary` から転記し、推測で変更しない。
 

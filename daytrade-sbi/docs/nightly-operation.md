@@ -28,10 +28,10 @@ py -B -m pytest
 9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
 10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
 11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
-12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と`candidates.json`を生成
+12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
 13. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-14. `candidate_pipeline.summary.pipeline_complete=true`を確認してから、確認済み情報だけで候補を比較
-15. `recommendation.json`へ`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`を保存
+14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`、`ranking_complete=false`を確認する
+15. Ranking未実装中は`TRADE`へ進めず、`recommendation.json`へ`NO_TRADE`または`DATA_UNAVAILABLE`を保存
 16. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
 17. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
 18. `recommendation.md`と`report.md`を生成

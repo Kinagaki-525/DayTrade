@@ -178,6 +178,8 @@ def validate_recommendation_pipeline_link(
         raise ValueError(
             "recommendation/candidate_pipeline pipeline_summary does not match"
         )
+    if recommendation.get("decision") == "TRADE" and summary.get("ranking_complete") is not True:
+        raise ValueError("TRADE recommendation requires ranking_complete=true")
 
 
 def validate_research_report_inputs(

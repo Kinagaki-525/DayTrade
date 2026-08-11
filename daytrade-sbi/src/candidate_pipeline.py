@@ -488,6 +488,24 @@ def _summary(
     research_incomplete = sum(
         status_counts[status] for status in ("DISCOVERED", "RESEARCH_IN_PROGRESS")
     )
+    # 研究完了と見なす pipeline candidate の ticker 集合を母数として渡す
+    research_complete_tickers: set[str] = set()
+    for candidate in pipeline_candidates:
+        if candidate.get("pipeline_status") not in {
+            "RESEARCH_COMPLETE",
+            "SCREENED",
+            "ELIGIBLE",
+            "REJECTED",
+        }:
+            continue
+        raw = candidate.get("ticker")
+        if raw is None:
+            continue
+        t = str(raw).strip()
+        if not t:
+            continue
+        research_complete_tickers.add(t)
+    screening_summary = _screening_summary(screening_by_ticker, research_complete_tickers)
     return {
         "discovered": len(pipeline_candidates),
         "research_complete": sum(
@@ -506,6 +524,77 @@ def _summary(
         "stage2_incomplete_count": stage2_incomplete_count,
         "coverage_rate": coverage_rate,
         "research_incomplete_reason_counts": incomplete_reason_counts,
+        **screening_summary,
+    }
+
+
+def _screening_summary(
+    screening_by_ticker: dict[str, dict[str, Any]],
+    research_complete_tickers: set[str],
+) -> dict[str, Any]:
+    input_count = len(research_complete_tickers)
+    status_counts = {
+        "PASS": 0,
+        "REJECT": 0,
+        "DATA_UNAVAILABLE": 0,
+        "INCOMPLETE": 0,
+    }
+    rule_counts: dict[str, dict[str, int]] = {}
+    all_enabled_rules_evaluated = True
+    for candidate in screening_by_ticker.values():
+        screening_status = candidate.get("screening_status")
+        if screening_status in {"PASS", "REJECT", "DATA_UNAVAILABLE"}:
+            status_counts[str(screening_status)] += 1
+        else:
+            status_counts["INCOMPLETE"] += 1
+        for evaluation in candidate.get("rule_evaluations", []):
+            if not isinstance(evaluation, dict):
+                continue
+            rule_id = str(evaluation.get("rule_id", "")).strip()
+            if not rule_id:
+                continue
+            counts = rule_counts.setdefault(
+                rule_id,
+                {"pass_count": 0, "reject_count": 0, "unavailable_count": 0},
+            )
+            result = evaluation.get("result")
+            if result == "PASS":
+                counts["pass_count"] += 1
+            elif result == "REJECT":
+                counts["reject_count"] += 1
+            elif result == "DATA_UNAVAILABLE":
+                counts["unavailable_count"] += 1
+            if (
+                evaluation.get("enabled") is True
+                and evaluation.get("phase") == "hard_screening"
+                and evaluation.get("criticality") == "TRADE_CRITICAL"
+                and result not in {"PASS", "REJECT", "DATA_UNAVAILABLE"}
+            ):
+                all_enabled_rules_evaluated = False
+    # 未作業の research 完了候補（screening レコード自体がないもの）
+    missing_screenings = research_complete_tickers - set(screening_by_ticker.keys())
+    missing_count = len(missing_screenings)
+    screening_incomplete_count = status_counts["INCOMPLETE"] + missing_count
+    candidate_count_consistent = input_count == (sum(status_counts.values()) + missing_count)
+    screening_complete = (
+        screening_incomplete_count == 0
+        and candidate_count_consistent
+        and all_enabled_rules_evaluated
+    )
+    return {
+        "screening_input_count": input_count,
+        "screening_pass_count": status_counts["PASS"],
+        "screening_reject_count": status_counts["REJECT"],
+        "screening_data_unavailable_count": status_counts["DATA_UNAVAILABLE"],
+        "screening_incomplete_count": screening_incomplete_count,
+        "screening_complete": screening_complete,
+        "candidate_count_consistent": candidate_count_consistent,
+        "all_enabled_rules_evaluated": all_enabled_rules_evaluated,
+        "screening_rule_counts": [
+            {"rule_id": rule_id, **counts}
+            for rule_id, counts in sorted(rule_counts.items())
+        ],
+        "ranking_complete": False,
     }
 
 

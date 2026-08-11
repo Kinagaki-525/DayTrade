@@ -53,7 +53,17 @@
         "stage2_unavailable_count",
         "stage2_incomplete_count",
         "coverage_rate",
-        "research_incomplete_reason_counts"
+        "research_incomplete_reason_counts",
+        "screening_input_count",
+        "screening_pass_count",
+        "screening_reject_count",
+        "screening_data_unavailable_count",
+        "screening_incomplete_count",
+        "screening_complete",
+        "candidate_count_consistent",
+        "all_enabled_rules_evaluated",
+        "screening_rule_counts",
+        "ranking_complete"
       ],
       "properties": {
         "discovered": {"type": "integer", "minimum": 0},
@@ -73,7 +83,31 @@
           "type": "object",
           "propertyNames": {"$ref": "#/$defs/researchIncompleteReason"},
           "additionalProperties": {"type": "integer", "minimum": 0}
-        }
+        },
+        "screening_input_count": {"type": "integer", "minimum": 0},
+        "screening_pass_count": {"type": "integer", "minimum": 0},
+        "screening_reject_count": {"type": "integer", "minimum": 0},
+        "screening_data_unavailable_count": {"type": "integer", "minimum": 0},
+        "screening_incomplete_count": {"type": "integer", "minimum": 0},
+        "screening_complete": {"type": "boolean"},
+        "candidate_count_consistent": {"type": "boolean"},
+        "all_enabled_rules_evaluated": {"type": "boolean"},
+        "screening_rule_counts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/screeningRuleCount"}
+        },
+        "ranking_complete": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "screeningRuleCount": {
+      "type": "object",
+      "required": ["rule_id", "pass_count", "reject_count", "unavailable_count"],
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "reject_count": {"type": "integer", "minimum": 0},
+        "unavailable_count": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },
