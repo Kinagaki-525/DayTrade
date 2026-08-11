@@ -101,7 +101,12 @@ def build_candidate_pipeline(
             research,
             unmerged_subagent_tickers,
         )
-        source_attempt_ids = _source_attempt_ids(ticker, research, source_attempts)
+        source_attempt_ids = _source_attempt_ids(
+            ticker,
+            research,
+            source_attempts,
+            discovery_candidate=discovery_candidate,
+        )
         source_refs = _source_refs(ticker, sources, record, research)
         pipeline_candidates.append(
             {
@@ -342,6 +347,8 @@ def _source_attempt_ids(
     ticker: str,
     research: dict[str, Any] | None,
     source_attempts: list[dict[str, Any]],
+    *,
+    discovery_candidate: dict[str, Any],
 ) -> list[str]:
     ids: list[str] = []
     if research is not None:
@@ -350,12 +357,16 @@ def _source_attempt_ids(
             if not isinstance(check, dict):
                 continue
             ids.extend(str(item) for item in check.get("source_attempt_ids", []))
+    discovery_source_ids = _discovery_source_ids(discovery_candidate)
     for attempt in source_attempts:
         candidate_code = attempt.get("candidate_code")
         if candidate_code not in {ticker, None}:
             continue
-        if candidate_code is None and attempt.get("criticality") != "DISCOVERY_CRITICAL":
-            continue
+        if candidate_code is None:
+            if attempt.get("criticality") != "DISCOVERY_CRITICAL":
+                continue
+            if attempt.get("source_id") not in discovery_source_ids:
+                continue
         ids.append(_attempt_id(attempt))
     return _unique(ids)
 
@@ -390,6 +401,17 @@ def _source_refs(
             if source.source_ref is not None
         )
     return _unique(refs)
+
+
+def _discovery_source_ids(discovery_candidate: dict[str, Any]) -> set[str]:
+    source_ids: set[str] = set()
+    for reason in discovery_candidate.get("discovery_reasons", []):
+        if not isinstance(reason, dict):
+            continue
+        source_id = reason.get("source_id")
+        if source_id:
+            source_ids.add(str(source_id))
+    return source_ids
 
 
 def _list_field(mapping: dict[str, Any], field_name: str) -> list[str]:

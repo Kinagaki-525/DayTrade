@@ -153,6 +153,58 @@ def test_pipeline_requires_explicit_source_attempt_id():
         )
 
 
+def test_pipeline_links_only_matching_discovery_source_attempts():
+    payload = build_candidate_pipeline(
+        market_research={
+            "target_date": "2026-08-10",
+            "discovery_candidates": [
+                {
+                    "ticker": "1234",
+                    "company_name": "Example Co.",
+                    "market": "TSE Prime",
+                    "discovery_reasons": [
+                        {
+                            "discovery_type": "VOLUME_RANKING",
+                            "source_id": "YAHOO_JP_VOLUME_RANKING",
+                            "source_url": "https://example.test/volume",
+                            "rank": 1,
+                            "display_value": "1000000",
+                            "title": None,
+                        }
+                    ],
+                }
+            ],
+            "candidate_research": [],
+        },
+        market_records=[],
+        candidates_payload={"candidates": []},
+        source_payload={
+            "sources": [],
+            "source_attempts": [
+                make_source_attempt(
+                    source_id="YAHOO_JP_VOLUME_RANKING",
+                    source_role="PRIMARY",
+                    criticality="DISCOVERY_CRITICAL",
+                    information_type="VOLUME_RANKING",
+                    candidate_code=None,
+                ),
+                make_source_attempt(
+                    source_id="YAHOO_JP_GAIN_RANKING",
+                    source_role="PRIMARY",
+                    criticality="DISCOVERY_CRITICAL",
+                    information_type="PRICE_GAIN_RANKING",
+                    candidate_code=None,
+                ),
+            ],
+        },
+        config=load_strategy_config(),
+    )
+
+    assert payload["candidates"][0]["source_attempt_ids"] == [
+        "yahoo_jp_volume_ranking-discovery-found"
+    ]
+
+
 def test_stage1_reject_requires_source_backed_check():
     base_market_research = {
         "target_date": "2026-08-10",

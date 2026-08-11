@@ -1,0 +1,3427 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "generated_at": "2026-08-11T09:42:50.738263+00:00",
+  "strategy_version": "v1",
+  "config_sha256": "5c7f803bf4da07155165b3b1f9075e577746280aa886f2b3d1348643c0b38d82",
+  "summary": {
+    "discovered": 96,
+    "research_complete": 0,
+    "research_incomplete": 96,
+    "data_unavailable": 0,
+    "screened": 0,
+    "eligible": 0,
+    "rejected": 0,
+    "pipeline_complete": false,
+    "stage2_target_count": 0,
+    "stage2_completed_count": 0,
+    "stage2_unavailable_count": 0,
+    "stage2_incomplete_count": 0,
+    "coverage_rate": null,
+    "research_incomplete_reason_counts": {
+      "NOT_STARTED": 96
+    }
+  },
+  "candidates": [
+    {
+      "ticker": "1360",
+      "company_name": "日経平均ベア2倍上場投信",
+      "market": "東証ETF",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/1360.T",
+          "rank": 4,
+          "display_value": "119,614,900",
+          "title": "volume: 119,614,900; close: 66; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_1360_20260812_004"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "1579",
+      "company_name": "日経平均ブル2倍上場投信",
+      "market": "東証ETF",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/1579.T",
+          "rank": 45,
+          "display_value": "11,826,530",
+          "title": "volume: 11,826,530; close: 771.2; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_1579_20260812_045"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "2146",
+      "company_name": "ＵＴグループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/2146.T",
+          "rank": 13,
+          "display_value": "31,256,100",
+          "title": "volume: 31,256,100; close: 221; updated: 2026/08/10 18:40"
+        },
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/2146.T",
+          "rank": 6,
+          "display_value": "+20.77",
+          "title": "gain_rate: +20.77; close: 221; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001",
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_2146_20260812_013",
+        "src_yahoo_gain_ranking_2146_20260812_006"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "2181",
+      "company_name": "パーソルホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/2181.T",
+          "rank": 21,
+          "display_value": "23,547,500",
+          "title": "volume: 23,547,500; close: 282.2; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_2181_20260812_021"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "2477",
+      "company_name": "手間いらず(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/2477.T",
+          "rank": 33,
+          "display_value": "+13.49",
+          "title": "gain_rate: +13.49; close: 2,717; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_2477_20260812_033"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "285A",
+      "company_name": "キオクシアホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/285A.T",
+          "rank": 12,
+          "display_value": "32,549,100",
+          "title": "volume: 32,549,100; close: 48,010; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_285A_20260812_012"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3034",
+      "company_name": "クオールホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3034.T",
+          "rank": 27,
+          "display_value": "+15.52",
+          "title": "gain_rate: +15.52; close: 2,419; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3034_20260812_027"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3103",
+      "company_name": "ユニチカ(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3103.T",
+          "rank": 29,
+          "display_value": "17,591,800",
+          "title": "volume: 17,591,800; close: 1,189; updated: 2026/08/10 18:40"
+        },
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3103.T",
+          "rank": 20,
+          "display_value": "+16.34",
+          "title": "gain_rate: +16.34; close: 1,189; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001",
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_3103_20260812_029",
+        "src_yahoo_gain_ranking_3103_20260812_020"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3131",
+      "company_name": "シンデン・ハイテックス(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3131.T",
+          "rank": 26,
+          "display_value": "+15.82",
+          "title": "gain_rate: +15.82; close: 5,160; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3131_20260812_026"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3156",
+      "company_name": "(株)レスター",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3156.T",
+          "rank": 24,
+          "display_value": "+15.97",
+          "title": "gain_rate: +15.97; close: 5,120; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3156_20260812_024"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3277",
+      "company_name": "(株)サンセイランディック",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3277.T",
+          "rank": 25,
+          "display_value": "+15.90",
+          "title": "gain_rate: +15.90; close: 729; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3277_20260812_025"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3323",
+      "company_name": "レカム(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3323.T",
+          "rank": 45,
+          "display_value": "+10.81",
+          "title": "gain_rate: +10.81; close: 82; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3323_20260812_045"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3350",
+      "company_name": "(株)メタプラネット",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3350.T",
+          "rank": 32,
+          "display_value": "15,947,600",
+          "title": "volume: 15,947,600; close: 233; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_3350_20260812_032"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3374",
+      "company_name": "内外テック(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3374.T",
+          "rank": 9,
+          "display_value": "+19.94",
+          "title": "gain_rate: +19.94; close: 4,210; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3374_20260812_009"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3422",
+      "company_name": "(株)Ｊ－ＭＡＸ",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3422.T",
+          "rank": 23,
+          "display_value": "+16.09",
+          "title": "gain_rate: +16.09; close: 700; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3422_20260812_023"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3436",
+      "company_name": "(株)ＳＵＭＣＯ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3436.T",
+          "rank": 38,
+          "display_value": "13,848,700",
+          "title": "volume: 13,848,700; close: 3,487; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_3436_20260812_038"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3664",
+      "company_name": "(株)ＷＩＺＥ",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3664.T",
+          "rank": 17,
+          "display_value": "27,051,400",
+          "title": "volume: 27,051,400; close: 22; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_3664_20260812_017"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3676",
+      "company_name": "(株)デジタルハーツホールディングス",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3676.T",
+          "rank": 17,
+          "display_value": "+16.61",
+          "title": "gain_rate: +16.61; close: 1,053; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3676_20260812_017"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3753",
+      "company_name": "(株)フライトソリューションズ",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3753.T",
+          "rank": 18,
+          "display_value": "+16.58",
+          "title": "gain_rate: +16.58; close: 218; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3753_20260812_018"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "3926",
+      "company_name": "(株)オープンドア",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/3926.T",
+          "rank": 34,
+          "display_value": "+13.08",
+          "title": "gain_rate: +13.08; close: 415; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_3926_20260812_034"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4005",
+      "company_name": "住友化学(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4005.T",
+          "rank": 50,
+          "display_value": "11,050,000",
+          "title": "volume: 11,050,000; close: 519.7; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4005_20260812_050"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4046",
+      "company_name": "(株)大阪ソーダ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4046.T",
+          "rank": 36,
+          "display_value": "+12.53",
+          "title": "gain_rate: +12.53; close: 2,083; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4046_20260812_036"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4052",
+      "company_name": "フィーチャ(株)",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4052.T",
+          "rank": 12,
+          "display_value": "+18.76",
+          "title": "gain_rate: +18.76; close: 633; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4052_20260812_012"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4125",
+      "company_name": "三和油化工業(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4125.T",
+          "rank": 31,
+          "display_value": "+14.35",
+          "title": "gain_rate: +14.35; close: 3,865; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4125_20260812_031"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4169",
+      "company_name": "ＥＮＥＣＨＡＮＧＥ(株)",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4169.T",
+          "rank": 16,
+          "display_value": "+16.87",
+          "title": "gain_rate: +16.87; close: 291; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4169_20260812_016"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4360",
+      "company_name": "(株)マナック・ケミカル・パートナーズ",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4360.T",
+          "rank": 38,
+          "display_value": "+11.95",
+          "title": "gain_rate: +11.95; close: 909; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4360_20260812_038"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4406",
+      "company_name": "新日本理化(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4406.T",
+          "rank": 13,
+          "display_value": "+18.66",
+          "title": "gain_rate: +18.66; close: 248; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4406_20260812_013"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4564",
+      "company_name": "オンコセラピー・サイエンス(株)",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4564.T",
+          "rank": 3,
+          "display_value": "173,539,100",
+          "title": "volume: 173,539,100; close: 19; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4564_20260812_003"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4597",
+      "company_name": "ソレイジア・ファーマ(株)",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4597.T",
+          "rank": 7,
+          "display_value": "70,590,700",
+          "title": "volume: 70,590,700; close: 31; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4597_20260812_007"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4631",
+      "company_name": "ＤＩＣ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4631.T",
+          "rank": 29,
+          "display_value": "+14.96",
+          "title": "gain_rate: +14.96; close: 5,378; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4631_20260812_029"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4680",
+      "company_name": "(株)ラウンドワン",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4680.T",
+          "rank": 40,
+          "display_value": "13,487,800",
+          "title": "volume: 13,487,800; close: 1,365; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4680_20260812_040"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4689",
+      "company_name": "ＬＩＮＥヤフー(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4689.T",
+          "rank": 25,
+          "display_value": "19,446,800",
+          "title": "volume: 19,446,800; close: 488.3; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4689_20260812_025"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4751",
+      "company_name": "(株)サイバーエージェント",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4751.T",
+          "rank": 20,
+          "display_value": "24,031,200",
+          "title": "volume: 24,031,200; close: 1,249; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4751_20260812_020"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4755",
+      "company_name": "楽天グループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4755.T",
+          "rank": 27,
+          "display_value": "18,002,100",
+          "title": "volume: 18,002,100; close: 864; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4755_20260812_027"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4813",
+      "company_name": "(株)ＡＣＣＥＳＳ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4813.T",
+          "rank": 35,
+          "display_value": "+12.60",
+          "title": "gain_rate: +12.60; close: 429; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4813_20260812_035"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4901",
+      "company_name": "富士フイルムホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4901.T",
+          "rank": 34,
+          "display_value": "15,271,000",
+          "title": "volume: 15,271,000; close: 3,162; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_4901_20260812_034"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "4937",
+      "company_name": "(株)Ｗａｑｏｏ",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/4937.T",
+          "rank": 1,
+          "display_value": "+25.51",
+          "title": "gain_rate: +25.51; close: 1,968; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_4937_20260812_001"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5016",
+      "company_name": "ＪＸ金属(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5016.T",
+          "rank": 24,
+          "display_value": "20,140,000",
+          "title": "volume: 20,140,000; close: 3,845; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5016_20260812_024"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5020",
+      "company_name": "ＥＮＥＯＳホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5020.T",
+          "rank": 42,
+          "display_value": "12,284,400",
+          "title": "volume: 12,284,400; close: 1,267.5; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5020_20260812_042"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5401",
+      "company_name": "日本製鉄(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5401.T",
+          "rank": 11,
+          "display_value": "41,130,600",
+          "title": "volume: 41,130,600; close: 689.4; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5401_20260812_011"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "543A",
+      "company_name": "ＡＲＣＨＩＯＮ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/543A.T",
+          "rank": 31,
+          "display_value": "16,808,600",
+          "title": "volume: 16,808,600; close: 275; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_543A_20260812_031"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5713",
+      "company_name": "住友金属鉱山(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5713.T",
+          "rank": 43,
+          "display_value": "12,102,400",
+          "title": "volume: 12,102,400; close: 10,065; updated: 2026/08/10 18:40"
+        },
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5713.T",
+          "rank": 39,
+          "display_value": "+11.85",
+          "title": "gain_rate: +11.85; close: 10,065; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001",
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5713_20260812_043",
+        "src_yahoo_gain_ranking_5713_20260812_039"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5724",
+      "company_name": "(株)アサカ理研",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5724.T",
+          "rank": 32,
+          "display_value": "+13.50",
+          "title": "gain_rate: +13.50; close: 2,740; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_5724_20260812_032"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5801",
+      "company_name": "古河電気工業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5801.T",
+          "rank": 9,
+          "display_value": "45,988,600",
+          "title": "volume: 45,988,600; close: 3,952; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5801_20260812_009"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5802",
+      "company_name": "住友電気工業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5802.T",
+          "rank": 19,
+          "display_value": "24,032,000",
+          "title": "volume: 24,032,000; close: 2,161; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5802_20260812_019"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5803",
+      "company_name": "(株)フジクラ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5803.T",
+          "rank": 5,
+          "display_value": "118,555,300",
+          "title": "volume: 118,555,300; close: 5,580; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_5803_20260812_005"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "581A",
+      "company_name": "ＧＯ(株)",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/581A.T",
+          "rank": 46,
+          "display_value": "+10.79",
+          "title": "gain_rate: +10.79; close: 3,645; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_581A_20260812_046"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "5985",
+      "company_name": "サンコール(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/5985.T",
+          "rank": 7,
+          "display_value": "+20.69",
+          "title": "gain_rate: +20.69; close: 1,750; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_5985_20260812_007"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6072",
+      "company_name": "地盤ネットホールディングス(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6072.T",
+          "rank": 22,
+          "display_value": "+16.23",
+          "title": "gain_rate: +16.23; close: 1,074; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6072_20260812_022"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6098",
+      "company_name": "(株)リクルートホールディングス",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6098.T",
+          "rank": 4,
+          "display_value": "+22.79",
+          "title": "gain_rate: +22.79; close: 16,165; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6098_20260812_004"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6138",
+      "company_name": "ダイジェット工業(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6138.T",
+          "rank": 3,
+          "display_value": "+23.58",
+          "title": "gain_rate: +23.58; close: 1,572; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6138_20260812_003"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6167",
+      "company_name": "冨士ダイス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6167.T",
+          "rank": 43,
+          "display_value": "+11.36",
+          "title": "gain_rate: +11.36; close: 1,108; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6167_20260812_043"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6239",
+      "company_name": "(株)ナガオカ",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6239.T",
+          "rank": 48,
+          "display_value": "+10.53",
+          "title": "gain_rate: +10.53; close: 1,469; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6239_20260812_048"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6258",
+      "company_name": "平田機工(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6258.T",
+          "rank": 5,
+          "display_value": "+22.12",
+          "title": "gain_rate: +22.12; close: 3,865; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6258_20260812_005"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6330",
+      "company_name": "東洋エンジニアリング(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6330.T",
+          "rank": 44,
+          "display_value": "+11.05",
+          "title": "gain_rate: +11.05; close: 2,301; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6330_20260812_044"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6425",
+      "company_name": "(株)ユニバーサルエンターテインメント",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6425.T",
+          "rank": 42,
+          "display_value": "+11.58",
+          "title": "gain_rate: +11.58; close: 771; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6425_20260812_042"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6444",
+      "company_name": "サンデン(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6444.T",
+          "rank": 49,
+          "display_value": "+10.37",
+          "title": "gain_rate: +10.37; close: 181; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6444_20260812_049"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6501",
+      "company_name": "(株)日立製作所",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6501.T",
+          "rank": 46,
+          "display_value": "11,815,200",
+          "title": "volume: 11,815,200; close: 5,620; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6501_20260812_046"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6570",
+      "company_name": "(株)共和コーポレーション",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6570.T",
+          "rank": 2,
+          "display_value": "+23.79",
+          "title": "gain_rate: +23.79; close: 2,602; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6570_20260812_002"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6613",
+      "company_name": "(株)ＱＤレーザ",
+      "market": "東証GRT",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6613.T",
+          "rank": 37,
+          "display_value": "+12.39",
+          "title": "gain_rate: +12.39; close: 1,960; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6613_20260812_037"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6740",
+      "company_name": "(株)ジャパンディスプレイ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6740.T",
+          "rank": 36,
+          "display_value": "14,882,100",
+          "title": "volume: 14,882,100; close: 50; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6740_20260812_036"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6743",
+      "company_name": "大同信号(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6743.T",
+          "rank": 21,
+          "display_value": "+16.32",
+          "title": "gain_rate: +16.32; close: 1,069; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6743_20260812_021"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6758",
+      "company_name": "ソニーグループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6758.T",
+          "rank": 30,
+          "display_value": "16,907,600",
+          "title": "volume: 16,907,600; close: 3,764; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6758_20260812_030"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6836",
+      "company_name": "ぷらっとホーム(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6836.T",
+          "rank": 50,
+          "display_value": "+10.34",
+          "title": "gain_rate: +10.34; close: 822; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6836_20260812_050"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6869",
+      "company_name": "シスメックス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6869.T",
+          "rank": 44,
+          "display_value": "11,975,300",
+          "title": "volume: 11,975,300; close: 1,980; updated: 2026/08/10 18:40"
+        },
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6869.T",
+          "rank": 10,
+          "display_value": "+19.89",
+          "title": "gain_rate: +19.89; close: 1,980; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001",
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6869_20260812_044",
+        "src_yahoo_gain_ranking_6869_20260812_010"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6928",
+      "company_name": "(株)エノモト",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6928.T",
+          "rank": 11,
+          "display_value": "+19.59",
+          "title": "gain_rate: +19.59; close: 3,070; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6928_20260812_011"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6969",
+      "company_name": "松尾電機(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6969.T",
+          "rank": 41,
+          "display_value": "+11.71",
+          "title": "gain_rate: +11.71; close: 1,259; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_6969_20260812_041"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6976",
+      "company_name": "太陽誘電(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6976.T",
+          "rank": 23,
+          "display_value": "23,468,500",
+          "title": "volume: 23,468,500; close: 9,548; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6976_20260812_023"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "6981",
+      "company_name": "(株)村田製作所",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/6981.T",
+          "rank": 28,
+          "display_value": "17,613,200",
+          "title": "volume: 17,613,200; close: 7,302; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_6981_20260812_028"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7011",
+      "company_name": "三菱重工業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7011.T",
+          "rank": 39,
+          "display_value": "13,526,400",
+          "title": "volume: 13,526,400; close: 4,004; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7011_20260812_039"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7012",
+      "company_name": "川崎重工業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7012.T",
+          "rank": 35,
+          "display_value": "15,099,000",
+          "title": "volume: 15,099,000; close: 2,694; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7012_20260812_035"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7013",
+      "company_name": "(株)ＩＨＩ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7013.T",
+          "rank": 41,
+          "display_value": "12,770,100",
+          "title": "volume: 12,770,100; close: 2,759; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7013_20260812_041"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7201",
+      "company_name": "日産自動車(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7201.T",
+          "rank": 15,
+          "display_value": "29,478,400",
+          "title": "volume: 29,478,400; close: 350; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7201_20260812_015"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7203",
+      "company_name": "トヨタ自動車(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7203.T",
+          "rank": 22,
+          "display_value": "23,489,400",
+          "title": "volume: 23,489,400; close: 2,981; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7203_20260812_022"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7244",
+      "company_name": "市光工業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7244.T",
+          "rank": 40,
+          "display_value": "+11.74",
+          "title": "gain_rate: +11.74; close: 571; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_7244_20260812_040"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7267",
+      "company_name": "ホンダ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7267.T",
+          "rank": 33,
+          "display_value": "15,323,700",
+          "title": "volume: 15,323,700; close: 1,692; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7267_20260812_033"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7272",
+      "company_name": "ヤマハ発動機(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7272.T",
+          "rank": 47,
+          "display_value": "11,323,200",
+          "title": "volume: 11,323,200; close: 1,922; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_7272_20260812_047"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7358",
+      "company_name": "(株)ポピンズ",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7358.T",
+          "rank": 30,
+          "display_value": "+14.66",
+          "title": "gain_rate: +14.66; close: 1,682; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_7358_20260812_030"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7456",
+      "company_name": "松田産業(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7456.T",
+          "rank": 15,
+          "display_value": "+17.09",
+          "title": "gain_rate: +17.09; close: 6,850; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_7456_20260812_015"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7550",
+      "company_name": "(株)ゼンショーホールディングス",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7550.T",
+          "rank": 47,
+          "display_value": "+10.69",
+          "title": "gain_rate: +10.69; close: 11,595; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_7550_20260812_047"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "7567",
+      "company_name": "(株)栄電子",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/7567.T",
+          "rank": 14,
+          "display_value": "+17.67",
+          "title": "gain_rate: +17.67; close: 666; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_7567_20260812_014"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8050",
+      "company_name": "セイコーグループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8050.T",
+          "rank": 19,
+          "display_value": "+16.36",
+          "title": "gain_rate: +16.36; close: 10,670; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_8050_20260812_019"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8136",
+      "company_name": "(株)サンリオ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8136.T",
+          "rank": 10,
+          "display_value": "44,026,000",
+          "title": "volume: 44,026,000; close: 1,454.5; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8136_20260812_010"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8306",
+      "company_name": "(株)三菱ＵＦＪフィナンシャル・グループ",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8306.T",
+          "rank": 14,
+          "display_value": "30,256,700",
+          "title": "volume: 30,256,700; close: 3,510; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8306_20260812_014"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8410",
+      "company_name": "(株)セブン銀行",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8410.T",
+          "rank": 48,
+          "display_value": "11,250,900",
+          "title": "volume: 11,250,900; close: 334.9; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8410_20260812_048"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8593",
+      "company_name": "三菱ＨＣキャピタル(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8593.T",
+          "rank": 49,
+          "display_value": "11,075,800",
+          "title": "volume: 11,075,800; close: 1,385; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8593_20260812_049"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8729",
+      "company_name": "ソニーフィナンシャルグループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8729.T",
+          "rank": 6,
+          "display_value": "104,721,200",
+          "title": "volume: 104,721,200; close: 156.3; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8729_20260812_006"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8783",
+      "company_name": "ａｂｃ(株)",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8783.T",
+          "rank": 8,
+          "display_value": "+20.34",
+          "title": "gain_rate: +20.34; close: 71; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_8783_20260812_008"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8801",
+      "company_name": "三井不動産(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8801.T",
+          "rank": 26,
+          "display_value": "18,089,300",
+          "title": "volume: 18,089,300; close: 1,464.5; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8801_20260812_026"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8918",
+      "company_name": "(株)ランド",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8918.T",
+          "rank": 1,
+          "display_value": "257,953,800",
+          "title": "volume: 257,953,800; close: 10; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_8918_20260812_001"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "8995",
+      "company_name": "(株)誠建設工業",
+      "market": "東証STD",
+      "discovery_reasons": [
+        {
+          "discovery_type": "PRICE_GAIN_RANKING",
+          "source_id": "YAHOO_JP_GAIN_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/8995.T",
+          "rank": 28,
+          "display_value": "+15.21",
+          "title": "gain_rate: +15.21; close: 1,136; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_gain_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_gain_ranking_8995_20260812_028"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "9432",
+      "company_name": "ＮＴＴ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T",
+          "rank": 2,
+          "display_value": "227,940,200",
+          "title": "volume: 227,940,200; close: 159.9; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_9432_20260812_002"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "9433",
+      "company_name": "ＫＤＤＩ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/9433.T",
+          "rank": 37,
+          "display_value": "14,660,100",
+          "title": "volume: 14,660,100; close: 2,830; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_9433_20260812_037"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "9434",
+      "company_name": "ソフトバンク(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/9434.T",
+          "rank": 8,
+          "display_value": "61,617,100",
+          "title": "volume: 61,617,100; close: 228.4; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_9434_20260812_008"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "9501",
+      "company_name": "東京電力ホールディングス(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/9501.T",
+          "rank": 18,
+          "display_value": "25,148,300",
+          "title": "volume: 25,148,300; close: 521.5; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_9501_20260812_018"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    },
+    {
+      "ticker": "9984",
+      "company_name": "ソフトバンクグループ(株)",
+      "market": "東証PRM",
+      "discovery_reasons": [
+        {
+          "discovery_type": "VOLUME_RANKING",
+          "source_id": "YAHOO_JP_VOLUME_RANKING",
+          "source_url": "https://finance.yahoo.co.jp/quote/9984.T",
+          "rank": 16,
+          "display_value": "28,638,800",
+          "title": "volume: 28,638,800; close: 5,484; updated: 2026/08/10 18:40"
+        }
+      ],
+      "pipeline_status": "DISCOVERED",
+      "reason_codes": [
+        "CANDIDATE_RESEARCH_UNAVAILABLE",
+        "RESEARCH_NOT_STARTED",
+        "NOT_STARTED"
+      ],
+      "missing_requirements": [
+        "candidate_research"
+      ],
+      "completed_checks": [
+        "discovery"
+      ],
+      "failed_checks": [],
+      "source_attempt_ids": [
+        "att_yahoo_volume_ranking_20260812_001"
+      ],
+      "source_refs": [
+        "src_yahoo_volume_ranking_9984_20260812_016"
+      ],
+      "research_incomplete_reason": "NOT_STARTED"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+target_date: 2026-08-12
+decision: PIPELINE_INCOMPLETE
+risk_status: NOT_RUN
+discovery_candidates: 96
+candidate_research_count: 0
+market_data_count: 0
+pipeline_candidates: 96
+source_request_count: 3
+adopted_source_count: 103
+eligible_candidates: 0
+research_incomplete: 96
+pipeline_complete: false
+pytest_result: "174 passed"
+purpose: "2026-08-12 run preserved as regression data after Discovery completed but all candidate research remained NOT_STARTED"

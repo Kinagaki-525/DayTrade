@@ -37,6 +37,7 @@ Follow the nightly prompt as the procedural source of truth. Do not copy or repl
 
 - Do not change strategy settings or resolve TODO items.
 - Do not add Discovery routes, Ranking rules, or Morning Research.
+- Do not modify repository code, tests, schemas, prompts, or strategy/rule files during the daily plan run unless the user explicitly approves that code change in the current conversation. Treat code defects found during the run as findings to report, not as automatic fixes.
 - Do not treat cutoff-after weekend information as confirmed zero results unless it was actually researched inside the research window.
 - Do not delegate final recommendation, file writes, Python validation, or human confirmation.
 - Do not log in to SBI Securities, operate its UI, or send an order.
