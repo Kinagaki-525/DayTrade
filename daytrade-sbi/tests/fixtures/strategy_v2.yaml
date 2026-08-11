@@ -1,4 +1,4 @@
-config_schema_version: 3
+config_schema_version: 2
 strategy_version: "v1"
 validation_status: unvalidated
 
@@ -30,29 +30,6 @@ previous_day_high_breakout:
 
 exit:
   take_profit_yen: 800
-
-event_gate:
-  version: "event-gate-v1"
-  earnings:
-    enabled: true
-    reject_target_date: true
-    reject_previous_trading_day: true
-    primary_source_id: "JPX_EARNINGS_SCHEDULE"
-    fallback_source_id: "COMPANY_IR"
-  tdnet:
-    enabled: true
-    policy: "REJECT_ANY_DISCLOSURE"
-    source_id: "JPX_TDNET"
-  news:
-    enabled: true
-    required_source_ids:
-      - "YAHOO_JP_NEWS"
-      - "KABUTAN_NEWS"
-    confirmation_source_ids:
-      - "JPX_TDNET"
-      - "COMPANY_IR_DISCLOSURE"
-  post_cutoff:
-    recheck_required: true
 
 screening:
   minimum_volume:

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event_gate.schema.json",
+  "title": "Event Gate result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_gate_version",
+    "target_date",
+    "previous_trading_day",
+    "generated_at",
+    "strategy_version",
+    "config_sha256",
+    "research_window_start",
+    "research_cutoff",
+    "input_hashes",
+    "input_candidate_tickers",
+    "event_gate_complete",
+    "ranking_ready",
+    "summary",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_gate_version": {"const": "event-gate-v1"},
+    "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "research_window_start": {"type": ["string", "null"], "format": "date-time"},
+    "research_cutoff": {"type": ["string", "null"], "format": "date-time"},
+    "input_hashes": {
+      "type": "object",
+      "required": [
+        "market_research_sha256",
+        "candidate_pipeline_sha256",
+        "candidates_sha256",
+        "sources_sha256",
+        "research_window_sha256",
+        "strategy_snapshot_sha256"
+      ],
+      "properties": {
+        "market_research_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_pipeline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidates_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sources_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "research_window_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "input_candidate_tickers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "event_gate_complete": {"type": "boolean"},
+    "ranking_ready": {"type": "boolean"},
+    "summary": {"$ref": "#/$defs/summary"},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidate"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": ["input_count", "pass_count", "reject_count", "data_unavailable_count", "rule_counts"],
+      "properties": {
+        "input_count": {"type": "integer", "minimum": 0},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "reject_count": {"type": "integer", "minimum": 0},
+        "data_unavailable_count": {"type": "integer", "minimum": 0},
+        "rule_counts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ruleCount"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "ruleCount": {
+      "type": "object",
+      "required": ["rule_id", "pass_count", "reject_count", "data_unavailable_count"],
+      "properties": {
+        "rule_id": {
+          "enum": [
+            "earnings_on_target_date",
+            "earnings_on_previous_trading_day",
+            "tdnet_any_disclosure",
+            "dangerous_news_with_primary_confirmation"
+          ]
+        },
+        "pass_count": {"type": "integer", "minimum": 0},
+        "reject_count": {"type": "integer", "minimum": 0},
+        "data_unavailable_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["ticker", "gate_status", "reason_codes", "rule_evaluations"],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "gate_status": {"enum": ["PASS", "REJECT", "DATA_UNAVAILABLE"]},
+        "reason_codes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "rule_evaluations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ruleEvaluation"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "ruleEvaluation": {
+      "type": "object",
+      "required": ["rule_id", "result", "reason_codes", "evidence_ids", "source_attempt_ids"],
+      "properties": {
+        "rule_id": {
+          "enum": [
+            "earnings_on_target_date",
+            "earnings_on_previous_trading_day",
+            "tdnet_any_disclosure",
+            "dangerous_news_with_primary_confirmation"
+          ]
+        },
+        "result": {"enum": ["PASS", "REJECT", "DATA_UNAVAILABLE"]},
+        "reason_codes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

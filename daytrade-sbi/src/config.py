@@ -154,9 +154,10 @@ def snapshot_strategy_config(
 
 
 def validate_strategy_config(config: dict[str, Any]) -> None:
-    """Validate the v2 configuration and its non-negotiable safety rules."""
-    if config.get("config_schema_version") != 2:
-        raise ValueError("config_schema_version must be 2")
+    """Validate the strategy configuration and its non-negotiable safety rules."""
+    schema_version = config.get("config_schema_version")
+    if schema_version not in {2, 3}:
+        raise ValueError("config_schema_version must be 2 or 3")
     _non_empty_string(config.get("strategy_version"), "strategy_version")
     if config.get("validation_status") != "unvalidated":
         raise ValueError("validation_status must be 'unvalidated'")
@@ -220,6 +221,62 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
 
     screening = _required_mapping(config, "screening")
     normalize_screening_rules(screening)
+    if schema_version == 3:
+        _validate_event_gate_config(config)
+    else:
+        _validate_v2_legacy_event_rules(screening)
+
+
+def _validate_event_gate_config(config: dict[str, Any]) -> None:
+    event_gate = _required_mapping(config, "event_gate")
+    if event_gate.get("version") != "event-gate-v1":
+        raise ValueError("event_gate.version must be 'event-gate-v1'")
+    earnings = _required_mapping(event_gate, "earnings")
+    _required_bool(earnings, "enabled", "event_gate.earnings")
+    if earnings.get("enabled") is not True:
+        raise ValueError("event_gate.earnings.enabled must be true")
+    if earnings.get("reject_target_date") is not True:
+        raise ValueError("event_gate.earnings.reject_target_date must be true")
+    if earnings.get("reject_previous_trading_day") is not True:
+        raise ValueError("event_gate.earnings.reject_previous_trading_day must be true")
+    if earnings.get("primary_source_id") != "JPX_EARNINGS_SCHEDULE":
+        raise ValueError("event_gate.earnings.primary_source_id must be JPX_EARNINGS_SCHEDULE")
+    if earnings.get("fallback_source_id") != "COMPANY_IR":
+        raise ValueError("event_gate.earnings.fallback_source_id must be COMPANY_IR")
+
+    tdnet = _required_mapping(event_gate, "tdnet")
+    if tdnet.get("enabled") is not True:
+        raise ValueError("event_gate.tdnet.enabled must be true")
+    if tdnet.get("policy") != "REJECT_ANY_DISCLOSURE":
+        raise ValueError("event_gate.tdnet.policy must be REJECT_ANY_DISCLOSURE")
+    if tdnet.get("source_id") != "JPX_TDNET":
+        raise ValueError("event_gate.tdnet.source_id must be JPX_TDNET")
+
+    news = _required_mapping(event_gate, "news")
+    if news.get("enabled") is not True:
+        raise ValueError("event_gate.news.enabled must be true")
+    if news.get("required_source_ids") != ["YAHOO_JP_NEWS", "KABUTAN_NEWS"]:
+        raise ValueError("event_gate.news.required_source_ids must be fixed")
+    if news.get("confirmation_source_ids") != ["JPX_TDNET", "COMPANY_IR_DISCLOSURE"]:
+        raise ValueError("event_gate.news.confirmation_source_ids must be fixed")
+
+    post_cutoff = _required_mapping(event_gate, "post_cutoff")
+    if post_cutoff.get("recheck_required") is not True:
+        raise ValueError("event_gate.post_cutoff.recheck_required must be true")
+
+
+def _validate_v2_legacy_event_rules(screening: dict[str, Any]) -> None:
+    legacy_rules = {"exclude_earnings", "exclude_special_disclosures"}
+    for rule_id in legacy_rules:
+        rule = _required(screening, rule_id, "screening")
+        if rule is None:
+            continue
+        if isinstance(rule, dict):
+            if rule.get("enabled") is not False or rule.get("threshold") is not None:
+                raise ValueError(f"screening.{rule_id} must remain disabled for v2")
+        else:
+            if rule is not None:
+                raise ValueError(f"screening.{rule_id} must remain disabled for v2")
 
 
 def normalize_screening_rules(screening: dict[str, Any]) -> dict[str, dict[str, Any]]:

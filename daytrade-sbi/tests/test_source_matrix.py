@@ -13,28 +13,38 @@ def test_default_source_matrix_is_valid():
     assert result.errors == ()
 
 
-def test_tdnet_is_candidate_context_not_discovery_source():
+def test_tdnet_is_rule_dependent_primary_source():
     payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
     tdnet = next(
         source for source in payload["sources"] if source["source_id"] == "JPX_TDNET"
     )
 
-    assert tdnet["role"] == "CONTEXT"
-    assert tdnet["criticality"] == "CONTEXT"
+    assert tdnet["role"] == "PRIMARY"
+    assert tdnet["criticality"] == "RULE_DEPENDENT"
 
 
-def test_source_matrix_rejects_tdnet_discovery_criticality():
+def test_source_matrix_rejects_tdnet_non_primary_rule_dependent_setup():
     payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
     tdnet = next(
         source for source in payload["sources"] if source["source_id"] == "JPX_TDNET"
     )
-    tdnet["role"] = "PRIMARY"
-    tdnet["criticality"] = "DISCOVERY_CRITICAL"
+    tdnet["role"] = "CONTEXT"
+    tdnet["criticality"] = "CONTEXT"
 
     result = validate_source_matrix(payload)
 
     assert result.valid is False
-    assert any("JPX_TDNET must be CONTEXT" in error for error in result.errors)
+    assert any("JPX_TDNET" in error for error in result.errors)
+
+
+def test_source_matrix_requires_company_ir_disclosure_source():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    payload["sources"] = [source for source in payload["sources"] if source["source_id"] != "COMPANY_IR_DISCLOSURE"]
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any("COMPANY_IR_DISCLOSURE" in error for error in result.errors)
 
 
 def test_source_matrix_rejects_duplicate_source_id():

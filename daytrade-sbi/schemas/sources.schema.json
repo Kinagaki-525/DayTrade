@@ -121,6 +121,21 @@
             {"type": "null"}
           ]
         },
+        "coverage_status": {
+          "enum": ["COMPLETE", "PARTIAL", "UNKNOWN", null]
+        },
+        "coverage_start": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "coverage_end": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "covered_dates": {
+          "type": ["array", "null"],
+          "items": {"type": "string", "format": "date"}
+        },
         "result_count": {"type": ["integer", "null"], "minimum": 0},
         "notes": {"type": "array", "items": {"type": "string"}}
       },

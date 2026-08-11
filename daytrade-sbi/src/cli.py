@@ -46,6 +46,7 @@ from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
+from src.event_gate import build_event_gate
 from src.research import (
     MarketDataResearchAlignmentResult,
     MarketResearchValidationResult,
@@ -148,6 +149,15 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--sources", required=True, type=Path)
     pipeline_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     pipeline_parser.add_argument("--output", required=True, type=Path)
+
+    event_gate_parser = subparsers.add_parser("build-event-gate")
+    event_gate_parser.add_argument("--market-research", required=True, type=Path)
+    event_gate_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    event_gate_parser.add_argument("--candidates", required=True, type=Path)
+    event_gate_parser.add_argument("--sources", required=True, type=Path)
+    event_gate_parser.add_argument("--research-window", required=True, type=Path)
+    event_gate_parser.add_argument("--config", required=True, type=Path)
+    event_gate_parser.add_argument("--output", required=True, type=Path)
 
     performance_parser = subparsers.add_parser("build-performance")
     performance_parser.add_argument("--market-research", required=True, type=Path)
@@ -290,6 +300,16 @@ def main(argv: list[str] | None = None) -> int:
             args.market_data,
             args.candidates,
             args.sources,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-event-gate":
+        return _build_event_gate(
+            args.market_research,
+            args.candidate_pipeline,
+            args.candidates,
+            args.sources,
+            args.research_window,
             args.config,
             args.output,
         )
@@ -1029,6 +1049,52 @@ def _alignment_error_messages(
     return messages
 
 
+def _build_event_gate(
+    market_research_path: Path,
+    candidate_pipeline_path: Path,
+    candidates_path: Path,
+    sources_path: Path,
+    research_window_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    market_research = load_json_document(market_research_path, "market_research.schema.json")
+    candidate_pipeline = load_json_document(candidate_pipeline_path, "candidate_pipeline.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    research_window = load_json_document(research_window_path, "research_window.schema.json")
+    config = load_strategy_config(config_path)
+    input_hashes = {
+        "market_research_sha256": _sha256_bytes(market_research_path.read_bytes()),
+        "candidate_pipeline_sha256": _sha256_bytes(candidate_pipeline_path.read_bytes()),
+        "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
+        "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
+        "research_window_sha256": _sha256_bytes(research_window_path.read_bytes()),
+        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+    }
+    validate_event_gate_inputs(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        candidates=candidates,
+        source_payload=source_payload,
+        research_window=research_window,
+        config=config,
+        input_hashes=input_hashes,
+    )
+    payload = build_event_gate(
+        market_research=market_research,
+        candidate_pipeline=candidate_pipeline,
+        candidates=candidates,
+        source_payload=source_payload,
+        research_window=research_window,
+        config=config,
+        input_hashes=input_hashes,
+    )
+    validate_json_document(payload, "event_gate.schema.json")
+    _write_json(output_path, payload, "event_gate.schema.json")
+    return 0
+
+
 def _write_json(
     path: Path,
     payload: dict[str, Any],
@@ -1047,6 +1113,10 @@ def _emit_json(payload: dict[str, Any], output_path: Path | None = None) -> None
         print(content, end="")
     else:
         atomic_write_text(output_path, content)
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return __import__("hashlib").sha256(data).hexdigest()
 
 
 def _json_ready(value: Any) -> Any:

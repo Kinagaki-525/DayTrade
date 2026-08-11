@@ -8,6 +8,7 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 
 from src.config import strategy_config_sha256
+from src.event_gate import EVENT_RULE_IDS
 from src.stage1 import (
     source_attempt_ids_from_payload,
     source_ids_by_evidence_id_from_payload,
@@ -21,6 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = PROJECT_ROOT / "schemas"
 RUN_ARTIFACT_ALLOWLIST = {
     "strategy_snapshot.yaml",
+    "event_gate.json",
     "research_window.json",
     "market_research.json",
     "market_research_validation.json",
@@ -69,6 +71,55 @@ def validate_json_document(payload: dict[str, Any], schema_name: str) -> None:
         location = ".".join(str(item) for item in error.absolute_path) or "$"
         details.append(f"{location}: {error.message}")
     raise ValueError(f"{schema_name} validation failed: {'; '.join(details)}")
+
+
+def validate_event_gate_inputs(
+    *,
+    market_research: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    candidates: dict[str, Any],
+    source_payload: dict[str, Any],
+    research_window: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    _require_equal(market_research, candidate_pipeline, "target_date", "market_research/candidate_pipeline")
+    _require_equal(market_research, candidates, "target_date", "market_research/candidates")
+    _require_equal(market_research, source_payload, "target_date", "market_research/sources")
+    _require_equal(market_research, research_window, "target_date", "market_research/research_window")
+    if candidates.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("candidates strategy_version does not match --config")
+    if candidates.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("candidates config_sha256 does not match --config")
+    if candidate_pipeline.get("summary", {}).get("pipeline_complete") is not True:
+        raise ValueError("candidate_pipeline is not complete")
+    if candidate_pipeline.get("summary", {}).get("screening_complete") is not True:
+        raise ValueError("candidate_pipeline screening_complete is not true")
+    input_tickers = [str(candidate.get("ticker")).strip() for candidate in candidates.get("candidates", []) if str(candidate.get("ticker", "")).strip()]
+    if len(input_tickers) != len(set(input_tickers)):
+        raise ValueError("candidate ticker uniqueness failed")
+
+    pass_tickers = sorted({
+        str(candidate.get("ticker")).strip()
+        for candidate in candidates.get("candidates", [])
+        if candidate.get("status") == "ELIGIBLE" and str(candidate.get("screening_status") or "").strip() == "PASS"
+    })
+    if not set(pass_tickers).issubset({str(research.get("ticker")).strip() for research in market_research.get("candidate_research", []) if isinstance(research, dict)}):
+        raise ValueError("market_research candidate presence mismatch")
+    for ticker in pass_tickers:
+        research = next((item for item in market_research.get("candidate_research", []) if isinstance(item, dict) and str(item.get("ticker")) == ticker), None)
+        if research is None:
+            raise ValueError("market_research candidate missing")
+        context = research.get("event_context")
+        if not isinstance(context, dict):
+            continue
+        if not isinstance(context.get("selected_attempt_ids"), dict):
+            continue
+        if not isinstance(context.get("news_classifications"), list):
+            continue
+    required_hashes = {"market_research_sha256", "candidate_pipeline_sha256", "candidates_sha256", "sources_sha256", "research_window_sha256", "strategy_snapshot_sha256"}
+    if set(input_hashes.keys()) != required_hashes:
+        raise ValueError("input_hashes mismatch")
 
 
 def validate_recommendation_candidate_link(

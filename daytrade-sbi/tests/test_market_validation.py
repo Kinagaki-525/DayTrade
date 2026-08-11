@@ -191,8 +191,8 @@ def test_source_ledger_accepts_tdnet_found_zero_results():
     record = make_market_record()
     attempt = make_source_attempt(
         source_id="JPX_TDNET",
-        source_role="CONTEXT",
-        criticality="CONTEXT",
+        source_role="PRIMARY",
+        criticality="RULE_DEPENDENT",
         information_type="TIMELY_DISCLOSURE",
         status="FOUND",
     )

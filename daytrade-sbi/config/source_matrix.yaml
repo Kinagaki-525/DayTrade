@@ -109,8 +109,8 @@ sources:
 
   - source_id: JPX_TDNET
     information_type: TIMELY_DISCLOSURE
-    role: CONTEXT
-    criticality: CONTEXT
+    role: PRIMARY
+    criticality: RULE_DEPENDENT
     source_name: TDnet Timely Disclosure
     url_template: "https://www.release.tdnet.info/inbs/I_main_00.html"
     update_timing: REALTIME_OR_DELAYED
@@ -135,10 +135,20 @@ sources:
     zero_results_are_found: true
     notes: Candidate-specific issuer IR URL. Do not use this as a Discovery route.
 
+  - source_id: COMPANY_IR_DISCLOSURE
+    information_type: ISSUER_DISCLOSURE
+    role: PRIMARY
+    criticality: RULE_DEPENDENT
+    source_name: Issuer Official Disclosure
+    url_template: "https://{issuer_domain}/ir/"
+    update_timing: ISSUER_PUBLICATION
+    zero_results_are_found: true
+    notes: Candidate-specific issuer disclosure page. Do not use for Discovery.
+
   - source_id: YAHOO_JP_NEWS
     information_type: NEWS
     role: CONTEXT
-    criticality: CONTEXT
+    criticality: RULE_DEPENDENT
     source_name: Yahoo! Finance Japan Related News
     url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T/news"
     update_timing: REALTIME_OR_DELAYED
@@ -147,7 +157,7 @@ sources:
   - source_id: KABUTAN_NEWS
     information_type: NEWS
     role: CONTEXT
-    criticality: CONTEXT
+    criticality: RULE_DEPENDENT
     source_name: Kabutan Market News
     url_template: "https://kabutan.jp/stock/news?code={ticker}"
     update_timing: REALTIME_OR_DELAYED

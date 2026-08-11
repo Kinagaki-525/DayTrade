@@ -56,6 +56,8 @@ REQUIRED_SOURCE_IDS = {
     "JPX_TOPIX500",
     "JPX_TDNET",
     "JPX_EARNINGS_SCHEDULE",
+    "COMPANY_IR",
+    "COMPANY_IR_DISCLOSURE",
     "YAHOO_JP_NEWS",
     "KABUTAN_NEWS",
 }
@@ -113,10 +115,14 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
 
     tdnet = source_by_id.get("JPX_TDNET")
     if tdnet is not None:
-        if tdnet["criticality"] != "CONTEXT":
-            errors.append("JPX_TDNET must be CONTEXT criticality")
-        if tdnet["role"] != "CONTEXT":
-            errors.append("JPX_TDNET must be CONTEXT role")
+        if tdnet["criticality"] != "RULE_DEPENDENT":
+            errors.append("JPX_TDNET must be RULE_DEPENDENT criticality")
+        if tdnet["role"] != "PRIMARY":
+            errors.append("JPX_TDNET must be PRIMARY role")
+
+    ir_disclosure = source_by_id.get("COMPANY_IR_DISCLOSURE")
+    if ir_disclosure is None:
+        errors.append("source_matrix is missing required source_id(s): COMPANY_IR_DISCLOSURE")
 
     if payload["source_change_policy"]["runtime_substitution_allowed"]:
         errors.append("runtime Source Matrix substitution must remain disabled")
