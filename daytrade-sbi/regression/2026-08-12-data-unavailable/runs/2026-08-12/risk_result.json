@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "decision": "DATA_UNAVAILABLE",
+  "strategy_version": "v1",
+  "config_sha256": "5c7f803bf4da07155165b3b1f9075e577746280aa886f2b3d1348643c0b38d82",
+  "status": "NOT_APPLICABLE",
+  "ticker": null,
+  "required_capital_yen": null,
+  "expected_loss_yen": null,
+  "violations": []
+}

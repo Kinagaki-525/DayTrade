@@ -1,0 +1,305 @@
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta content="text/javascript" http-equiv="Content-Script-Type" />
+<meta content="text/css" http-equiv="Content-Style-Type" />
+<meta name="copyright" content="Copyright (C) Tokyo Stock Exchange, Inc. All rights reserved." />
+<meta name="description" content="" />
+<meta name="keywords" content="" />
+<meta name="GENERATOR" content="MSHTML 8.00.7601.18210" />
+<title>東京証券取引所　東証上場会社情報サービス</title>
+<link rel="stylesheet" type="text/css" href="/common/css/HPLCDS_import_listed.css" charset="shift_jis" media="all" />
+<link rel="stylesheet" type="text/css" href="/common/css/HPLCDS_listed.css" charset="shift_jis" media="all" />
+<script type="text/javascript" src="/common/js/verchk.js" charset="utf-8" ></script>
+<script type="text/javascript" src="/common/js/default.js" charset="utf-8" ></script>
+<script type="text/javascript" src="/common/js/gnavi.js" charset="utf-8" ></script>
+<script type="text/javascript" src="/common/js/page_1column01.js" charset="utf-8" ></script>
+<script type="text/javascript" src="/common/js/TWJ_Common.js" charset="utf-8" ></script>
+<script type="text/javascript">
+/**
+ * 表示順の判定
+ */
+function sort(kmkNum) {
+	var dspJn = document.forms['JJK010030Form'].dspJnKbn.value;
+	if (document.forms['JJK010030Form'].dspJnKmkNo.value == kmkNum) {
+		if (dspJn == 0) {
+			dspJn = 1;
+		} else {
+			dspJn = 0;
+		}
+	} else {
+		dspJn = 1;
+	}
+	document.forms['JJK010030Form'].dspJnKmkNo.value = kmkNum;
+	document.forms['JJK010030Form'].dspJnKbn.value = dspJn;
+	document.forms['JJK010030Form'].lstDspPg.value = 1;
+	submitPage(document.forms['JJK010030Form'],document.forms['JJK010030Form'].Sort);
+}	
+
+function gotoBaseJh(code, jjhsFlg) {
+	document.forms['JJK010030Form'].mgrCd.value = code;
+	document.forms['JJK010030Form'].jjHisiFlg.value = jjhsFlg;
+	submitPage(document.forms['JJK010030Form'],document.forms['JJK010030Form'].BaseJh);
+}
+</script>
+</head>
+<body onload="init();">
+<div id="pagelayout">
+	
+
+
+
+
+
+
+
+
+	
+
+	<div class="header_douteki">
+	
+		<img alt="image" src="/common/images/lc_header.png"/>
+	
+	</div>
+	<div id="pankuzuArea">
+	    <div id="pankuzubox">
+	    	
+	    	
+	    		<a href="/tseHpFront/JJK010010Action.do;jsessionid=00BC5E967D689583F0BC97121A85B33F1?Show=Show" class="pankuzulink">検索条件入力</a>
+	    	
+	    	
+	    </div>
+	</div>
+
+		
+	<div id="bodycontents">
+		<div id="leftnavi"></div>
+		<div class="pagecontents">
+			<div class="title1">
+				<h1 class="fontsizeL">東証上場会社情報サービス</h1>
+					<p class="fontsizeS"></br>　基本情報：会社概要や適時開示書類、コーポレート・ガバナンス報告書等を確認できます</br>　株価表示：チャートや四本値等の株価推移を確認できます</p>
+			</div>
+			<div class="printbtn">
+				<img src="/common/images/bt_print.gif" alt="印刷" width="81" height="20" id="bt_print0" class="cursorHand" onclick="print_out()" onmouseover="javascript:this.src='/common/images/bt_print_a.gif';" onmouseout="javascript:this.src='/common/images/bt_print.gif';" />
+			</div>
+			
+			<p class="boxNaviPagetop" align="right">
+				<a target="_blank" href="https://www.jpx.co.jp/listing/co-search/01.html" class="txtLink fontsizeS">
+					データ利用上の注意事項
+				</a>
+			</p>
+			
+			<form name="JJK010030Form" method="POST" action="/tseHpFront/JJK010030Action.do;jsessionid=00BC5E967D689583F0BC97121A85B33F1">
+				<input type="hidden" name="Transition" value="Transition" disabled="disabled">
+				
+				<input type="hidden" name="Show" value="Show" disabled="disabled">
+				
+				<input type="hidden" name="Return" value="Return" disabled="disabled">
+				
+				<input type="hidden" name="BaseJh" value="BaseJh" disabled="disabled">
+				
+				<input type="hidden" name="Sort" value="Sort" disabled="disabled">
+				
+				<!-- 一覧表示ページ --><input type="hidden" name="lstDspPg" value="1">
+		
+				<!-- 表示行数 --><input type="hidden" name="dspGs" value="10">
+		
+				<!-- 総件数 --><input type="hidden" name="souKnsu" value="1">
+		
+				<!-- 遷移元画面ID --><input type="hidden" name="sniMtGmnId" value="">
+		
+				<!-- 表示順区分--><input type="hidden" name="dspJnKbn" value="">
+		
+				<!-- 表示順項目番号 --><input type="hidden" name="dspJnKmkNo" value="">
+				
+				<!-- 銘柄コード --><input type="hidden" name="mgrCd" value="">
+		
+				<!-- 上場廃止フラグ --><input type="hidden" name="jjHisiFlg" value="1">
+				<h2 class="fontsizeM">検索結果</h2>
+				
+				
+					<div class="pagingmenu">
+<div class="left" style="line-height:13px;font-size:12px;"><span><strong>1～1件を表示／1件中</strong></span></div>
+<div class="next_null"></div>
+<div class="linkbox" style="line-height:15px;font-size:12px;">
+</div>
+<div class="preview"></div>
+<div class="clearFloat"></div>
+</div>
+
+					<br />
+					<table width="840" border="0" cellpadding="0" cellspacing="0" class="tableStyle01 fontsizeS">
+						<tr>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="63"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="275"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="89"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="126"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="32"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="32"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="63"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="80"></th>
+							<th style="height:0px;margin:0px;padding:0px;border-right-style:hidden;border-left-style:hidden" width="80"></th>
+						</tr>
+						<tr height="50">
+							<th nowrap="nowrap">
+								コード
+								<a href="javascript:sort(0);">
+									
+										<img src="/common/images/bt_sort_u.gif" alt="image" width="13" height="20" border="0" class="imgMidMarginLS" />
+									
+									
+								</a>
+							</th>
+							<th nowrap="nowrap">銘柄名</th>
+							<th nowrap="nowrap">
+								市場区分
+								<a href="javascript:sort(1);">
+									
+										<img src="/common/images/bt_sort_u.gif" alt="image" width="13" height="20" border="0" class="imgMidMarginLS" />
+									
+									
+								</a>
+							</th>
+							<th nowrap="nowrap">
+								業種分類
+								<span><a href="javascript:sort(2);">
+									
+										<img src="/common/images/bt_sort_u.gif" alt="image" width="13" height="20" border="0" class="imgMidMarginLS" />
+									
+									
+								</a></span>
+							</th>
+							<th colspan="2" nowrap="nowrap">
+								決算期
+								<a href="javascript:sort(3);">
+									
+										<img src="/common/images/bt_sort_u.gif" alt="image" width="13" height="20" border="0" class="imgMidMarginLS" />
+									
+													
+								</a>
+							</th>
+							<th nowrap="nowrap">
+								注意情報等
+							</th>
+							<th nowrap="nowrap">
+								基本情報
+							</th>
+							<th nowrap="nowrap">
+								株価表示
+							</th>
+						</tr>		
+						
+						<tr height="50">
+							<td align="center">
+								94320
+								<input type="hidden" name="ccJjCrpSelKekkLst_st[0].eqMgrCd" value="94320">
+							</td>
+							<td align="center">
+								ＮＴＴ
+								<input type="hidden" name="ccJjCrpSelKekkLst_st[0].eqMgrNm" value="ＮＴＴ">
+							</td>
+							<td align="center">
+								プライム
+								<input type="hidden" name="ccJjCrpSelKekkLst_st[0].szkbuNm" value="プライム">
+							</td>
+							<td align="center">
+								情報・通信業
+								<input type="hidden" name="ccJjCrpSelKekkLst_st[0].gyshDspNm" value="情報・通信業">			
+							</td>
+							
+								<td align="center" colspan="2">
+									3月
+									<input type="hidden" name="ccJjCrpSelKekkLst_st[0].dspYuKssnKi" value="3月">			
+								</td>
+							
+									
+							
+							
+							<td align="center" style="padding-left:0px;padding-right:0px;">
+								
+								
+								
+								
+								
+								
+								
+								
+								
+								
+									
+										&nbsp;
+									
+								
+								
+								
+								
+								
+								
+								
+								
+							</td>
+							
+							
+							<td align="center">
+								<input type="button" name="detail_button" value="基本情報" onclick="gotoBaseJh('94320', '1');" class="activeButton"  />
+							</td>
+							<td align="center">
+								
+								
+									<a target="_blank" href="https://quote.jpx.co.jp/jpxhp/main/index.aspx?F=stock_detail&disptype=information&qcode=9432" class="negativeLink">株価表示</a>
+								
+								
+								
+							</td>
+						</tr>
+						
+					</table>
+					<br />
+					<div class="pagingmenu">
+<div class="left" style="line-height:13px;font-size:12px;"><span><strong>1～1件を表示／1件中</strong></span></div>
+<div class="next_null"></div>
+<div class="linkbox" style="line-height:15px;font-size:12px;">
+</div>
+<div class="preview"></div>
+<div class="clearFloat"></div>
+</div>
+
+					<br />
+				
+			</form>
+			<table class="naviButton">
+				<tr>
+					<td class="naviButtonL">
+						<input type="button" name="back_button" value="戻る" onclick="submitPage(document.forms['JJK010030Form'],document.forms['JJK010030Form'].Return);" class="negativeButton" />
+					</td>
+				</tr>
+			</table>
+		</div>
+	</div>
+	
+
+
+
+
+<div class="boxOptUser01"></div>
+<div class="clearFooterFloat right"></div>
+<div id="footerarea">
+	<iframe title="footer" id="footer04" height="60" marginheight="0" src="/common/html/footer04.html" frameborder="0" width="920" name="footer04" marginwidth="0" scrolling="no">
+		<img alt="image" id="bt_pagetop" class="btpagetop" src="/common/images/bt_pagetop.gif" width="0" height="0" />
+	</iframe>
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "records": [
+    {
+      "ticker": "9432",
+      "company_name": "ＮＴＴ",
+      "market": "プライム",
+      "share_unit": 100,
+      "security_type": "Prime domestic stock",
+      "source_policy_status": "SINGLE_SOURCE_ONLY",
+      "data_status": "SINGLE_SOURCE_ONLY",
+      "data_status_reasons": [
+        "JPX_TOPIX500 primary ticker-specific membership was not verified for 2026-08-10.",
+        "tick_size=0.1 is retained as an observed value but depends on JPX listed-issues audit TOPIX Core30 evidence only.",
+        "Discovery union research remains incomplete."
+      ],
+      "trading_date": "2026-08-10",
+      "open": "157.9",
+      "high": "159.9",
+      "low": "157.0",
+      "close": "159.9",
+      "volume": 227940200,
+      "previous_close": "159.9",
+      "previous_high": "159.9",
+      "tick_size": "0.1",
+      "turnover": null,
+      "spread": null,
+      "earnings_scheduled": null,
+      "special_disclosures": null,
+      "sources": [
+        {
+          "source_ref": "src_9432_yahoo_open_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "open",
+          "value": "157.9"
+        },
+        {
+          "source_ref": "src_9432_kabutan_open_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "open",
+          "value": "157.9"
+        },
+        {
+          "source_ref": "src_9432_yahoo_high_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "high",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_kabutan_high_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "high",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_yahoo_low_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "low",
+          "value": "157.0"
+        },
+        {
+          "source_ref": "src_9432_kabutan_low_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "low",
+          "value": "157.0"
+        },
+        {
+          "source_ref": "src_9432_yahoo_close_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "close",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_kabutan_close_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "close",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_yahoo_volume_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "volume",
+          "value": 227940200
+        },
+        {
+          "source_ref": "src_9432_kabutan_volume_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "volume",
+          "value": 227940200
+        },
+        {
+          "source_ref": "src_9432_yahoo_previous_close_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "previous_close",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_kabutan_previous_close_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "previous_close",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_yahoo_previous_high_001",
+          "source_id": "YAHOO_JP_HISTORY",
+          "source_role": "PRIMARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Yahoo Finance Japan history",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+          "retrieved_at": "2026-08-11T13:05:29+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "previous_high",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_kabutan_previous_high_001",
+          "source_id": "KABUTAN_HISTORY",
+          "source_role": "SECONDARY",
+          "information_type": "OHLCV",
+          "source_status": "FOUND",
+          "source_name": "Kabutan daily history",
+          "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+          "retrieved_at": "2026-08-11T13:05:08+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "previous_high",
+          "value": "159.9"
+        },
+        {
+          "source_ref": "src_9432_jpx_share_unit_001",
+          "source_id": "JPX_LISTED_COMPANY",
+          "source_role": "PRIMARY",
+          "information_type": "LISTED_COMPANY",
+          "source_status": "FOUND",
+          "source_name": "JPX trading unit",
+          "source_url": "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+          "retrieved_at": "2026-08-11T13:08:09+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "share_unit",
+          "value": 100
+        },
+        {
+          "source_ref": "src_9432_jpx_security_type_001",
+          "source_id": "JPX_LISTED_COMPANY_AUDIT",
+          "source_role": "AUDIT",
+          "information_type": "LISTED_COMPANY",
+          "source_status": "FOUND",
+          "source_name": "JPX listed issues Excel",
+          "source_url": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
+          "retrieved_at": "2026-08-11T12:54:01+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "security_type",
+          "value": "Prime domestic stock"
+        },
+        {
+          "source_ref": "src_9432_jpx_topix_category_001",
+          "source_id": "JPX_LISTED_COMPANY_AUDIT",
+          "source_role": "AUDIT",
+          "information_type": "LISTED_COMPANY",
+          "source_status": "FOUND",
+          "source_name": "JPX listed issues Excel",
+          "source_url": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls",
+          "retrieved_at": "2026-08-11T12:54:01+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "topix_scale_category",
+          "value": "TOPIX Core30"
+        },
+        {
+          "source_ref": "src_9432_jpx_tick_size_001",
+          "source_id": "JPX_TICK_SIZE",
+          "source_role": "PRIMARY",
+          "information_type": "TICK_SIZE",
+          "source_status": "FOUND",
+          "source_name": "JPX tick size table",
+          "source_url": "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+          "retrieved_at": "2026-08-11T13:06:07+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "tick_size",
+          "value": "0.1"
+        },
+        {
+          "source_ref": "src_9432_jpx_company_name_001",
+          "source_id": "JPX_LISTED_COMPANY",
+          "source_role": "PRIMARY",
+          "information_type": "LISTED_COMPANY",
+          "source_status": "FOUND",
+          "source_name": "JPX listed company search",
+          "source_url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+          "retrieved_at": "2026-08-11T13:05:48+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "company_name",
+          "value": "ＮＴＴ"
+        },
+        {
+          "source_ref": "src_9432_jpx_market_001",
+          "source_id": "JPX_LISTED_COMPANY",
+          "source_role": "PRIMARY",
+          "information_type": "LISTED_COMPANY",
+          "source_status": "FOUND",
+          "source_name": "JPX listed company search",
+          "source_url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+          "retrieved_at": "2026-08-11T13:05:48+09:00",
+          "trading_date": "2026-08-10",
+          "ticker": "9432",
+          "field_name": "market",
+          "value": "プライム"
+        }
+      ],
+      "field_provenance": [
+        {
+          "field_name": "open",
+          "status": "VERIFIED",
+          "verified_value": "157.9",
+          "primary_source_ref": "src_9432_yahoo_open_001",
+          "secondary_source_ref": "src_9432_kabutan_open_001",
+          "source_refs": [
+            "src_9432_yahoo_open_001",
+            "src_9432_kabutan_open_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "high",
+          "status": "VERIFIED",
+          "verified_value": "159.9",
+          "primary_source_ref": "src_9432_yahoo_high_001",
+          "secondary_source_ref": "src_9432_kabutan_high_001",
+          "source_refs": [
+            "src_9432_yahoo_high_001",
+            "src_9432_kabutan_high_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "low",
+          "status": "VERIFIED",
+          "verified_value": "157.0",
+          "primary_source_ref": "src_9432_yahoo_low_001",
+          "secondary_source_ref": "src_9432_kabutan_low_001",
+          "source_refs": [
+            "src_9432_yahoo_low_001",
+            "src_9432_kabutan_low_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "close",
+          "status": "VERIFIED",
+          "verified_value": "159.9",
+          "primary_source_ref": "src_9432_yahoo_close_001",
+          "secondary_source_ref": "src_9432_kabutan_close_001",
+          "source_refs": [
+            "src_9432_yahoo_close_001",
+            "src_9432_kabutan_close_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "volume",
+          "status": "VERIFIED",
+          "verified_value": 227940200,
+          "primary_source_ref": "src_9432_yahoo_volume_001",
+          "secondary_source_ref": "src_9432_kabutan_volume_001",
+          "source_refs": [
+            "src_9432_yahoo_volume_001",
+            "src_9432_kabutan_volume_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "previous_close",
+          "status": "VERIFIED",
+          "verified_value": "159.9",
+          "primary_source_ref": "src_9432_yahoo_previous_close_001",
+          "secondary_source_ref": "src_9432_kabutan_previous_close_001",
+          "source_refs": [
+            "src_9432_yahoo_previous_close_001",
+            "src_9432_kabutan_previous_close_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        },
+        {
+          "field_name": "previous_high",
+          "status": "VERIFIED",
+          "verified_value": "159.9",
+          "primary_source_ref": "src_9432_yahoo_previous_high_001",
+          "secondary_source_ref": "src_9432_kabutan_previous_high_001",
+          "source_refs": [
+            "src_9432_yahoo_previous_high_001",
+            "src_9432_kabutan_previous_high_001"
+          ],
+          "verified_at": "2026-08-11T13:16:38+09:00"
+        }
+      ]
+    }
+  ]
+}

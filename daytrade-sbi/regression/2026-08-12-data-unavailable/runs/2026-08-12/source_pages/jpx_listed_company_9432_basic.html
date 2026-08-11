@@ -1,0 +1,284 @@
+﻿
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta content="text/javascript" http-equiv="Content-Script-Type" />
+<meta content="text/css" http-equiv="Content-Style-Type" />
+<meta name="copyright" content="Copyright (C) Tokyo Stock Exchange, Inc. All rights reserved." />
+<meta name="description" content="" />
+<meta name="keywords" content="" />
+<meta name="GENERATOR" content="MSHTML 8.00.7601.18210" />
+<title>東京証券取引所　東証上場会社情報サービス</title>
+<link rel="stylesheet" type="text/css" href="/common/css/HPLCDS_import_listed.css" charset="shift_jis" media="all" />
+<link rel="stylesheet" type="text/css" href="/common/css/HPLCDS_listed.css" charset="shift_jis" media="all" />
+<script type="text/javascript" charset="utf-8" src="/common/js/verchk.js"></script>
+<script type="text/javascript" charset="utf-8" src="/common/js/default.js"></script>
+<script type="text/javascript" charset="utf-8" src="/common/js/gnavi.js"></script>
+<script type="text/javascript" charset="utf-8" src="/common/js/page_1column01.js"></script>
+<script type="text/javascript" charset="utf-8" src="/common/js/TWJ_Common.js"></script>
+<script type="text/javascript">
+	function changeTab() {
+		submitPage(document.forms['JJK010010Form'],document.forms['JJK010010Form'].Switch);
+	}
+</script>
+</head>
+<body onload="init();" >
+	<!-- Contents Start -->
+	<div id="pagelayout">
+		
+
+
+
+
+
+
+
+
+	
+
+	<div class="header_douteki">
+	
+		<img alt="image" src="/common/images/lc_header.png"/>
+	
+	</div>
+	<div id="pankuzuArea">
+	    <div id="pankuzubox">
+	    	
+	    		<span class="pankuzulink">検索条件入力</span>
+	    	
+	    	
+	    	
+	    </div>
+	</div>
+
+		<div id="bodycontents">
+			<div id="leftnavi"></div>
+			<!-- Page Contents Start -->
+			<div class="pagecontents">
+				<div class="title1">
+					<h1 class="fontsizeL">東証上場会社情報サービス</h1>
+				</div>
+				<!-- エラーメッセージ、ワーニングメッセージのテーブル -->
+				<div class="printbtn">
+					<img src="/common/images/bt_print.gif" alt="印刷" width="81" height="20" id="bt_print0" class="cursorHand" onclick="print_out()" onmouseover="javascript:this.src='/common/images/bt_print_a.gif';" onmouseout="javascript:this.src='/common/images/bt_print.gif';" />
+				</div>
+				
+				<p class="boxNaviPagetop" align="right">
+					<a target="_blank" href="https://www.jpx.co.jp/listing/co-search/01.html" class="txtLink fontsizeS">
+						データ利用上の注意事項
+					</a>
+				</p>
+				
+				
+				<h2 class="fontsizeM">検索条件入力</h2>
+				<p class="fontsizeS">検索条件を入力してください。</p>
+				<form name="JJK010010Form" method="POST" action="/tseHpFront/JJK010010Action.do;jsessionid=00B8C31AB587ED238AC85CDE0BDBCAF52">
+					<ul class="ulStyleListed01">
+					  <li><strong>簡易検索</strong></li>
+					  <li><a href="javascript:changeTab();">詳細検索</a></li>
+					</ul>
+					<br class="clearFloat" />
+					<!-- 検索フォーム -->
+								
+					<input type="hidden" name="Show" value="Show" disabled="disabled">
+					
+					<input type="hidden" name="ListShow" value="ListShow" disabled="disabled">
+					
+					<input type="hidden" name="Switch" value="Switch" disabled="disabled">
+					
+					<!-- 遷移元画面ID --><input type="hidden" name="sniMtGmnId" value="">
+					
+					<div class="boxOptListed03">
+						<div class="boxDelisting fontsizeS">
+							<label>
+								<!-- 上場廃止チェックボックス -->
+								
+								<input type="checkbox" name="jjHisiKbnChkbx" value="on">上場廃止会社はこちら 
+								
+							</label>
+						</div>
+						<table class="tableStyle01" border="0" cellspacing="0" cellpadding="0" width="800">
+							<tbody>
+								<!-- 表示社数 -->
+								<tr>
+									<th width="35%" nowrap="nowrap" align="left"><span class="fontsizeS">表示社数</span></th>
+								    <td width="65%"><span class="fontsizeS">
+									    <select name="dspSsuPd"><option value="10" selected="selected">10件</option>
+<option value="50">50件</option>
+<option value="100">100件</option>
+<option value="200">200件</option></select>
+										<input type="hidden" name="dspSsuPdMapOut" value="10&gt;10件&lt;50&gt;50件&lt;100&gt;100件&lt;200&gt;200件&lt;">
+									</span></td>
+								</tr>
+							    <!-- 銘柄名（会社名） -->
+							    <tr>
+							    	<th nowrap="nowrap" align="left"><span class="fontsizeS">銘柄名（会社名）</span></th>
+								    <td><span class="fontsizeS">
+								    	<input type="text" name="mgrMiTxtBx" maxlength="150" size="60" value="">
+								    </span></td>
+							    </tr>
+							    <!-- コード -->
+							    <tr>
+							    	<th nowrap="nowrap" align="left"><span class="fontsizeS">コード</span></th>
+								    <td><span class="fontsizeS">
+								    	<input type="text" name="eqMgrCd" maxlength="5" size="12" value="">
+								    </span></td>
+							    </tr>
+							    <!-- 市場区分 -->
+							    <tr>
+							    	<th nowrap="nowrap" align="left"><span class="fontsizeS">市場区分</span></th>
+								    <td><span class="fontsizeS"><span class="checkboxField">
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="011">
+													プライム
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="012">
+													スタンダード
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="013">
+													グロース
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="008">
+													TOKYO PRO Market
+												</label>
+																				
+										
+											
+											
+												<br />
+																				
+										
+											
+											
+											 <!-- 英語画面のみ表示 -->
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="111">
+													外国株プライム
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="112">
+													外国株スタンダード
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="113">
+													外国株グロース
+												</label>
+																				
+										
+											
+											
+												<br />
+																				
+										
+											
+											
+											 <!-- 英語画面のみ表示 -->
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="ETF">
+													ETF
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="ETN">
+													ETN
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="RET">
+													不動産投資信託(REIT)
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="IFD">
+													インフラファンド
+												</label>
+																				
+										
+											
+											
+												<label>
+													<input type="checkbox" name="szkbuChkbx" value="999">
+													その他
+												</label>
+																				
+										
+										<input type="hidden" name="szkbuChkbxMapOut" value="011&gt;プライム&lt;012&gt;スタンダード&lt;013&gt;グロース&lt;008&gt;TOKYO PRO Market&lt;bj1&gt;－&lt;be1&gt;－&lt;111&gt;外国株プライム&lt;112&gt;外国株スタンダード&lt;113&gt;外国株グロース&lt;bj2&gt;－&lt;be2&gt;－&lt;ETF&gt;ETF&lt;ETN&gt;ETN&lt;RET&gt;不動産投資信託(REIT)&lt;IFD&gt;インフラファンド&lt;999&gt;その他&lt;">
+								    </span></span></td>
+							    </tr>
+						    </tbody>
+						</table>
+					</div>
+					<p class="fontsizeM center"><input class="activeButton" onclick="submitPage(document.forms['JJK010010Form'],document.forms['JJK010010Form'].ListShow);" value="検索" type="button" name="searchButton" /></p>
+					<div class="boxOptUser01"></div>
+				</form>
+			</div>
+		</div>
+		
+
+
+
+
+<div class="boxOptUser01"></div>
+<div class="clearFooterFloat right"></div>
+<div id="footerarea">
+	<iframe title="footer" id="footer04" height="60" marginheight="0" src="/common/html/footer04.html" frameborder="0" width="920" name="footer04" marginwidth="0" scrolling="no">
+		<img alt="image" id="bt_pagetop" class="btpagetop" src="/common/images/bt_pagetop.gif" width="0" height="0" />
+	</iframe>
+</div>
+	</div>
+</body>
+</html>
+

@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "strategy_version": "v1",
+  "config_sha256": "5c7f803bf4da07155165b3b1f9075e577746280aa886f2b3d1348643c0b38d82",
+  "decision": "DATA_UNAVAILABLE",
+  "strategy_type": null,
+  "ticker": null,
+  "company_name": null,
+  "previous_high": null,
+  "tick_size": null,
+  "entry_trigger": null,
+  "entry_limit": null,
+  "take_profit": null,
+  "stop_loss": null,
+  "shares": null,
+  "selection_reasons": [
+    "Discovery found 96 unique tickers, but Candidate Research is missing for 95 tickers in the saved artifacts.",
+    "The only screened ticker, 9432, is DATA_UNAVAILABLE because JPX_TOPIX500 primary ticker-specific membership was not adopted; tick-size classification remains SINGLE_SOURCE_ONLY.",
+    "Context checks such as TDnet are not complete for the full Discovery union, and strategy.yaml still has unresolved screening keys set to null."
+  ],
+  "research_cutoff": "2026-08-10T20:00:00+09:00",
+  "post_cutoff_information_status": "OUT_OF_SCOPE",
+  "pipeline_summary": {
+    "discovered": 96,
+    "research_complete": 0,
+    "research_incomplete": 95,
+    "data_unavailable": 1,
+    "screened": 1,
+    "eligible": 0,
+    "rejected": 0
+  },
+  "source_statuses": [
+    {
+      "source_id": "YAHOO_JP_VOLUME_RANKING",
+      "status": "FOUND",
+      "url": "https://finance.yahoo.co.jp/stocks/ranking/volume?market=all",
+      "candidate_code": null,
+      "information_type": "VOLUME_RANKING",
+      "reason": "Yahoo volume ranking rows 1-50, page update time 2026/08/10 18:40."
+    },
+    {
+      "source_id": "YAHOO_JP_GAIN_RANKING",
+      "status": "FOUND",
+      "url": "https://finance.yahoo.co.jp/stocks/ranking/up?market=all",
+      "candidate_code": null,
+      "information_type": "PRICE_GAIN_RANKING",
+      "reason": "Yahoo gain ranking rows 1-50, page update time 2026/08/10 18:40."
+    },
+    {
+      "source_id": "YAHOO_JP_HISTORY",
+      "status": "FOUND",
+      "url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "candidate_code": "9432",
+      "information_type": "OHLCV",
+      "reason": "Used 2026/8/10 history row."
+    },
+    {
+      "source_id": "KABUTAN_HISTORY",
+      "status": "FOUND",
+      "url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "candidate_code": "9432",
+      "information_type": "OHLCV",
+      "reason": "Used 2026-08-10 daily row from Source Matrix Kabutan URL. Values match Yahoo."
+    },
+    {
+      "source_id": "JPX_LISTED_COMPANY",
+      "status": "FOUND",
+      "url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+      "candidate_code": "9432",
+      "information_type": "LISTED_COMPANY",
+      "reason": "JPX listed company search evidence page saved."
+    },
+    {
+      "source_id": "JPX_LISTED_COMPANY",
+      "status": "FOUND",
+      "url": "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+      "candidate_code": "9432",
+      "information_type": "LISTED_COMPANY",
+      "reason": "JPX trading unit page states domestic stocks trade in units of 100 shares."
+    },
+    {
+      "source_id": "JPX_LISTED_COMPANY_AUDIT",
+      "status": "FOUND",
+      "url": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
+      "candidate_code": "9432",
+      "information_type": "LISTED_COMPANY",
+      "reason": "JPX listed issues July 2026 Excel checked for 9432."
+    },
+    {
+      "source_id": "JPX_TICK_SIZE",
+      "status": "FOUND",
+      "url": "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+      "candidate_code": "9432",
+      "information_type": "TICK_SIZE",
+      "reason": "JPX tick size table plus JPX listed issues TOPIX Core30 category imply 0.1 yen tick for 9432 at this price."
+    },
+    {
+      "source_id": "JPX_CALENDAR",
+      "status": "FOUND",
+      "url": "https://www.jpx.co.jp/corporate/about-jpx/calendar/",
+      "candidate_code": null,
+      "information_type": "TRADING_CALENDAR",
+      "reason": "JPX calendar confirms 2026-08-11 is a holiday; run uses 2026-08-12 target and 2026-08-10 previous trading day."
+    },
+    {
+      "source_id": "JPX_TOPIX500",
+      "status": "STALE",
+      "url": "https://www.jpx.co.jp/markets/indices/topix/",
+      "candidate_code": "9432",
+      "information_type": "TOPIX500_MEMBERSHIP",
+      "reason": "Current ticker-specific JPX_TOPIX500 primary evidence was not adopted. Tick-size classification for 9432 relies only on JPX listed-issues audit field TOPIX Core30, so trade-critical tick_size remains SINGLE_SOURCE_ONLY."
+    }
+  ],
+  "source_urls": [
+    "https://finance.yahoo.co.jp/quote/9432.T/history",
+    "https://kabutan.jp/stock/kabuka?code=9432",
+    "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+    "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
+    "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls",
+    "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+    "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+    "https://www.jpx.co.jp/corporate/about-jpx/calendar/"
+  ],
+  "notes": "No SBI order should be entered. DATA_UNAVAILABLE is caused by incomplete Candidate Research and unresolved trade-critical source evidence, not by a no-trade market conclusion."
+}

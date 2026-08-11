@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "source_ledger": {
+    "valid": true,
+    "errors": []
+  },
+  "results": [
+    {
+      "ticker": "9432",
+      "data_status": "SINGLE_SOURCE_ONLY",
+      "valid_for_trade": false,
+      "errors": [
+        "Market data status is not verified: SINGLE_SOURCE_ONLY"
+      ],
+      "warnings": [
+        "turnover is not available",
+        "spread is not available",
+        "earnings schedule is not confirmed",
+        "special disclosures are not confirmed"
+      ]
+    }
+  ]
+}

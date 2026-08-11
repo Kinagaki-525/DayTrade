@@ -1,0 +1,11 @@
+target_date: 2026-08-12
+decision: DATA_UNAVAILABLE
+risk_status: NOT_APPLICABLE
+discovery_candidates: 96
+candidate_research_count: 1
+market_data_count: 1
+pipeline_candidates: 96
+source_request_count: 10
+eligible_candidates: 0
+pytest_result: "150 passed"
+purpose: "2026-08-12 run preserved as regression data after DATA_UNAVAILABLE due incomplete candidate research and SINGLE_SOURCE_ONLY tick-size evidence"

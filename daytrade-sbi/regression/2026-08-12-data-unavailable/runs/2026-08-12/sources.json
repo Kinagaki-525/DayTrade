@@ -1,0 +1,1349 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "sources": [
+    {
+      "source_ref": "src_9432_yahoo_open_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "open",
+      "value": "157.9"
+    },
+    {
+      "source_ref": "src_9432_kabutan_open_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "open",
+      "value": "157.9"
+    },
+    {
+      "source_ref": "src_9432_yahoo_high_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "high",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_kabutan_high_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "high",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_yahoo_low_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "low",
+      "value": "157.0"
+    },
+    {
+      "source_ref": "src_9432_kabutan_low_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "low",
+      "value": "157.0"
+    },
+    {
+      "source_ref": "src_9432_yahoo_close_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "close",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_kabutan_close_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "close",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_yahoo_volume_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "volume",
+      "value": 227940200
+    },
+    {
+      "source_ref": "src_9432_kabutan_volume_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "volume",
+      "value": 227940200
+    },
+    {
+      "source_ref": "src_9432_yahoo_previous_close_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "previous_close",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_kabutan_previous_close_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "previous_close",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_yahoo_previous_high_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Yahoo Finance Japan history",
+      "source_url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "previous_high",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_kabutan_previous_high_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "information_type": "OHLCV",
+      "source_status": "FOUND",
+      "source_name": "Kabutan daily history",
+      "source_url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "previous_high",
+      "value": "159.9"
+    },
+    {
+      "source_ref": "src_9432_jpx_share_unit_001",
+      "source_id": "JPX_LISTED_COMPANY",
+      "source_role": "PRIMARY",
+      "information_type": "LISTED_COMPANY",
+      "source_status": "FOUND",
+      "source_name": "JPX trading unit",
+      "source_url": "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+      "retrieved_at": "2026-08-11T13:08:09+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "share_unit",
+      "value": 100
+    },
+    {
+      "source_ref": "src_9432_jpx_security_type_001",
+      "source_id": "JPX_LISTED_COMPANY_AUDIT",
+      "source_role": "AUDIT",
+      "information_type": "LISTED_COMPANY",
+      "source_status": "FOUND",
+      "source_name": "JPX listed issues Excel",
+      "source_url": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
+      "retrieved_at": "2026-08-11T12:54:01+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "security_type",
+      "value": "Prime domestic stock"
+    },
+    {
+      "source_ref": "src_9432_jpx_topix_category_001",
+      "source_id": "JPX_LISTED_COMPANY_AUDIT",
+      "source_role": "AUDIT",
+      "information_type": "LISTED_COMPANY",
+      "source_status": "FOUND",
+      "source_name": "JPX listed issues Excel",
+      "source_url": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls",
+      "retrieved_at": "2026-08-11T12:54:01+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "topix_scale_category",
+      "value": "TOPIX Core30"
+    },
+    {
+      "source_ref": "src_9432_jpx_tick_size_001",
+      "source_id": "JPX_TICK_SIZE",
+      "source_role": "PRIMARY",
+      "information_type": "TICK_SIZE",
+      "source_status": "FOUND",
+      "source_name": "JPX tick size table",
+      "source_url": "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+      "retrieved_at": "2026-08-11T13:06:07+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "tick_size",
+      "value": "0.1"
+    },
+    {
+      "source_ref": "src_9432_jpx_company_name_001",
+      "source_id": "JPX_LISTED_COMPANY",
+      "source_role": "PRIMARY",
+      "information_type": "LISTED_COMPANY",
+      "source_status": "FOUND",
+      "source_name": "JPX listed company search",
+      "source_url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+      "retrieved_at": "2026-08-11T13:05:48+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "company_name",
+      "value": "ＮＴＴ"
+    },
+    {
+      "source_ref": "src_9432_jpx_market_001",
+      "source_id": "JPX_LISTED_COMPANY",
+      "source_role": "PRIMARY",
+      "information_type": "LISTED_COMPANY",
+      "source_status": "FOUND",
+      "source_name": "JPX listed company search",
+      "source_url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+      "retrieved_at": "2026-08-11T13:05:48+09:00",
+      "trading_date": "2026-08-10",
+      "ticker": "9432",
+      "field_name": "market",
+      "value": "プライム"
+    },
+    {
+      "source_ref": "src_jpx_calendar_20260812_001",
+      "source_id": "JPX_CALENDAR",
+      "source_role": "PRIMARY",
+      "information_type": "TRADING_CALENDAR",
+      "source_status": "FOUND",
+      "source_name": "JPX market holidays calendar",
+      "source_url": "https://www.jpx.co.jp/corporate/about-jpx/calendar/",
+      "retrieved_at": "2026-08-11T13:26:49+09:00",
+      "trading_date": "2026-08-12",
+      "ticker": "JPX",
+      "field_name": "trading_calendar",
+      "value": "2026-08-11 is a JPX holiday; target_date=2026-08-12 and previous_trading_day=2026-08-10 are used for this run."
+    }
+  ],
+  "source_attempts": [
+    {
+      "attempt_id": "att_yahoo_volume_ranking_20260812_001",
+      "source_id": "YAHOO_JP_VOLUME_RANKING",
+      "source_role": "PRIMARY",
+      "criticality": "DISCOVERY_CRITICAL",
+      "information_type": "VOLUME_RANKING",
+      "candidate_code": null,
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T12:57:36+09:00",
+      "retrieved_at": "2026-08-11T12:57:36+09:00",
+      "url": "https://finance.yahoo.co.jp/stocks/ranking/volume?market=all",
+      "source_page_path": "source_pages/yahoo_volume_ranking.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": [
+        {
+          "rank": 1,
+          "ticker": "8918",
+          "company_name": "(株)ランド",
+          "market": "東証STD",
+          "display_value": "257,953,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/8918.T"
+        },
+        {
+          "rank": 2,
+          "ticker": "9432",
+          "company_name": "ＮＴＴ(株)",
+          "market": "東証PRM",
+          "display_value": "227,940,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/9432.T"
+        },
+        {
+          "rank": 3,
+          "ticker": "4564",
+          "company_name": "オンコセラピー・サイエンス(株)",
+          "market": "東証GRT",
+          "display_value": "173,539,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/4564.T"
+        },
+        {
+          "rank": 4,
+          "ticker": "1360",
+          "company_name": "日経平均ベア2倍上場投信",
+          "market": "東証ETF",
+          "display_value": "119,614,900",
+          "source_url": "https://finance.yahoo.co.jp/quote/1360.T"
+        },
+        {
+          "rank": 5,
+          "ticker": "5803",
+          "company_name": "(株)フジクラ",
+          "market": "東証PRM",
+          "display_value": "118,555,300",
+          "source_url": "https://finance.yahoo.co.jp/quote/5803.T"
+        },
+        {
+          "rank": 6,
+          "ticker": "8729",
+          "company_name": "ソニーフィナンシャルグループ(株)",
+          "market": "東証PRM",
+          "display_value": "104,721,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/8729.T"
+        },
+        {
+          "rank": 7,
+          "ticker": "4597",
+          "company_name": "ソレイジア・ファーマ(株)",
+          "market": "東証GRT",
+          "display_value": "70,590,700",
+          "source_url": "https://finance.yahoo.co.jp/quote/4597.T"
+        },
+        {
+          "rank": 8,
+          "ticker": "9434",
+          "company_name": "ソフトバンク(株)",
+          "market": "東証PRM",
+          "display_value": "61,617,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/9434.T"
+        },
+        {
+          "rank": 9,
+          "ticker": "5801",
+          "company_name": "古河電気工業(株)",
+          "market": "東証PRM",
+          "display_value": "45,988,600",
+          "source_url": "https://finance.yahoo.co.jp/quote/5801.T"
+        },
+        {
+          "rank": 10,
+          "ticker": "8136",
+          "company_name": "(株)サンリオ",
+          "market": "東証PRM",
+          "display_value": "44,026,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/8136.T"
+        },
+        {
+          "rank": 11,
+          "ticker": "5401",
+          "company_name": "日本製鉄(株)",
+          "market": "東証PRM",
+          "display_value": "41,130,600",
+          "source_url": "https://finance.yahoo.co.jp/quote/5401.T"
+        },
+        {
+          "rank": 12,
+          "ticker": "285A",
+          "company_name": "キオクシアホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "32,549,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/285A.T"
+        },
+        {
+          "rank": 13,
+          "ticker": "2146",
+          "company_name": "ＵＴグループ(株)",
+          "market": "東証PRM",
+          "display_value": "31,256,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/2146.T"
+        },
+        {
+          "rank": 14,
+          "ticker": "8306",
+          "company_name": "(株)三菱ＵＦＪフィナンシャル・グループ",
+          "market": "東証PRM",
+          "display_value": "30,256,700",
+          "source_url": "https://finance.yahoo.co.jp/quote/8306.T"
+        },
+        {
+          "rank": 15,
+          "ticker": "7201",
+          "company_name": "日産自動車(株)",
+          "market": "東証PRM",
+          "display_value": "29,478,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/7201.T"
+        },
+        {
+          "rank": 16,
+          "ticker": "9984",
+          "company_name": "ソフトバンクグループ(株)",
+          "market": "東証PRM",
+          "display_value": "28,638,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/9984.T"
+        },
+        {
+          "rank": 17,
+          "ticker": "3664",
+          "company_name": "(株)ＷＩＺＥ",
+          "market": "東証GRT",
+          "display_value": "27,051,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/3664.T"
+        },
+        {
+          "rank": 18,
+          "ticker": "9501",
+          "company_name": "東京電力ホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "25,148,300",
+          "source_url": "https://finance.yahoo.co.jp/quote/9501.T"
+        },
+        {
+          "rank": 19,
+          "ticker": "5802",
+          "company_name": "住友電気工業(株)",
+          "market": "東証PRM",
+          "display_value": "24,032,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/5802.T"
+        },
+        {
+          "rank": 20,
+          "ticker": "4751",
+          "company_name": "(株)サイバーエージェント",
+          "market": "東証PRM",
+          "display_value": "24,031,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/4751.T"
+        },
+        {
+          "rank": 21,
+          "ticker": "2181",
+          "company_name": "パーソルホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "23,547,500",
+          "source_url": "https://finance.yahoo.co.jp/quote/2181.T"
+        },
+        {
+          "rank": 22,
+          "ticker": "7203",
+          "company_name": "トヨタ自動車(株)",
+          "market": "東証PRM",
+          "display_value": "23,489,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/7203.T"
+        },
+        {
+          "rank": 23,
+          "ticker": "6976",
+          "company_name": "太陽誘電(株)",
+          "market": "東証PRM",
+          "display_value": "23,468,500",
+          "source_url": "https://finance.yahoo.co.jp/quote/6976.T"
+        },
+        {
+          "rank": 24,
+          "ticker": "5016",
+          "company_name": "ＪＸ金属(株)",
+          "market": "東証PRM",
+          "display_value": "20,140,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/5016.T"
+        },
+        {
+          "rank": 25,
+          "ticker": "4689",
+          "company_name": "ＬＩＮＥヤフー(株)",
+          "market": "東証PRM",
+          "display_value": "19,446,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/4689.T"
+        },
+        {
+          "rank": 26,
+          "ticker": "8801",
+          "company_name": "三井不動産(株)",
+          "market": "東証PRM",
+          "display_value": "18,089,300",
+          "source_url": "https://finance.yahoo.co.jp/quote/8801.T"
+        },
+        {
+          "rank": 27,
+          "ticker": "4755",
+          "company_name": "楽天グループ(株)",
+          "market": "東証PRM",
+          "display_value": "18,002,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/4755.T"
+        },
+        {
+          "rank": 28,
+          "ticker": "6981",
+          "company_name": "(株)村田製作所",
+          "market": "東証PRM",
+          "display_value": "17,613,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/6981.T"
+        },
+        {
+          "rank": 29,
+          "ticker": "3103",
+          "company_name": "ユニチカ(株)",
+          "market": "東証STD",
+          "display_value": "17,591,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/3103.T"
+        },
+        {
+          "rank": 30,
+          "ticker": "6758",
+          "company_name": "ソニーグループ(株)",
+          "market": "東証PRM",
+          "display_value": "16,907,600",
+          "source_url": "https://finance.yahoo.co.jp/quote/6758.T"
+        },
+        {
+          "rank": 31,
+          "ticker": "543A",
+          "company_name": "ＡＲＣＨＩＯＮ(株)",
+          "market": "東証PRM",
+          "display_value": "16,808,600",
+          "source_url": "https://finance.yahoo.co.jp/quote/543A.T"
+        },
+        {
+          "rank": 32,
+          "ticker": "3350",
+          "company_name": "(株)メタプラネット",
+          "market": "東証STD",
+          "display_value": "15,947,600",
+          "source_url": "https://finance.yahoo.co.jp/quote/3350.T"
+        },
+        {
+          "rank": 33,
+          "ticker": "7267",
+          "company_name": "ホンダ",
+          "market": "東証PRM",
+          "display_value": "15,323,700",
+          "source_url": "https://finance.yahoo.co.jp/quote/7267.T"
+        },
+        {
+          "rank": 34,
+          "ticker": "4901",
+          "company_name": "富士フイルムホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "15,271,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/4901.T"
+        },
+        {
+          "rank": 35,
+          "ticker": "7012",
+          "company_name": "川崎重工業(株)",
+          "market": "東証PRM",
+          "display_value": "15,099,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/7012.T"
+        },
+        {
+          "rank": 36,
+          "ticker": "6740",
+          "company_name": "(株)ジャパンディスプレイ",
+          "market": "東証PRM",
+          "display_value": "14,882,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/6740.T"
+        },
+        {
+          "rank": 37,
+          "ticker": "9433",
+          "company_name": "ＫＤＤＩ(株)",
+          "market": "東証PRM",
+          "display_value": "14,660,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/9433.T"
+        },
+        {
+          "rank": 38,
+          "ticker": "3436",
+          "company_name": "(株)ＳＵＭＣＯ",
+          "market": "東証PRM",
+          "display_value": "13,848,700",
+          "source_url": "https://finance.yahoo.co.jp/quote/3436.T"
+        },
+        {
+          "rank": 39,
+          "ticker": "7011",
+          "company_name": "三菱重工業(株)",
+          "market": "東証PRM",
+          "display_value": "13,526,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/7011.T"
+        },
+        {
+          "rank": 40,
+          "ticker": "4680",
+          "company_name": "(株)ラウンドワン",
+          "market": "東証PRM",
+          "display_value": "13,487,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/4680.T"
+        },
+        {
+          "rank": 41,
+          "ticker": "7013",
+          "company_name": "(株)ＩＨＩ",
+          "market": "東証PRM",
+          "display_value": "12,770,100",
+          "source_url": "https://finance.yahoo.co.jp/quote/7013.T"
+        },
+        {
+          "rank": 42,
+          "ticker": "5020",
+          "company_name": "ＥＮＥＯＳホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "12,284,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/5020.T"
+        },
+        {
+          "rank": 43,
+          "ticker": "5713",
+          "company_name": "住友金属鉱山(株)",
+          "market": "東証PRM",
+          "display_value": "12,102,400",
+          "source_url": "https://finance.yahoo.co.jp/quote/5713.T"
+        },
+        {
+          "rank": 44,
+          "ticker": "6869",
+          "company_name": "シスメックス(株)",
+          "market": "東証PRM",
+          "display_value": "11,975,300",
+          "source_url": "https://finance.yahoo.co.jp/quote/6869.T"
+        },
+        {
+          "rank": 45,
+          "ticker": "1579",
+          "company_name": "日経平均ブル2倍上場投信",
+          "market": "東証ETF",
+          "display_value": "11,826,530",
+          "source_url": "https://finance.yahoo.co.jp/quote/1579.T"
+        },
+        {
+          "rank": 46,
+          "ticker": "6501",
+          "company_name": "(株)日立製作所",
+          "market": "東証PRM",
+          "display_value": "11,815,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/6501.T"
+        },
+        {
+          "rank": 47,
+          "ticker": "7272",
+          "company_name": "ヤマハ発動機(株)",
+          "market": "東証PRM",
+          "display_value": "11,323,200",
+          "source_url": "https://finance.yahoo.co.jp/quote/7272.T"
+        },
+        {
+          "rank": 48,
+          "ticker": "8410",
+          "company_name": "(株)セブン銀行",
+          "market": "東証PRM",
+          "display_value": "11,250,900",
+          "source_url": "https://finance.yahoo.co.jp/quote/8410.T"
+        },
+        {
+          "rank": 49,
+          "ticker": "8593",
+          "company_name": "三菱ＨＣキャピタル(株)",
+          "market": "東証PRM",
+          "display_value": "11,075,800",
+          "source_url": "https://finance.yahoo.co.jp/quote/8593.T"
+        },
+        {
+          "rank": 50,
+          "ticker": "4005",
+          "company_name": "住友化学(株)",
+          "market": "東証PRM",
+          "display_value": "11,050,000",
+          "source_url": "https://finance.yahoo.co.jp/quote/4005.T"
+        }
+      ],
+      "result_count": 50,
+      "notes": [
+        "Yahoo volume ranking rows 1-50, page update time 2026/08/10 18:40."
+      ]
+    },
+    {
+      "attempt_id": "att_yahoo_gain_ranking_20260812_001",
+      "source_id": "YAHOO_JP_GAIN_RANKING",
+      "source_role": "PRIMARY",
+      "criticality": "DISCOVERY_CRITICAL",
+      "information_type": "PRICE_GAIN_RANKING",
+      "candidate_code": null,
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T12:57:37+09:00",
+      "retrieved_at": "2026-08-11T12:57:37+09:00",
+      "url": "https://finance.yahoo.co.jp/stocks/ranking/up?market=all",
+      "source_page_path": "source_pages/yahoo_gain_ranking.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": [
+        {
+          "rank": 1,
+          "ticker": "4937",
+          "company_name": "(株)Ｗａｑｏｏ",
+          "market": "東証GRT",
+          "display_value": "+25.51",
+          "source_url": "https://finance.yahoo.co.jp/quote/4937.T"
+        },
+        {
+          "rank": 2,
+          "ticker": "6570",
+          "company_name": "(株)共和コーポレーション",
+          "market": "東証STD",
+          "display_value": "+23.79",
+          "source_url": "https://finance.yahoo.co.jp/quote/6570.T"
+        },
+        {
+          "rank": 3,
+          "ticker": "6138",
+          "company_name": "ダイジェット工業(株)",
+          "market": "東証STD",
+          "display_value": "+23.58",
+          "source_url": "https://finance.yahoo.co.jp/quote/6138.T"
+        },
+        {
+          "rank": 4,
+          "ticker": "6098",
+          "company_name": "(株)リクルートホールディングス",
+          "market": "東証PRM",
+          "display_value": "+22.79",
+          "source_url": "https://finance.yahoo.co.jp/quote/6098.T"
+        },
+        {
+          "rank": 5,
+          "ticker": "6258",
+          "company_name": "平田機工(株)",
+          "market": "東証PRM",
+          "display_value": "+22.12",
+          "source_url": "https://finance.yahoo.co.jp/quote/6258.T"
+        },
+        {
+          "rank": 6,
+          "ticker": "2146",
+          "company_name": "ＵＴグループ(株)",
+          "market": "東証PRM",
+          "display_value": "+20.77",
+          "source_url": "https://finance.yahoo.co.jp/quote/2146.T"
+        },
+        {
+          "rank": 7,
+          "ticker": "5985",
+          "company_name": "サンコール(株)",
+          "market": "東証STD",
+          "display_value": "+20.69",
+          "source_url": "https://finance.yahoo.co.jp/quote/5985.T"
+        },
+        {
+          "rank": 8,
+          "ticker": "8783",
+          "company_name": "ａｂｃ(株)",
+          "market": "東証STD",
+          "display_value": "+20.34",
+          "source_url": "https://finance.yahoo.co.jp/quote/8783.T"
+        },
+        {
+          "rank": 9,
+          "ticker": "3374",
+          "company_name": "内外テック(株)",
+          "market": "東証STD",
+          "display_value": "+19.94",
+          "source_url": "https://finance.yahoo.co.jp/quote/3374.T"
+        },
+        {
+          "rank": 10,
+          "ticker": "6869",
+          "company_name": "シスメックス(株)",
+          "market": "東証PRM",
+          "display_value": "+19.89",
+          "source_url": "https://finance.yahoo.co.jp/quote/6869.T"
+        },
+        {
+          "rank": 11,
+          "ticker": "6928",
+          "company_name": "(株)エノモト",
+          "market": "東証STD",
+          "display_value": "+19.59",
+          "source_url": "https://finance.yahoo.co.jp/quote/6928.T"
+        },
+        {
+          "rank": 12,
+          "ticker": "4052",
+          "company_name": "フィーチャ(株)",
+          "market": "東証GRT",
+          "display_value": "+18.76",
+          "source_url": "https://finance.yahoo.co.jp/quote/4052.T"
+        },
+        {
+          "rank": 13,
+          "ticker": "4406",
+          "company_name": "新日本理化(株)",
+          "market": "東証STD",
+          "display_value": "+18.66",
+          "source_url": "https://finance.yahoo.co.jp/quote/4406.T"
+        },
+        {
+          "rank": 14,
+          "ticker": "7567",
+          "company_name": "(株)栄電子",
+          "market": "東証STD",
+          "display_value": "+17.67",
+          "source_url": "https://finance.yahoo.co.jp/quote/7567.T"
+        },
+        {
+          "rank": 15,
+          "ticker": "7456",
+          "company_name": "松田産業(株)",
+          "market": "東証PRM",
+          "display_value": "+17.09",
+          "source_url": "https://finance.yahoo.co.jp/quote/7456.T"
+        },
+        {
+          "rank": 16,
+          "ticker": "4169",
+          "company_name": "ＥＮＥＣＨＡＮＧＥ(株)",
+          "market": "東証GRT",
+          "display_value": "+16.87",
+          "source_url": "https://finance.yahoo.co.jp/quote/4169.T"
+        },
+        {
+          "rank": 17,
+          "ticker": "3676",
+          "company_name": "(株)デジタルハーツホールディングス",
+          "market": "東証PRM",
+          "display_value": "+16.61",
+          "source_url": "https://finance.yahoo.co.jp/quote/3676.T"
+        },
+        {
+          "rank": 18,
+          "ticker": "3753",
+          "company_name": "(株)フライトソリューションズ",
+          "market": "東証STD",
+          "display_value": "+16.58",
+          "source_url": "https://finance.yahoo.co.jp/quote/3753.T"
+        },
+        {
+          "rank": 19,
+          "ticker": "8050",
+          "company_name": "セイコーグループ(株)",
+          "market": "東証PRM",
+          "display_value": "+16.36",
+          "source_url": "https://finance.yahoo.co.jp/quote/8050.T"
+        },
+        {
+          "rank": 20,
+          "ticker": "3103",
+          "company_name": "ユニチカ(株)",
+          "market": "東証STD",
+          "display_value": "+16.34",
+          "source_url": "https://finance.yahoo.co.jp/quote/3103.T"
+        },
+        {
+          "rank": 21,
+          "ticker": "6743",
+          "company_name": "大同信号(株)",
+          "market": "東証STD",
+          "display_value": "+16.32",
+          "source_url": "https://finance.yahoo.co.jp/quote/6743.T"
+        },
+        {
+          "rank": 22,
+          "ticker": "6072",
+          "company_name": "地盤ネットホールディングス(株)",
+          "market": "東証STD",
+          "display_value": "+16.23",
+          "source_url": "https://finance.yahoo.co.jp/quote/6072.T"
+        },
+        {
+          "rank": 23,
+          "ticker": "3422",
+          "company_name": "(株)Ｊ－ＭＡＸ",
+          "market": "東証STD",
+          "display_value": "+16.09",
+          "source_url": "https://finance.yahoo.co.jp/quote/3422.T"
+        },
+        {
+          "rank": 24,
+          "ticker": "3156",
+          "company_name": "(株)レスター",
+          "market": "東証PRM",
+          "display_value": "+15.97",
+          "source_url": "https://finance.yahoo.co.jp/quote/3156.T"
+        },
+        {
+          "rank": 25,
+          "ticker": "3277",
+          "company_name": "(株)サンセイランディック",
+          "market": "東証STD",
+          "display_value": "+15.90",
+          "source_url": "https://finance.yahoo.co.jp/quote/3277.T"
+        },
+        {
+          "rank": 26,
+          "ticker": "3131",
+          "company_name": "シンデン・ハイテックス(株)",
+          "market": "東証STD",
+          "display_value": "+15.82",
+          "source_url": "https://finance.yahoo.co.jp/quote/3131.T"
+        },
+        {
+          "rank": 27,
+          "ticker": "3034",
+          "company_name": "クオールホールディングス(株)",
+          "market": "東証PRM",
+          "display_value": "+15.52",
+          "source_url": "https://finance.yahoo.co.jp/quote/3034.T"
+        },
+        {
+          "rank": 28,
+          "ticker": "8995",
+          "company_name": "(株)誠建設工業",
+          "market": "東証STD",
+          "display_value": "+15.21",
+          "source_url": "https://finance.yahoo.co.jp/quote/8995.T"
+        },
+        {
+          "rank": 29,
+          "ticker": "4631",
+          "company_name": "ＤＩＣ(株)",
+          "market": "東証PRM",
+          "display_value": "+14.96",
+          "source_url": "https://finance.yahoo.co.jp/quote/4631.T"
+        },
+        {
+          "rank": 30,
+          "ticker": "7358",
+          "company_name": "(株)ポピンズ",
+          "market": "東証STD",
+          "display_value": "+14.66",
+          "source_url": "https://finance.yahoo.co.jp/quote/7358.T"
+        },
+        {
+          "rank": 31,
+          "ticker": "4125",
+          "company_name": "三和油化工業(株)",
+          "market": "東証STD",
+          "display_value": "+14.35",
+          "source_url": "https://finance.yahoo.co.jp/quote/4125.T"
+        },
+        {
+          "rank": 32,
+          "ticker": "5724",
+          "company_name": "(株)アサカ理研",
+          "market": "東証STD",
+          "display_value": "+13.50",
+          "source_url": "https://finance.yahoo.co.jp/quote/5724.T"
+        },
+        {
+          "rank": 33,
+          "ticker": "2477",
+          "company_name": "手間いらず(株)",
+          "market": "東証STD",
+          "display_value": "+13.49",
+          "source_url": "https://finance.yahoo.co.jp/quote/2477.T"
+        },
+        {
+          "rank": 34,
+          "ticker": "3926",
+          "company_name": "(株)オープンドア",
+          "market": "東証STD",
+          "display_value": "+13.08",
+          "source_url": "https://finance.yahoo.co.jp/quote/3926.T"
+        },
+        {
+          "rank": 35,
+          "ticker": "4813",
+          "company_name": "(株)ＡＣＣＥＳＳ",
+          "market": "東証PRM",
+          "display_value": "+12.60",
+          "source_url": "https://finance.yahoo.co.jp/quote/4813.T"
+        },
+        {
+          "rank": 36,
+          "ticker": "4046",
+          "company_name": "(株)大阪ソーダ",
+          "market": "東証PRM",
+          "display_value": "+12.53",
+          "source_url": "https://finance.yahoo.co.jp/quote/4046.T"
+        },
+        {
+          "rank": 37,
+          "ticker": "6613",
+          "company_name": "(株)ＱＤレーザ",
+          "market": "東証GRT",
+          "display_value": "+12.39",
+          "source_url": "https://finance.yahoo.co.jp/quote/6613.T"
+        },
+        {
+          "rank": 38,
+          "ticker": "4360",
+          "company_name": "(株)マナック・ケミカル・パートナーズ",
+          "market": "東証STD",
+          "display_value": "+11.95",
+          "source_url": "https://finance.yahoo.co.jp/quote/4360.T"
+        },
+        {
+          "rank": 39,
+          "ticker": "5713",
+          "company_name": "住友金属鉱山(株)",
+          "market": "東証PRM",
+          "display_value": "+11.85",
+          "source_url": "https://finance.yahoo.co.jp/quote/5713.T"
+        },
+        {
+          "rank": 40,
+          "ticker": "7244",
+          "company_name": "市光工業(株)",
+          "market": "東証PRM",
+          "display_value": "+11.74",
+          "source_url": "https://finance.yahoo.co.jp/quote/7244.T"
+        },
+        {
+          "rank": 41,
+          "ticker": "6969",
+          "company_name": "松尾電機(株)",
+          "market": "東証STD",
+          "display_value": "+11.71",
+          "source_url": "https://finance.yahoo.co.jp/quote/6969.T"
+        },
+        {
+          "rank": 42,
+          "ticker": "6425",
+          "company_name": "(株)ユニバーサルエンターテインメント",
+          "market": "東証STD",
+          "display_value": "+11.58",
+          "source_url": "https://finance.yahoo.co.jp/quote/6425.T"
+        },
+        {
+          "rank": 43,
+          "ticker": "6167",
+          "company_name": "冨士ダイス(株)",
+          "market": "東証PRM",
+          "display_value": "+11.36",
+          "source_url": "https://finance.yahoo.co.jp/quote/6167.T"
+        },
+        {
+          "rank": 44,
+          "ticker": "6330",
+          "company_name": "東洋エンジニアリング(株)",
+          "market": "東証PRM",
+          "display_value": "+11.05",
+          "source_url": "https://finance.yahoo.co.jp/quote/6330.T"
+        },
+        {
+          "rank": 45,
+          "ticker": "3323",
+          "company_name": "レカム(株)",
+          "market": "東証STD",
+          "display_value": "+10.81",
+          "source_url": "https://finance.yahoo.co.jp/quote/3323.T"
+        },
+        {
+          "rank": 46,
+          "ticker": "581A",
+          "company_name": "ＧＯ(株)",
+          "market": "東証GRT",
+          "display_value": "+10.79",
+          "source_url": "https://finance.yahoo.co.jp/quote/581A.T"
+        },
+        {
+          "rank": 47,
+          "ticker": "7550",
+          "company_name": "(株)ゼンショーホールディングス",
+          "market": "東証PRM",
+          "display_value": "+10.69",
+          "source_url": "https://finance.yahoo.co.jp/quote/7550.T"
+        },
+        {
+          "rank": 48,
+          "ticker": "6239",
+          "company_name": "(株)ナガオカ",
+          "market": "東証STD",
+          "display_value": "+10.53",
+          "source_url": "https://finance.yahoo.co.jp/quote/6239.T"
+        },
+        {
+          "rank": 49,
+          "ticker": "6444",
+          "company_name": "サンデン(株)",
+          "market": "東証STD",
+          "display_value": "+10.37",
+          "source_url": "https://finance.yahoo.co.jp/quote/6444.T"
+        },
+        {
+          "rank": 50,
+          "ticker": "6836",
+          "company_name": "ぷらっとホーム(株)",
+          "market": "東証STD",
+          "display_value": "+10.34",
+          "source_url": "https://finance.yahoo.co.jp/quote/6836.T"
+        }
+      ],
+      "result_count": 50,
+      "notes": [
+        "Yahoo gain ranking rows 1-50, page update time 2026/08/10 18:40."
+      ]
+    },
+    {
+      "attempt_id": "att_yahoo_history_9432_20260812_001",
+      "source_id": "YAHOO_JP_HISTORY",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "OHLCV",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:05:29+09:00",
+      "retrieved_at": "2026-08-11T13:05:29+09:00",
+      "url": "https://finance.yahoo.co.jp/quote/9432.T/history",
+      "source_page_path": "source_pages/yahoo_9432_history.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "trading_date": "2026-08-10",
+        "open": "157.9",
+        "high": "159.9",
+        "low": "157.0",
+        "close": "159.9",
+        "volume": 227940200,
+        "previous_close": "159.9",
+        "previous_high": "159.9"
+      },
+      "result_count": 1,
+      "notes": [
+        "Used 2026/8/10 history row."
+      ]
+    },
+    {
+      "attempt_id": "att_kabutan_history_9432_20260812_001",
+      "source_id": "KABUTAN_HISTORY",
+      "source_role": "SECONDARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "OHLCV",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:05:08+09:00",
+      "retrieved_at": "2026-08-11T13:05:08+09:00",
+      "url": "https://kabutan.jp/stock/kabuka?code=9432",
+      "source_page_path": "source_pages/kabutan_9432_history.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "trading_date": "2026-08-10",
+        "open": "157.9",
+        "high": "159.9",
+        "low": "157.0",
+        "close": "159.9",
+        "volume": 227940200,
+        "previous_close": "159.9",
+        "previous_high": "159.9"
+      },
+      "result_count": 1,
+      "notes": [
+        "Used 2026-08-10 daily row from Source Matrix Kabutan URL. Values match Yahoo."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_listed_9432_20260812_001",
+      "source_id": "JPX_LISTED_COMPANY",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "LISTED_COMPANY",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:05:48+09:00",
+      "retrieved_at": "2026-08-11T13:05:48+09:00",
+      "url": "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=&topSearchStr=9432",
+      "source_page_path": "source_pages/jpx_listed_company_9432.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "code": "94320",
+        "company_name": "ＮＴＴ",
+        "market": "プライム"
+      },
+      "result_count": 1,
+      "notes": [
+        "JPX listed company search evidence page saved."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_trading_unit_9432_20260812_001",
+      "source_id": "JPX_LISTED_COMPANY",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "LISTED_COMPANY",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:08:09+09:00",
+      "retrieved_at": "2026-08-11T13:08:09+09:00",
+      "url": "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+      "source_page_path": "source_pages/jpx_trading_unit.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "security_type": "domestic stock",
+        "share_unit": 100
+      },
+      "result_count": 1,
+      "notes": [
+        "JPX trading unit page states domestic stocks trade in units of 100 shares."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_listed_audit_9432_20260812_001",
+      "source_id": "JPX_LISTED_COMPANY_AUDIT",
+      "source_role": "AUDIT",
+      "criticality": "CONTEXT",
+      "information_type": "LISTED_COMPANY",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T12:54:01+09:00",
+      "retrieved_at": "2026-08-11T12:54:01+09:00",
+      "url": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
+      "source_page_path": "source_pages/jpx_listed_issues_202607.xls",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "security_type": "Prime domestic stock",
+        "topix_scale_category": "TOPIX Core30"
+      },
+      "result_count": 1,
+      "notes": [
+        "JPX listed issues July 2026 Excel checked for 9432."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_tick_size_9432_20260812_001",
+      "source_id": "JPX_TICK_SIZE",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "TICK_SIZE",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:06:07+09:00",
+      "retrieved_at": "2026-08-11T13:06:07+09:00",
+      "url": "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+      "source_page_path": "source_pages/jpx_tick_size.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "price_range": "<=1000",
+        "topix_scale_category": "TOPIX Core30",
+        "tick_size": "0.1"
+      },
+      "result_count": 1,
+      "notes": [
+        "JPX tick size table plus JPX listed issues TOPIX Core30 category imply 0.1 yen tick for 9432 at this price."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_calendar_20260812_001",
+      "source_id": "JPX_CALENDAR",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "TRADING_CALENDAR",
+      "candidate_code": null,
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:26:49+09:00",
+      "retrieved_at": "2026-08-11T13:26:49+09:00",
+      "url": "https://www.jpx.co.jp/corporate/about-jpx/calendar/",
+      "source_page_path": "source_pages/jpx_calendar.html",
+      "cache_status": "MISS",
+      "status": "FOUND",
+      "values": {
+        "target_date": "2026-08-12",
+        "previous_trading_day": "2026-08-10",
+        "holiday_between": "2026-08-11"
+      },
+      "result_count": 1,
+      "notes": [
+        "JPX calendar confirms 2026-08-11 is a holiday; run uses 2026-08-12 target and 2026-08-10 previous trading day."
+      ]
+    },
+    {
+      "attempt_id": "att_jpx_topix500_9432_20260812_001",
+      "source_id": "JPX_TOPIX500",
+      "source_role": "PRIMARY",
+      "criticality": "TRADE_CRITICAL",
+      "information_type": "TOPIX500_MEMBERSHIP",
+      "candidate_code": "9432",
+      "target_date": "2026-08-12",
+      "research_cutoff": "2026-08-10T20:00:00+09:00",
+      "requested_at": "2026-08-11T13:27:42+09:00",
+      "retrieved_at": null,
+      "url": "https://www.jpx.co.jp/markets/indices/topix/",
+      "cache_status": "NOT_CACHEABLE",
+      "status": "STALE",
+      "values": null,
+      "result_count": null,
+      "notes": [
+        "Current ticker-specific JPX_TOPIX500 primary evidence was not adopted. Tick-size classification for 9432 relies only on JPX listed-issues audit field TOPIX Core30, so trade-critical tick_size remains SINGLE_SOURCE_ONLY."
+      ]
+    }
+  ]
+}

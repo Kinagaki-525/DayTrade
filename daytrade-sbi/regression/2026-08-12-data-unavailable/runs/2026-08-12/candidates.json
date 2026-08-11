@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-12",
+  "generated_at": "2026-08-11T04:28:30.895994+00:00",
+  "strategy_version": "v1",
+  "config_sha256": "5c7f803bf4da07155165b3b1f9075e577746280aa886f2b3d1348643c0b38d82",
+  "candidates": [
+    {
+      "ticker": "9432",
+      "status": "DATA_UNAVAILABLE",
+      "reasons": [
+        "Market data status is not verified: SINGLE_SOURCE_ONLY"
+      ],
+      "unresolved_screening": [
+        "minimum_volume",
+        "minimum_turnover",
+        "minimum_price",
+        "maximum_price",
+        "maximum_spread",
+        "minimum_daily_range",
+        "maximum_gap_percent",
+        "exclude_earnings",
+        "exclude_special_disclosures"
+      ],
+      "order_plan": null
+    }
+  ]
+}
