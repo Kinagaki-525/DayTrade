@@ -30,15 +30,6 @@ def market_research_payload():
         "discovery": [
             discovery_route("VOLUME_RANKING", "YAHOO_JP_VOLUME_RANKING", "volume"),
             discovery_route("PRICE_GAIN_RANKING", "YAHOO_JP_GAIN_RANKING", "gain"),
-            {
-                "discovery_type": "TIMELY_DISCLOSURE",
-                "source_id": "JPX_TDNET",
-                "status": "FOUND",
-                "source_url": "https://example.test/tdnet",
-                "retrieved_at": "2026-08-07T20:15:00+09:00",
-                "result_count": 0,
-                "items": [],
-            },
         ],
         "discovery_candidates": [],
         "candidate_research": [],
@@ -52,6 +43,7 @@ def complete_candidate_research(payload):
             "ticker": candidate["ticker"],
             "data_status": "VERIFIED",
             "status_reasons": [],
+            "universe_status": "PASSED",
             "source_policy_status": "FOUND",
         }
         for candidate in payload["discovery_candidates"]
@@ -87,13 +79,49 @@ def discovery_route(discovery_type, source_id, value_label):
     }
 
 
-def test_market_research_accepts_top50_and_tdnet_zero_results():
+def test_market_research_accepts_two_yahoo_top50_routes():
     payload = complete_candidate_research(market_research_payload())
 
     result = validate_market_research(payload, load_source_matrix())
 
     assert result.valid is True
     assert result.discovery_complete is True
+
+
+def test_market_research_accepts_100_candidates_from_two_yahoo_routes():
+    payload = market_research_payload()
+    gain_route = payload["discovery"][1]
+    for index, item in enumerate(gain_route["items"]):
+        ticker = f"{2000 + index}"
+        item["ticker"] = ticker
+        item["company_name"] = f"Example {ticker}"
+        item["source_url"] = f"https://example.test/yahoo_jp_gain_ranking/{ticker}"
+    payload = complete_candidate_research(payload)
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is True
+    assert len(payload["discovery_candidates"]) == 100
+
+
+def test_market_research_rejects_tdnet_discovery_route():
+    payload = market_research_payload()
+    payload["discovery"].append(
+        {
+            "discovery_type": "TIMELY_DISCLOSURE",
+            "source_id": "JPX_TDNET",
+            "status": "FOUND",
+            "source_url": "https://example.test/tdnet",
+            "retrieved_at": "2026-08-07T20:15:00+09:00",
+            "result_count": 0,
+            "items": [],
+        }
+    )
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("TIMELY_DISCLOSURE" in error for error in result.errors)
 
 
 def test_market_research_rejects_missing_research_window():
@@ -251,6 +279,7 @@ def test_market_research_rejects_candidate_research_outside_discovery():
             "ticker": "9999",
             "data_status": "VERIFIED",
             "status_reasons": [],
+            "universe_status": "PASSED",
             "source_policy_status": "FOUND",
         }
     )
@@ -259,6 +288,286 @@ def test_market_research_rejects_candidate_research_outside_discovery():
 
     assert result.valid is False
     assert any("outside Discovery candidates" in error for error in result.errors)
+
+
+def test_market_research_rejects_stage1_reject_without_source_backed_check():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": [],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("source-backed stage1_checks" in error for error in result.errors)
+
+
+def test_market_research_rejects_stage1_reject_with_unrecorded_source_ref():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {"sources": [], "source_attempts": []},
+    )
+
+    assert result.valid is False
+    assert any("source-backed stage1_checks" in error for error in result.errors)
+
+
+def test_market_research_accepts_source_backed_stage1_reject():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "reason_codes": ["SHARE_UNIT_NOT_100"],
+            "missing_requirements": [],
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is True
+
+
+def test_market_research_accepts_generic_capital_limit_stage1_reject():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "reason_codes": ["CAPITAL_LIMIT_EXCEEDED"],
+            "missing_requirements": [],
+            "stage1_checks": [
+                {
+                    "check_id": "capital_limit",
+                    "status": "REJECTED",
+                    "reason_code": "CAPITAL_LIMIT_EXCEEDED",
+                    "source_refs": ["YAHOO_JP_HISTORY:1000:previous_high"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "YAHOO_JP_HISTORY:1000:previous_high",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is True
+
+
+def test_market_research_rejects_unapproved_stage1_check_id():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "low_volume",
+                    "status": "REJECTED",
+                    "reason_code": "LOW_VOLUME",
+                    "source_refs": ["YAHOO_JP_HISTORY:1000:volume"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "YAHOO_JP_HISTORY:1000:volume",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is False
+    assert any("unapproved Stage 1 check_id" in error for error in result.errors)
+
+
+def test_market_research_rejects_unapproved_stage1_reason_code():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "LOW_VOLUME",
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is False
+    assert any("unapproved Stage 1 reason_code" in error for error in result.errors)
+
+
+def test_market_research_rejects_stage1_reject_without_reason_code():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": None,
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is False
+    assert any("without reason_code" in error for error in result.errors)
+
+
+def test_market_research_rejects_stage2_after_stage1_reject():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "REJECTED",
+            "stage2_status": "COMPLETE",
+            "context_research_status": "SKIPPED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+
+    result = validate_market_research(
+        payload,
+        load_source_matrix(),
+        {
+            "sources": [
+                {
+                    "source_ref": "JPX_LISTED_COMPANY:1000:share_unit",
+                }
+            ],
+            "source_attempts": [],
+        },
+    )
+
+    assert result.valid is False
+    assert any("stage1_status=REJECTED" in error for error in result.errors)
+
+
+def test_market_research_rejects_stage2_without_stage1_pass():
+    payload = complete_candidate_research(market_research_payload())
+    payload["candidate_research"][0].update(
+        {
+            "universe_status": "PASSED",
+            "stage1_status": "NOT_STARTED",
+            "stage2_status": "COMPLETE",
+        }
+    )
+
+    result = validate_market_research(payload, load_source_matrix())
+
+    assert result.valid is False
+    assert any("before stage1_status=PASSED" in error for error in result.errors)
 
 
 def test_market_research_rejects_missing_candidate_research():
@@ -289,6 +598,7 @@ def test_market_data_research_alignment_requires_matching_statuses():
             "ticker": "1234",
             "data_status": "DATA_UNAVAILABLE",
             "status_reasons": ["missing secondary source"],
+            "universe_status": "PASSED",
             "source_policy_status": "SINGLE_SOURCE_ONLY",
         }
     ]

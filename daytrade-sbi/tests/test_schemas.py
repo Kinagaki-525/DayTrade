@@ -30,6 +30,7 @@ def recommendation_payload(decision="TRADE"):
         "decision": decision,
         "selection_reasons": ["confirmed comparison"],
         "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
         "pipeline_summary": {
             "discovered": 1,
             "research_complete": 1,
@@ -80,6 +81,14 @@ def test_recommendation_schema_rejects_order_values_for_no_trade():
     payload["entry_limit"] = "402"
 
     with pytest.raises(ValueError, match="recommendation.schema.json"):
+        validate_json_document(payload, "recommendation.schema.json")
+
+
+def test_recommendation_schema_requires_post_cutoff_status():
+    payload = recommendation_payload("TRADE")
+    del payload["post_cutoff_information_status"]
+
+    with pytest.raises(ValueError, match="post_cutoff_information_status"):
         validate_json_document(payload, "recommendation.schema.json")
 
 
@@ -151,10 +160,10 @@ def test_sources_schema_rejects_parse_failed_result_count_zero():
                     {
                         "attempt_id": "tdnet-parse-failed",
                         "source_id": "JPX_TDNET",
-                        "source_role": "PRIMARY",
-                        "criticality": "DISCOVERY_CRITICAL",
+                        "source_role": "CONTEXT",
+                        "criticality": "CONTEXT",
                         "information_type": "TIMELY_DISCLOSURE",
-                        "candidate_code": None,
+                        "candidate_code": "1234",
                         "target_date": "2026-08-10",
                         "research_cutoff": "2026-08-07T20:00:00+09:00",
                         "requested_at": "2026-08-07T20:01:00+09:00",
@@ -170,6 +179,35 @@ def test_sources_schema_rejects_parse_failed_result_count_zero():
         )
 
 
+def test_sources_schema_accepts_found_result_count_zero():
+    validate_json_document(
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "sources": [],
+            "source_attempts": [
+                {
+                    "attempt_id": "tdnet-empty",
+                    "source_id": "JPX_TDNET",
+                    "source_role": "CONTEXT",
+                    "criticality": "CONTEXT",
+                    "information_type": "TIMELY_DISCLOSURE",
+                    "candidate_code": "1234",
+                    "target_date": "2026-08-10",
+                    "research_cutoff": "2026-08-07T20:00:00+09:00",
+                    "requested_at": "2026-08-07T20:01:00+09:00",
+                    "retrieved_at": "2026-08-07T20:02:00+09:00",
+                    "url": "https://example.test/tdnet",
+                    "status": "FOUND",
+                    "values": [],
+                    "result_count": 0,
+                }
+            ],
+        },
+        "sources.schema.json",
+    )
+
+
 def test_sources_schema_requires_attempt_id():
     with pytest.raises(ValueError, match="attempt_id"):
         validate_json_document(
@@ -180,10 +218,10 @@ def test_sources_schema_requires_attempt_id():
                 "source_attempts": [
                     {
                         "source_id": "JPX_TDNET",
-                        "source_role": "PRIMARY",
-                        "criticality": "DISCOVERY_CRITICAL",
+                        "source_role": "CONTEXT",
+                        "criticality": "CONTEXT",
                         "information_type": "TIMELY_DISCLOSURE",
-                        "candidate_code": None,
+                        "candidate_code": "1234",
                         "target_date": "2026-08-10",
                         "research_cutoff": "2026-08-07T20:00:00+09:00",
                         "requested_at": "2026-08-07T20:01:00+09:00",

@@ -6,6 +6,14 @@ from typing import Any, Iterable
 
 from src.config import strategy_config_sha256
 from src.market import MarketDataRecord
+from src.stage1 import (
+    rejected_stage1_check_ids,
+    source_attempt_ids_from_payload,
+    source_backed_stage1_reject,
+    source_refs_from_payload,
+    stage1_contract_errors,
+    stage1_reject_evidence_error,
+)
 
 
 PIPELINE_STATUSES = (
@@ -50,6 +58,8 @@ def build_candidate_pipeline(
     }
     source_attempts = source_payload.get("source_attempts", [])
     sources = source_payload.get("sources", [])
+    valid_source_refs = source_refs_from_payload(source_payload)
+    valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
 
     pipeline_candidates = []
     for discovery_candidate in market_research.get("discovery_candidates", []):
@@ -57,11 +67,27 @@ def build_candidate_pipeline(
         research = research_by_ticker.get(ticker)
         screening = screening_by_ticker.get(ticker)
         record = records_by_ticker.get(ticker)
-        status = _pipeline_status(research, screening)
+        if research is not None:
+            contract_errors = stage1_contract_errors(research)
+            if contract_errors:
+                raise ValueError(contract_errors[0])
+            evidence_error = stage1_reject_evidence_error(
+                research,
+                valid_source_refs=valid_source_refs,
+                valid_source_attempt_ids=valid_source_attempt_ids,
+            )
+            if evidence_error is not None:
+                raise ValueError(evidence_error)
+        status = _pipeline_status(
+            research,
+            screening,
+            valid_source_refs=valid_source_refs,
+            valid_source_attempt_ids=valid_source_attempt_ids,
+        )
         reasons = _status_reasons(research, screening)
         missing = _missing_requirements(status, research, record, reasons)
         source_attempt_ids = _source_attempt_ids(ticker, research, source_attempts)
-        source_refs = _source_refs(ticker, sources, record)
+        source_refs = _source_refs(ticker, sources, record, research)
         pipeline_candidates.append(
             {
                 "ticker": ticker,
@@ -69,10 +95,16 @@ def build_candidate_pipeline(
                 "market": discovery_candidate.get("market"),
                 "discovery_reasons": discovery_candidate["discovery_reasons"],
                 "pipeline_status": status,
-                "reason_codes": _reason_codes(status, reasons, missing),
+                "reason_codes": _reason_codes(status, reasons, missing, research),
                 "missing_requirements": missing,
                 "completed_checks": _completed_checks(research, record, screening),
-                "failed_checks": _failed_checks(status, missing),
+                "failed_checks": _failed_checks(
+                    status,
+                    missing,
+                    research,
+                    valid_source_refs=valid_source_refs,
+                    valid_source_attempt_ids=valid_source_attempt_ids,
+                ),
                 "source_attempt_ids": source_attempt_ids,
                 "source_refs": source_refs,
             }
@@ -93,6 +125,9 @@ def build_candidate_pipeline(
 def _pipeline_status(
     research: dict[str, Any] | None,
     screening: dict[str, Any] | None,
+    *,
+    valid_source_refs: set[str],
+    valid_source_attempt_ids: set[str],
 ) -> str:
     if screening is not None:
         status = screening["status"]
@@ -102,7 +137,13 @@ def _pipeline_status(
     if research is None:
         return "DISCOVERED"
     if research.get("stage1_status") == "REJECTED":
-        return "REJECTED"
+        if source_backed_stage1_reject(
+            research,
+            valid_source_refs=valid_source_refs,
+            valid_source_attempt_ids=valid_source_attempt_ids,
+        ):
+            return "REJECTED"
+        return "RESEARCH_IN_PROGRESS"
     if "IN_PROGRESS" in {
         research.get("stage1_status"),
         research.get("stage2_status"),
@@ -126,6 +167,11 @@ def _status_reasons(
         reasons.extend(str(reason) for reason in research.get("status_reasons", []))
         reasons.extend(str(reason) for reason in research.get("stage1_reasons", []))
         reasons.extend(str(reason) for reason in research.get("stage2_reasons", []))
+        for check in research.get("stage1_checks", []):
+            if not isinstance(check, dict):
+                continue
+            if check.get("status") == "REJECTED" and check.get("reason_code"):
+                reasons.append(str(check["reason_code"]))
     if screening is not None:
         reasons.extend(str(reason) for reason in screening.get("reasons", []))
     return [reason for reason in reasons if reason.strip()]
@@ -141,7 +187,10 @@ def _missing_requirements(
     if research is None:
         missing.append("candidate_research")
     elif status in {"DATA_UNAVAILABLE", "RESEARCH_IN_PROGRESS"}:
-        missing.extend(_requirements_from_reasons(reasons))
+        explicit_missing = _list_field(research, "missing_requirements")
+        missing.extend(
+            explicit_missing if explicit_missing else _requirements_from_reasons(reasons)
+        )
         if record is None:
             missing.append("market_data")
         source_policy_status = research.get("source_policy_status")
@@ -171,8 +220,22 @@ def _requirements_from_reasons(reasons: list[str]) -> list[str]:
     return requirements or ["trade_critical_data"]
 
 
-def _reason_codes(status: str, reasons: list[str], missing: list[str]) -> list[str]:
-    codes = [_code_from_text(reason) for reason in reasons]
+def _reason_codes(
+    status: str,
+    reasons: list[str],
+    missing: list[str],
+    research: dict[str, Any] | None,
+) -> list[str]:
+    codes = []
+    if research is not None:
+        codes.extend(_list_field(research, "reason_codes"))
+        for check in research.get("stage1_checks", []):
+            if not isinstance(check, dict):
+                continue
+            if check.get("status") == "REJECTED" and check.get("reason_code"):
+                codes.append(str(check["reason_code"]))
+    if not codes:
+        codes = [_code_from_text(reason) for reason in reasons]
     if not codes:
         codes = [f"{item.upper()}_UNAVAILABLE" for item in missing]
     if status == "DISCOVERED":
@@ -187,6 +250,20 @@ def _completed_checks(
 ) -> list[str]:
     checks = ["discovery"]
     if research is not None:
+        if research.get("stage1_status") not in {None, "NOT_STARTED", "SKIPPED"}:
+            checks.append("candidate_stage1")
+        if research.get("stage2_status") in {
+            "IN_PROGRESS",
+            "COMPLETE",
+            "DATA_UNAVAILABLE",
+        }:
+            checks.append("candidate_stage2")
+        if research.get("context_research_status") in {
+            "IN_PROGRESS",
+            "COMPLETE",
+            "DATA_UNAVAILABLE",
+        }:
+            checks.append("context_research")
         checks.append(
             "candidate_research"
             if research.get("data_status") == "VERIFIED"
@@ -199,10 +276,23 @@ def _completed_checks(
     return checks
 
 
-def _failed_checks(status: str, missing: list[str]) -> list[str]:
+def _failed_checks(
+    status: str,
+    missing: list[str],
+    research: dict[str, Any] | None,
+    *,
+    valid_source_refs: set[str],
+    valid_source_attempt_ids: set[str],
+) -> list[str]:
+    failed = rejected_stage1_check_ids(
+        research,
+        valid_source_refs=valid_source_refs,
+        valid_source_attempt_ids=valid_source_attempt_ids,
+    )
     if status not in {"DATA_UNAVAILABLE", "REJECTED", "RESEARCH_IN_PROGRESS"}:
-        return []
-    return [f"missing:{requirement}" for requirement in missing]
+        return failed
+    failed.extend(f"missing:{requirement}" for requirement in missing)
+    return _unique(failed)
 
 
 def _source_attempt_ids(
@@ -213,6 +303,10 @@ def _source_attempt_ids(
     ids: list[str] = []
     if research is not None:
         ids.extend(str(item) for item in research.get("source_attempt_ids", []))
+        for check in research.get("stage1_checks", []):
+            if not isinstance(check, dict):
+                continue
+            ids.extend(str(item) for item in check.get("source_attempt_ids", []))
     for attempt in source_attempts:
         candidate_code = attempt.get("candidate_code")
         if candidate_code not in {ticker, None}:
@@ -234,12 +328,18 @@ def _source_refs(
     ticker: str,
     sources: list[dict[str, Any]],
     record: MarketDataRecord | None,
+    research: dict[str, Any] | None,
 ) -> list[str]:
     refs = [
         str(source["source_ref"])
         for source in sources
         if source.get("ticker") == ticker and source.get("source_ref")
     ]
+    if research is not None:
+        for check in research.get("stage1_checks", []):
+            if not isinstance(check, dict):
+                continue
+            refs.extend(str(item) for item in check.get("source_refs", []))
     if record is not None:
         refs.extend(
             source.source_ref
@@ -247,6 +347,13 @@ def _source_refs(
             if source.source_ref is not None
         )
     return _unique(refs)
+
+
+def _list_field(mapping: dict[str, Any], field_name: str) -> list[str]:
+    value = mapping.get(field_name)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _summary(

@@ -34,11 +34,13 @@
     },
     "discovery": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 2,
+      "maxItems": 2,
       "items": {"$ref": "#/$defs/discoveryRoute"}
     },
     "discovery_candidates": {
       "type": "array",
+      "maxItems": 100,
       "items": {"$ref": "#/$defs/discoveryCandidate"}
     },
     "candidate_research": {
@@ -111,7 +113,7 @@
       ]
     },
     "discoveryType": {
-      "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE"]
+      "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING"]
     },
     "dataStatus": {
       "enum": [
@@ -226,22 +228,69 @@
     },
     "candidateResearch": {
       "type": "object",
-      "required": ["ticker", "data_status", "status_reasons"],
+      "required": ["ticker", "data_status", "status_reasons", "universe_status"],
       "properties": {
         "ticker": {"type": "string", "minLength": 1},
         "data_status": {"$ref": "#/$defs/dataStatus"},
         "status_reasons": {"type": "array", "items": {"type": "string"}},
+        "reason_codes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "missing_requirements": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
         "source_policy_status": {"$ref": "#/$defs/sourceStatus"},
+        "universe_status": {
+          "enum": ["NOT_STARTED", "PASSED", "REJECTED", "DATA_UNAVAILABLE", "SKIPPED"]
+        },
         "stage1_status": {
           "enum": ["NOT_STARTED", "PASSED", "REJECTED", "DATA_UNAVAILABLE", "SKIPPED"]
         },
         "stage1_reasons": {"type": "array", "items": {"type": "string"}},
+        "stage1_checks": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/stage1Check"}
+        },
         "stage2_status": {
           "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE", "SKIPPED"]
         },
         "stage2_reasons": {"type": "array", "items": {"type": "string"}},
         "context_research_status": {
           "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "DATA_UNAVAILABLE", "SKIPPED"]
+        },
+        "source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "stage1Check": {
+      "type": "object",
+      "required": [
+        "check_id",
+        "status",
+        "reason_code",
+        "source_refs",
+        "source_attempt_ids"
+      ],
+      "properties": {
+        "check_id": {"type": "string", "minLength": 1},
+        "status": {
+          "enum": [
+            "NOT_STARTED",
+            "PASSED",
+            "REJECTED",
+            "DATA_UNAVAILABLE",
+            "SKIPPED"
+          ]
+        },
+        "reason_code": {"type": ["string", "null"], "minLength": 1},
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
         },
         "source_attempt_ids": {
           "type": "array",

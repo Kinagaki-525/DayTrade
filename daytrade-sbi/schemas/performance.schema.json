@@ -31,6 +31,7 @@
         "source_request_count": {"type": "integer", "minimum": 0},
         "adopted_source_count": {"type": "integer", "minimum": 0},
         "duplicate_source_request_count": {"type": "integer", "minimum": 0},
+        "cache_hit_count": {"type": "integer", "minimum": 0},
         "discovery_candidate_count": {"type": "integer", "minimum": 0},
         "stage1_candidate_count": {"type": "integer", "minimum": 0},
         "stage1_rejected_count": {"type": "integer", "minimum": 0},

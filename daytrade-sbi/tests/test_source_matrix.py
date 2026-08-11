@@ -13,6 +13,30 @@ def test_default_source_matrix_is_valid():
     assert result.errors == ()
 
 
+def test_tdnet_is_candidate_context_not_discovery_source():
+    payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
+    tdnet = next(
+        source for source in payload["sources"] if source["source_id"] == "JPX_TDNET"
+    )
+
+    assert tdnet["role"] == "CONTEXT"
+    assert tdnet["criticality"] == "CONTEXT"
+
+
+def test_source_matrix_rejects_tdnet_discovery_criticality():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    tdnet = next(
+        source for source in payload["sources"] if source["source_id"] == "JPX_TDNET"
+    )
+    tdnet["role"] = "PRIMARY"
+    tdnet["criticality"] = "DISCOVERY_CRITICAL"
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any("JPX_TDNET must be CONTEXT" in error for error in result.errors)
+
+
 def test_source_matrix_rejects_duplicate_source_id():
     payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
     payload["sources"].append(dict(payload["sources"][0]))

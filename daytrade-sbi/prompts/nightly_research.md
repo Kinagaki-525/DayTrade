@@ -57,14 +57,14 @@ py -B -m src.cli resolve-research-window --target-date <対象日YYYY-MM-DD> --p
 
 ### 1. Market Discovery
 
-- Discovery経路は `VOLUME_RANKING`、`PRICE_GAIN_RANKING`、`TIMELY_DISCLOSURE` の3つだけに限定する。
+- Discovery経路は `VOLUME_RANKING`、`PRICE_GAIN_RANKING` のYahoo!ファイナンス2ランキングだけに限定する。
 - Yahoo!ファイナンスの出来高ランキングTOP50と値上がり率ランキングTOP50は、Universe未確定のため市場フィルタ`ALL_MARKETS`を使用し、実際に使用したフィルタを保存する。
-- TDnetは `resolve-research-window` が出力した `research_window.window_start` から `research_window.window_end` までを確認する。`FIRST_RUN` は設定済みの24時間初回補完期間であり、それだけを理由に `DATA_UNAVAILABLE` にしない。`HISTORY_INVALID` の場合は初回補完せず停止する。
-- Discovery候補を銘柄コード単位でUnionし、`research_window.json`の `research_cutoff` と `research_window`、`discovered_by`、発見理由をすべて`market_research.json`へ保存する。
+- 2ランキングを銘柄コード単位でUnion/Dedupし、Discovery Candidateは最大100銘柄とする。TDnet単独銘柄をDiscovery Candidateへ追加しない。
+- Discovery Candidateには`research_window.json`の `research_cutoff` と `research_window`、`discovered_by`、発見理由をすべて`market_research.json`へ保存する。
 - Discovery順位や表示値は、最終Rankingの評価値として使わない。
 
 ```powershell
-py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --research-window runs/YYYY-MM-DD/research_window.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
+py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
 ```
 
 Candidate Researchが未完了の時点では`overall_status=COMPLETE`にしない。Discovery候補に対応する`candidate_research`が未作成の銘柄は、非完了ステータスでは警告として扱い、後続の`candidate_pipeline.json`で`DISCOVERED`または`RESEARCH_IN_PROGRESS`として追跡する。
@@ -72,10 +72,15 @@ Candidate Researchが未完了の時点では`overall_status=COMPLETE`にしな�
 ### 2. Candidate Research
 
 - Discovery Candidatesについてのみ調査する。Discovery Unionに入った候補は、下流成果物から黙って削除せず、`candidate_pipeline.json`で状態を追跡できるようにする。
+- Discovery後にUniverse判定を行い、`candidate_research[].universe_status`へ保存する。Universe確認に必要な銘柄基本情報はSource Matrix順に保存し、未確認値から除外を推測しない。
 - Candidate Researchはステージ化する。Stage 1では既存条件だけで安全に判定できる軽量確認を行い、確実に既存条件違反と確認できた候補だけをEarly Rejectする。未確認値から`REJECTED`を推測しない。
-- Stage 1を通過した候補だけStage 2の詳細調査へ進める。Stage 2では、銘柄基本情報、前営業日OHLCV、呼値、決算予定、適時開示、関連ニュースをSource Matrix順に確認する。
+- Stage 1では既存Universe条件、100株単位条件、設定済み資金条件など、保存済みSource事実と既存設定だけで判定できる条件に限定する。資金条件は固定金額ではなく、`config.capital.total_yen`と`config.capital.position_size`を使った`capital_limit` / `CAPITAL_LIMIT_EXCEEDED`として記録する。
+- Stage 1で`REJECTED`にする場合は、`candidate_research[].stage1_checks[]`へ`check_id`、`status`、`reason_code`、`source_refs`、`source_attempt_ids`を保存する。`source_refs`は`sources.json`の`source_ref`、`source_attempt_ids`は`source_attempts[].attempt_id`に存在するIDだけを使う。これらの裏付けがないStage 1除外は使用しない。
+- `candidate_research[]`には、可能な限り`reason_codes`と`missing_requirements`を構造化して保存する。これらは人間向け長文理由より優先して`candidate_pipeline.json`へ反映される。
+- Stage 1を通過した候補だけStage 2のFull Candidate Researchへ進める。Stage 2では、前営業日OHLCV、呼値、決算予定、関連ニュースをSource Matrix順に確認する。
+- TDnetはFull Candidate Research内のCandidate Contextとして、`resolve-research-window` が出力した `research_window.window_start` から `research_window.window_end` までを候補単位で確認する。TDnet開示がないことだけを理由にCandidateを除外しない。
 - 高コスト調査ではTRADE_CRITICAL情報をContextより先に確認する。TRADE_CRITICAL不足で取引判断不能が確定した候補について、不要なニュース等Context取得は行わない。
-- 同一実行内で同じ `url + target_date + research_cutoff` のSource取得が再利用可能な場合は使い回す。Webページ仕様上共有できないものを共有可能と仮定しない。
+- 同一実行内で同じ `url + target_date + research_cutoff` のSource取得が再利用可能な場合は使い回し、`source_attempts[].cache_status`へ`HIT`または`MISS`等を保存する。Webページ仕様上共有できないものを共有可能と仮定しない。
 - OHLCVはYahoo!ファイナンスをPrimary、株探をSecondaryとし、同一対象日のOpen/High/Low/Close/Volumeが一致した場合だけ`VERIFIED`とする。
 - Secondary取得不能は`SINGLE_SOURCE_ONLY`、値不一致は`CONFLICT`、対象日違いは`STALE`として保存し、未確認値を補完しない。
 - Source試行は成功・失敗とも`sources.json`の`source_attempts`へ保存し、成功値は`sources`へ保存する。新規runでは`source_attempts[].attempt_id`を付与する。
@@ -124,7 +129,7 @@ Discovery候補0件、Discovery候補あり・Research未完了、Research/Scree
 - 1銘柄を`TRADE`候補にするか、適切な候補がなければ`NO_TRADE`、必要データが揃わなければ`DATA_UNAVAILABLE`とする。
 - 未決定の固定閾値を新設しない。
 - `recommendation.json`へ判断、理由、参照URLを保存する。`TRADE`の参照URLは1件以上とし、すべて`sources.json`にも記録する。
-- `recommendation.json`には`research_cutoff`、`pipeline_summary`、必要に応じて`source_statuses`を保存する。`source_urls`は採用済みSource URL、`source_statuses`は失敗・未取得Sourceも含む状態表示として分離する。
+- `recommendation.json`には`research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて`source_statuses`を保存する。`source_urls`は採用済みSource URL、`source_statuses`は失敗・未取得Sourceも含む状態表示として分離する。
 - `strategy_version`と`config_sha256`は`candidates.json`からそのまま転記し、生成・推測しない。
 
 ### 6. Risk Engineとレポート
@@ -151,7 +156,7 @@ py -B -m src.cli record-recommendation --recommendation runs/YYYY-MM-DD/recommen
 - `NO_TRADE`の場合は注文値を作らず、理由を記録する。
 - `DATA_UNAVAILABLE`の場合は注文値を作らず、調査不能理由を記録する。
 - `order_submitted`、`entry_triggered`、`entry_filled`は人間が確認するまで空欄にする。
-- 月曜向けプランでは、現時点の標準v1として金曜夜の`research_cutoff`で作成したプランを使用する。土日・cutoff後情報を再調査していない場合、「情報なし」や「0件確認済み」と書かず、「cutoff後のため調査対象外」と明記する。
+- 月曜向けプランでは、現時点の標準v1として金曜夜の`research_cutoff`で作成したプランを使用する。土日・cutoff後情報を再調査していない場合、`post_cutoff_information_status=OUT_OF_SCOPE`として扱い、「情報なし」や「0件確認済み」と書かず、「cutoff後のため調査対象外」と明記する。
 
 ## 最終報告
 

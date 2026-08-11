@@ -58,6 +58,7 @@ def test_data_unavailable_report_is_not_no_trade():
             "config_sha256": "a" * 64,
             "decision": "DATA_UNAVAILABLE",
             "research_cutoff": "2026-08-07T20:00:00+09:00",
+            "post_cutoff_information_status": "OUT_OF_SCOPE",
             "pipeline_summary": {
                 "discovered": 99,
                 "research_complete": 0,
@@ -84,5 +85,7 @@ def test_data_unavailable_report_is_not_no_trade():
     assert "判定:\nDATA_UNAVAILABLE" in report
     assert "取引判断まで到達していない" in report
     assert "情報カットオフ: 2026-08-07T20:00:00+09:00" in report
+    assert "cutoff後情報: 標準調査対象外" in report
+    assert "未調査の情報を「0件確認済み」とは扱わない" in report
     assert "候補パイプライン概要" in report
     assert "JPX_TDNET: PARSE_FAILED" in report

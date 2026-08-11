@@ -121,6 +121,48 @@ def test_candidate_pipeline_inputs_must_use_same_config():
         )
 
 
+def test_candidate_pipeline_inputs_rejects_unrecorded_stage1_source_refs():
+    config = load_strategy_config()
+    config_sha256 = strategy_config_sha256(config)
+
+    with pytest.raises(ValueError, match="source-backed stage1_checks"):
+        validate_candidate_pipeline_inputs(
+            market_research={
+                "target_date": "2026-08-10",
+                "candidate_research": [
+                    {
+                        "ticker": "1234",
+                        "universe_status": "PASSED",
+                        "stage1_status": "REJECTED",
+                        "stage1_checks": [
+                            {
+                                "check_id": "share_unit",
+                                "status": "REJECTED",
+                                "reason_code": "SHARE_UNIT_NOT_100",
+                                "source_refs": [
+                                    "JPX_LISTED_COMPANY:1234:share_unit"
+                                ],
+                                "source_attempt_ids": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            market_target_date="2026-08-10",
+            candidates={
+                "target_date": "2026-08-10",
+                "strategy_version": config["strategy_version"],
+                "config_sha256": config_sha256,
+            },
+            source_payload={
+                "target_date": "2026-08-10",
+                "sources": [],
+                "source_attempts": [],
+            },
+            config=config,
+        )
+
+
 def test_performance_inputs_must_use_same_target_date():
     with pytest.raises(ValueError, match="target_date"):
         validate_performance_inputs(

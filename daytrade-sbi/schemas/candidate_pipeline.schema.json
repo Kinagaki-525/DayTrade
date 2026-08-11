@@ -64,7 +64,7 @@
       "required": ["discovery_type", "source_id", "source_url"],
       "properties": {
         "discovery_type": {
-          "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE"]
+          "enum": ["VOLUME_RANKING", "PRICE_GAIN_RANKING"]
         },
         "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
         "source_url": {"type": "string", "pattern": "^https?://"},

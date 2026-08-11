@@ -21,6 +21,15 @@ def test_performance_counts_stage_candidates_and_duplicate_requests():
                     "data_status": "DATA_UNAVAILABLE",
                     "status_reasons": [],
                     "stage1_status": "REJECTED",
+                    "stage1_checks": [
+                        {
+                            "check_id": "share_unit",
+                            "status": "REJECTED",
+                            "reason_code": "SHARE_UNIT_NOT_100",
+                            "source_refs": [],
+                            "source_attempt_ids": ["jpx-listed-5678"],
+                        }
+                    ],
                     "stage2_status": "SKIPPED",
                     "context_research_status": "SKIPPED",
                 },
@@ -36,14 +45,18 @@ def test_performance_counts_stage_candidates_and_duplicate_requests():
             "sources": [{"source_ref": "source-1"}],
             "source_attempts": [
                 {
+                    "attempt_id": "request-1",
                     "url": "https://example.test/source",
                     "target_date": "2026-08-10",
                     "research_cutoff": "2026-08-07T20:00:00+09:00",
+                    "cache_status": "MISS",
                 },
                 {
+                    "attempt_id": "jpx-listed-5678",
                     "url": "https://example.test/source",
                     "target_date": "2026-08-10",
                     "research_cutoff": "2026-08-07T20:00:00+09:00",
+                    "cache_status": "HIT",
                 },
             ],
         },
@@ -52,6 +65,7 @@ def test_performance_counts_stage_candidates_and_duplicate_requests():
     validate_json_document(payload, "performance.schema.json")
     assert payload["counts"]["source_request_count"] == 2
     assert payload["counts"]["duplicate_source_request_count"] == 1
+    assert payload["counts"]["cache_hit_count"] == 1
     assert payload["counts"]["stage1_candidate_count"] == 2
     assert payload["counts"]["stage1_rejected_count"] == 1
     assert payload["counts"]["stage2_candidate_count"] == 1

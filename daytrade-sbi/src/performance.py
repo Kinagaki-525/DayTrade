@@ -3,6 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from src.stage1 import (
+    source_attempt_ids_from_payload,
+    source_backed_stage1_reject,
+    source_refs_from_payload,
+)
+
 
 TIMING_KEYS = (
     "total",
@@ -27,6 +33,8 @@ def build_performance_payload(
     source_attempts = source_payload.get("source_attempts", [])
     sources = source_payload.get("sources", [])
     candidate_research = market_research.get("candidate_research", [])
+    valid_source_refs = source_refs_from_payload(source_payload)
+    valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
     candidate_status_counts: dict[str, int] = {}
     for candidate in candidate_pipeline.get("candidates", []):
         status = candidate["pipeline_status"]
@@ -42,6 +50,7 @@ def build_performance_payload(
             "duplicate_source_request_count": _duplicate_source_request_count(
                 source_attempts
             ),
+            "cache_hit_count": _cache_hit_count(source_attempts),
             "discovery_candidate_count": len(
                 market_research.get("discovery_candidates", [])
             ),
@@ -49,7 +58,11 @@ def build_performance_payload(
             "stage1_rejected_count": sum(
                 1
                 for research in candidate_research
-                if research.get("stage1_status") == "REJECTED"
+                if source_backed_stage1_reject(
+                    research,
+                    valid_source_refs=valid_source_refs,
+                    valid_source_attempt_ids=valid_source_attempt_ids,
+                )
             ),
             "stage2_candidate_count": _count_stage2_candidates(candidate_research),
             "context_research_candidate_count": sum(
@@ -74,6 +87,10 @@ def _duplicate_source_request_count(source_attempts: list[dict[str, Any]]) -> in
         )
         seen[key] = seen.get(key, 0) + 1
     return sum(count - 1 for count in seen.values() if count > 1)
+
+
+def _cache_hit_count(source_attempts: list[dict[str, Any]]) -> int:
+    return sum(1 for attempt in source_attempts if attempt.get("cache_status") == "HIT")
 
 
 def _count_stage1_candidates(candidate_research: list[dict[str, Any]]) -> int:

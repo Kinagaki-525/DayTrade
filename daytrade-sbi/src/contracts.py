@@ -8,6 +8,12 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 
 from src.config import strategy_config_sha256
+from src.stage1 import (
+    source_attempt_ids_from_payload,
+    source_refs_from_payload,
+    stage1_contract_errors,
+    stage1_reject_evidence_error,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +146,19 @@ def validate_candidate_pipeline_inputs(
         raise ValueError("candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
         raise ValueError("candidates config_sha256 does not match --config")
+    valid_source_refs = source_refs_from_payload(source_payload)
+    valid_source_attempt_ids = source_attempt_ids_from_payload(source_payload)
+    for research in market_research.get("candidate_research", []):
+        contract_errors = stage1_contract_errors(research)
+        if contract_errors:
+            raise ValueError(contract_errors[0])
+        evidence_error = stage1_reject_evidence_error(
+            research,
+            valid_source_refs=valid_source_refs,
+            valid_source_attempt_ids=valid_source_attempt_ids,
+        )
+        if evidence_error is not None:
+            raise ValueError(evidence_error)
 
 
 def validate_performance_inputs(

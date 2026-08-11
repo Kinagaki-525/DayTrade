@@ -18,6 +18,7 @@ def test_resolve_research_window_returns_first_run_without_history():
     ).as_dict()
 
     assert result["research_cutoff"] == "2026-08-07T20:00:00+09:00"
+    assert result["post_cutoff_information_status"] == "OUT_OF_SCOPE"
     assert result["research_window"] == {
         "run_type": "FIRST_RUN",
         "window_start": "2026-08-06T20:00:00+09:00",
@@ -48,6 +49,7 @@ def test_resolve_research_window_returns_normal_run_from_latest_history(monkeypa
     ).as_dict()
 
     assert result["research_cutoff"] == "2026-08-10T20:00:00+09:00"
+    assert result["post_cutoff_information_status"] == "NO_NON_BUSINESS_GAP"
     assert result["research_window"] == {
         "run_type": "NORMAL_RUN",
         "window_start": "2026-08-07T20:00:00+09:00",
@@ -74,11 +76,8 @@ def test_resolve_research_window_rejects_latest_history_missing_research(monkeyp
         )
 
 
-def test_resolve_research_window_rejects_unconfirmed_tdnet_history(monkeypatch):
+def test_resolve_research_window_accepts_history_without_tdnet_discovery(monkeypatch):
     payload = complete_candidate_research(market_research_payload())
-    payload["discovery"][2]["status"] = "ACCESS_FAILED"
-    payload["discovery"][2]["reason"] = "network error"
-    payload["overall_status"] = "DISCOVERY_INCOMPLETE"
 
     monkeypatch.setattr(Path, "exists", lambda self: True)
     monkeypatch.setattr(
@@ -87,11 +86,12 @@ def test_resolve_research_window_rejects_unconfirmed_tdnet_history(monkeypatch):
         lambda path, schema: payload,
     )
 
-    with pytest.raises(ValueError, match="HISTORY_INVALID"):
-        research_window._load_valid_previous_market_research(
-            Path("2026-08-10"),
-            load_source_matrix(),
-        )
+    loaded = research_window._load_valid_previous_market_research(
+        Path("2026-08-10"),
+        load_source_matrix(),
+    )
+
+    assert loaded is payload
 
 
 def test_resolve_research_window_rejects_invalid_bootstrap_setting():

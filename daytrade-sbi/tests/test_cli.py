@@ -132,6 +132,7 @@ def test_build_performance_command_writes_payload(monkeypatch):
             "source_request_count": 0,
             "adopted_source_count": 0,
             "duplicate_source_request_count": 0,
+            "cache_hit_count": 0,
             "discovery_candidate_count": 0,
             "stage1_candidate_count": 0,
             "stage1_rejected_count": 0,
@@ -211,6 +212,7 @@ def test_resolve_research_window_command_writes_schema_payload(monkeypatch):
                     "previous_run_date": None,
                     "bootstrap_lookback_days": 1,
                 },
+                "post_cutoff_information_status": "OUT_OF_SCOPE",
             }
 
     monkeypatch.setattr(cli, "load_source_matrix", lambda path: {"source": "matrix"})
@@ -283,6 +285,67 @@ def test_validate_market_research_command_rejects_window_file_mismatch(monkeypat
     assert captured["errors"] == [
         "market_research.research_window must match research_window.json",
     ]
+
+
+def test_validate_market_research_command_rejects_unrecorded_stage1_source_ref(monkeypatch):
+    captured = {}
+    market_research = complete_candidate_research(market_research_payload())
+    market_research["candidate_research"][0].update(
+        {
+            "stage1_status": "REJECTED",
+            "stage1_checks": [
+                {
+                    "check_id": "share_unit",
+                    "status": "REJECTED",
+                    "reason_code": "SHARE_UNIT_NOT_100",
+                    "source_refs": ["JPX_LISTED_COMPANY:1000:share_unit"],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+    resolved_window = {
+        "schema_version": 1,
+        "target_date": market_research["target_date"],
+        "previous_trading_day": market_research["previous_trading_day"],
+        "research_cutoff": market_research["research_cutoff"],
+        "research_window": market_research["research_window"],
+        "post_cutoff_information_status": "OUT_OF_SCOPE",
+    }
+
+    def load_document(path, schema):
+        if schema == "market_research.schema.json":
+            return market_research
+        if schema == "research_window.schema.json":
+            return resolved_window
+        if schema == "sources.schema.json":
+            return {
+                "target_date": market_research["target_date"],
+                "sources": [],
+                "source_attempts": [],
+            }
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
+
+    with pytest.raises(ValueError, match="source-backed stage1_checks"):
+        cli.main(
+            [
+                "validate-market-research",
+                "--market-research",
+                "market_research.json",
+                "--research-window",
+                "research_window.json",
+                "--sources",
+                "sources.json",
+                "--output",
+                "market_research_validation.json",
+            ]
+        )
+
+    assert captured["valid"] is False
+    assert any("source-backed stage1_checks" in error for error in captured["errors"])
 
 
 def test_risk_check_command_generates_pass_payload(monkeypatch):

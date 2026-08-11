@@ -21,6 +21,7 @@
     "shares",
     "selection_reasons",
     "research_cutoff",
+    "post_cutoff_information_status",
     "pipeline_summary",
     "source_urls",
     "notes"
@@ -47,6 +48,9 @@
       "items": {"type": "string", "minLength": 1}
     },
     "research_cutoff": {"type": ["string", "null"], "format": "date-time"},
+    "post_cutoff_information_status": {
+      "enum": ["NO_NON_BUSINESS_GAP", "OUT_OF_SCOPE"]
+    },
     "pipeline_summary": {"$ref": "#/$defs/pipelineSummary"},
     "source_statuses": {
       "type": "array",

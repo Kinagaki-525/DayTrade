@@ -22,6 +22,7 @@ def render_sbi_report(
         f"戦略バージョン: {recommendation.get('strategy_version', '')}",
         f"設定SHA-256: {recommendation.get('config_sha256', '')}",
         *(_cutoff_line(recommendation)),
+        *(_post_cutoff_line(recommendation)),
         "",
         "判定:",
         report_decision,
@@ -93,6 +94,7 @@ def _render_non_trade(
         f"戦略バージョン: {recommendation.get('strategy_version', '')}",
         f"設定SHA-256: {recommendation.get('config_sha256', '')}",
         *(_cutoff_line(recommendation)),
+        *(_post_cutoff_line(recommendation)),
         "",
         "判定:",
         decision,
@@ -151,6 +153,14 @@ def _append_pipeline_sections(lines: list[str], recommendation: dict[str, Any]) 
 def _cutoff_line(recommendation: dict[str, Any]) -> list[str]:
     cutoff = recommendation.get("research_cutoff")
     return [f"情報カットオフ: {cutoff}"] if cutoff else []
+
+
+def _post_cutoff_line(recommendation: dict[str, Any]) -> list[str]:
+    if recommendation.get("post_cutoff_information_status") != "OUT_OF_SCOPE":
+        return []
+    return [
+        "cutoff後情報: 標準調査対象外（未調査の情報を「0件確認済み」とは扱わない）"
+    ]
 
 
 def _as_text_list(value: Any) -> list[str]:

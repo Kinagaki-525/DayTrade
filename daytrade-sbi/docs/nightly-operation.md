@@ -24,8 +24,8 @@ py -B -m pytest
 5. `config/strategy.yaml`を対象日ディレクトリへスナップショット保存
 6. `config/source_matrix.yaml`を検証
 7. PythonでTDnet調査期間を確定し、`research_window.json`を保存
-8. 固定Discovery経路だけで`market_research.json`を作成
-9. Discovery CandidatesだけをSource Matrix順に調査し、`sources.json`と`market_data.json`を保存
+8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
+9. Discovery CandidatesだけをUniverse判定・Stage 1・Full Candidate Researchへ進め、`sources.json`と`market_data.json`を保存
 10. Pythonで市場データと出典台帳を検証し、`candidates.json`を生成
 11. Pythonで`candidate_pipeline.json`と`performance.json`を生成
 12. 確認済み情報だけで候補を比較
@@ -55,7 +55,7 @@ py -B -m pytest
 - 必須市場データが欠落している
 - 数値の出典を追跡できない
 - 出典間の数値矛盾を解消できない
-- Discovery Critical Sourceが欠落している
+- Discovery Critical Source（Yahoo!ファイナンス2ランキング）が欠落している
 - 最新の過去runが壊れており、TDnet調査期間を確定できない（作業停止）
 - OHLCVが`CONFLICT`または`SINGLE_SOURCE_ONLY`
 - 決算・重要開示の確認が必要だが確認できない

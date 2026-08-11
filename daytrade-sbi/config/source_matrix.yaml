@@ -100,8 +100,8 @@ sources:
 
   - source_id: JPX_TDNET
     information_type: TIMELY_DISCLOSURE
-    role: PRIMARY
-    criticality: DISCOVERY_CRITICAL
+    role: CONTEXT
+    criticality: CONTEXT
     source_name: TDnet Timely Disclosure
     url_template: "https://www.release.tdnet.info/inbs/I_main_00.html"
     update_timing: REALTIME_OR_DELAYED

@@ -7,7 +7,6 @@ from typing import Any
 
 from src.contracts import load_json_document
 from src.research import validate_market_research
-from src.source_matrix import source_by_id
 
 
 @dataclass(frozen=True)
@@ -15,6 +14,7 @@ class ResolvedResearchWindow:
     target_date: str
     previous_trading_day: str
     research_cutoff: str
+    post_cutoff_information_status: str
     research_window: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
@@ -23,6 +23,7 @@ class ResolvedResearchWindow:
             "target_date": self.target_date,
             "previous_trading_day": self.previous_trading_day,
             "research_cutoff": self.research_cutoff,
+            "post_cutoff_information_status": self.post_cutoff_information_status,
             "research_window": self.research_window,
         }
 
@@ -37,6 +38,10 @@ def resolve_research_window(
     _validate_trading_date_order(target_date, previous_trading_day)
     lookback_days = _bootstrap_lookback_days(source_matrix)
     cutoff = _research_cutoff(previous_trading_day, source_matrix)
+    post_cutoff_status = _post_cutoff_information_status(
+        target_date,
+        previous_trading_day,
+    )
     latest_run = _latest_previous_run(runs_dir, target_date)
     if latest_run is None:
         window_start = cutoff - timedelta(days=lookback_days)
@@ -44,6 +49,7 @@ def resolve_research_window(
             target_date=target_date,
             previous_trading_day=previous_trading_day,
             research_cutoff=cutoff.isoformat(),
+            post_cutoff_information_status=post_cutoff_status,
             research_window={
                 "run_type": "FIRST_RUN",
                 "window_start": window_start.isoformat(),
@@ -60,6 +66,7 @@ def resolve_research_window(
         target_date=target_date,
         previous_trading_day=previous_trading_day,
         research_cutoff=cutoff.isoformat(),
+        post_cutoff_information_status=post_cutoff_status,
         research_window={
             "run_type": "NORMAL_RUN",
             "window_start": previous_cutoff.isoformat(),
@@ -88,6 +95,17 @@ def _research_cutoff(
         f"{previous_trading_day}T{cutoff_time}",
         "current research_cutoff",
     )
+
+
+def _post_cutoff_information_status(
+    target_date: str,
+    previous_trading_day: str,
+) -> str:
+    target = _parse_date(target_date, "target_date")
+    previous = _parse_date(previous_trading_day, "previous_trading_day")
+    if (target - previous).days > 1:
+        return "OUT_OF_SCOPE"
+    return "NO_NON_BUSINESS_GAP"
 
 
 def _bootstrap_lookback_days(source_matrix: dict[str, Any]) -> int:
@@ -148,29 +166,7 @@ def _load_valid_previous_market_research(
             "failed validation: "
             + "; ".join(validation.errors)
         )
-    if not _tdnet_discovery_confirmed(payload, source_matrix):
-        raise ValueError(
-            f"HISTORY_INVALID: latest previous run {run_dir.name} did not confirm "
-            "JPX_TDNET discovery"
-        )
     return payload
-
-
-def _tdnet_discovery_confirmed(
-    payload: dict[str, Any],
-    source_matrix: dict[str, Any],
-) -> bool:
-    definitions = source_by_id(source_matrix)
-    tdnet = definitions.get("JPX_TDNET")
-    if tdnet is None or tdnet.get("criticality") != "DISCOVERY_CRITICAL":
-        return False
-    for route in payload["discovery"]:
-        if (
-            route["discovery_type"] == "TIMELY_DISCLOSURE"
-            and route["source_id"] == "JPX_TDNET"
-        ):
-            return route["status"] == "FOUND"
-    return False
 
 
 def _parse_date(value: str, field_name: str) -> date:

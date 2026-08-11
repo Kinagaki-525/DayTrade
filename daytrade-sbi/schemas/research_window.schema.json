@@ -15,6 +15,9 @@
     "target_date": {"type": "string", "format": "date"},
     "previous_trading_day": {"type": "string", "format": "date"},
     "research_cutoff": {"type": "string", "format": "date-time"},
+    "post_cutoff_information_status": {
+      "enum": ["NO_NON_BUSINESS_GAP", "OUT_OF_SCOPE"]
+    },
     "research_window": {"$ref": "#/$defs/researchWindow"}
   },
   "additionalProperties": false,

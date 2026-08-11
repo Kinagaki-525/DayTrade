@@ -32,13 +32,11 @@ CRITICALITIES = {
 DISCOVERY_TYPES = {
     "VOLUME_RANKING",
     "PRICE_GAIN_RANKING",
-    "TIMELY_DISCLOSURE",
 }
 
 DISCOVERY_SOURCE_IDS = {
     "VOLUME_RANKING": "YAHOO_JP_VOLUME_RANKING",
     "PRICE_GAIN_RANKING": "YAHOO_JP_GAIN_RANKING",
-    "TIMELY_DISCLOSURE": "JPX_TDNET",
 }
 
 REQUIRED_SOURCE_IDS = {
@@ -107,6 +105,13 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
             errors.append(f"{source_id} must be DISCOVERY_CRITICAL for {discovery_type}")
         if source["role"] != "PRIMARY":
             errors.append(f"{source_id} must be PRIMARY for {discovery_type}")
+
+    tdnet = source_by_id.get("JPX_TDNET")
+    if tdnet is not None:
+        if tdnet["criticality"] != "CONTEXT":
+            errors.append("JPX_TDNET must be CONTEXT criticality")
+        if tdnet["role"] != "CONTEXT":
+            errors.append("JPX_TDNET must be CONTEXT role")
 
     if payload["source_change_policy"]["runtime_substitution_allowed"]:
         errors.append("runtime Source Matrix substitution must remain disabled")

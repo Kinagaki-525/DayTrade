@@ -42,10 +42,10 @@ def test_pipeline_keeps_discovery_candidate_without_market_data():
             "sources": [],
             "source_attempts": [
                 make_source_attempt(
-                    source_id="JPX_TDNET",
+                    source_id="YAHOO_JP_VOLUME_RANKING",
                     source_role="PRIMARY",
                     criticality="DISCOVERY_CRITICAL",
-                    information_type="TIMELY_DISCLOSURE",
+                    information_type="VOLUME_RANKING",
                     candidate_code=None,
                     status="PARSE_FAILED",
                 )
@@ -62,12 +62,58 @@ def test_pipeline_keeps_discovery_candidate_without_market_data():
     assert payload["candidates"][0]["source_attempt_ids"]
 
 
+def test_pipeline_prefers_structured_research_reasons_and_missing_requirements():
+    payload = build_candidate_pipeline(
+        market_research={
+            "target_date": "2026-08-10",
+            "discovery_candidates": [
+                {
+                    "ticker": "1234",
+                    "company_name": "Example Co.",
+                    "market": "TSE Prime",
+                    "discovery_reasons": [
+                        {
+                            "discovery_type": "VOLUME_RANKING",
+                            "source_id": "YAHOO_JP_VOLUME_RANKING",
+                            "source_url": "https://example.test/volume",
+                            "rank": 1,
+                            "display_value": "1000000",
+                            "title": None,
+                        }
+                    ],
+                }
+            ],
+            "candidate_research": [
+                {
+                    "ticker": "1234",
+                    "data_status": "DATA_UNAVAILABLE",
+                    "status_reasons": ["long human-readable fallback"],
+                    "reason_codes": ["SECONDARY_OHLCV_MISSING"],
+                    "missing_requirements": ["secondary_ohlcv"],
+                    "source_policy_status": "FOUND",
+                }
+            ],
+        },
+        market_records=[],
+        candidates_payload={"candidates": []},
+        source_payload={"sources": [], "source_attempts": []},
+        config=load_strategy_config(),
+    )
+
+    candidate = payload["candidates"][0]
+    assert candidate["reason_codes"] == ["SECONDARY_OHLCV_MISSING"]
+    assert candidate["missing_requirements"] == [
+        "secondary_ohlcv",
+        "market_data",
+    ]
+
+
 def test_pipeline_requires_explicit_source_attempt_id():
     attempt = make_source_attempt(
-        source_id="JPX_TDNET",
+        source_id="YAHOO_JP_VOLUME_RANKING",
         source_role="PRIMARY",
         criticality="DISCOVERY_CRITICAL",
-        information_type="TIMELY_DISCLOSURE",
+        information_type="VOLUME_RANKING",
         candidate_code=None,
         status="PARSE_FAILED",
     )
@@ -84,12 +130,12 @@ def test_pipeline_requires_explicit_source_attempt_id():
                         "market": "TSE Prime",
                         "discovery_reasons": [
                             {
-                                "discovery_type": "TIMELY_DISCLOSURE",
-                                "source_id": "JPX_TDNET",
-                                "source_url": "https://example.test/tdnet",
-                                "rank": None,
-                                "display_value": None,
-                                "title": "Disclosure",
+                                "discovery_type": "VOLUME_RANKING",
+                                "source_id": "YAHOO_JP_VOLUME_RANKING",
+                                "source_url": "https://example.test/volume",
+                                "rank": 1,
+                                "display_value": "1000000",
+                                "title": None,
                             }
                         ],
                     }
@@ -101,6 +147,100 @@ def test_pipeline_requires_explicit_source_attempt_id():
             source_payload={"sources": [], "source_attempts": [attempt]},
             config=load_strategy_config(),
         )
+
+
+def test_stage1_reject_requires_source_backed_check():
+    base_market_research = {
+        "target_date": "2026-08-10",
+        "discovery_candidates": [
+            {
+                "ticker": "1234",
+                "company_name": "Example Co.",
+                "market": "TSE Prime",
+                "discovery_reasons": [
+                    {
+                        "discovery_type": "VOLUME_RANKING",
+                        "source_id": "YAHOO_JP_VOLUME_RANKING",
+                        "source_url": "https://example.test/volume",
+                        "rank": 1,
+                        "display_value": "1000000",
+                        "title": None,
+                    }
+                ],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="source-backed stage1_checks"):
+        build_candidate_pipeline(
+            market_research={
+                **base_market_research,
+                "candidate_research": [
+                    {
+                        "ticker": "1234",
+                        "data_status": "VERIFIED",
+                        "status_reasons": [],
+                        "universe_status": "PASSED",
+                        "stage1_status": "REJECTED",
+                        "stage1_checks": [
+                            {
+                                "check_id": "share_unit",
+                                "status": "REJECTED",
+                                "reason_code": "SHARE_UNIT_NOT_100",
+                                "source_refs": [
+                                    "JPX_LISTED_COMPANY:1234:share_unit"
+                                ],
+                                "source_attempt_ids": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            market_records=[],
+            candidates_payload={"candidates": []},
+            source_payload={"sources": [], "source_attempts": []},
+            config=load_strategy_config(),
+        )
+
+    supported = build_candidate_pipeline(
+        market_research={
+            **base_market_research,
+            "candidate_research": [
+                {
+                    "ticker": "1234",
+                    "data_status": "VERIFIED",
+                    "status_reasons": [],
+                    "universe_status": "PASSED",
+                    "stage1_status": "REJECTED",
+                    "stage1_checks": [
+                        {
+                            "check_id": "share_unit",
+                            "status": "REJECTED",
+                            "reason_code": "SHARE_UNIT_NOT_100",
+                            "source_refs": ["JPX_LISTED_COMPANY:1234:share_unit"],
+                            "source_attempt_ids": [],
+                        }
+                    ],
+                }
+            ],
+        },
+        market_records=[],
+        candidates_payload={"candidates": []},
+        source_payload={
+            "sources": [
+                {
+                    "source_ref": "JPX_LISTED_COMPANY:1234:share_unit",
+                }
+            ],
+            "source_attempts": [],
+        },
+        config=load_strategy_config(),
+    )
+
+    candidate = supported["candidates"][0]
+    assert candidate["pipeline_status"] == "REJECTED"
+    assert candidate["reason_codes"] == ["SHARE_UNIT_NOT_100"]
+    assert candidate["failed_checks"] == ["stage1:share_unit"]
+    assert candidate["source_refs"] == ["JPX_LISTED_COMPANY:1234:share_unit"]
 
 
 def test_pipeline_distinguishes_screening_results():
@@ -200,12 +340,12 @@ def test_pipeline_distinguishes_discovery_zero_from_research_incomplete():
                     "market": "TSE Prime",
                     "discovery_reasons": [
                         {
-                            "discovery_type": "TIMELY_DISCLOSURE",
-                            "source_id": "JPX_TDNET",
-                            "source_url": "https://example.test/tdnet",
-                            "rank": None,
-                            "display_value": None,
-                            "title": "Disclosure",
+                            "discovery_type": "VOLUME_RANKING",
+                            "source_id": "YAHOO_JP_VOLUME_RANKING",
+                            "source_url": "https://example.test/volume",
+                            "rank": 1,
+                            "display_value": "1000000",
+                            "title": None,
                         }
                     ],
                 }
@@ -220,3 +360,64 @@ def test_pipeline_distinguishes_discovery_zero_from_research_incomplete():
     assert incomplete["summary"]["discovered"] == 1
     assert incomplete["summary"]["research_incomplete"] == 1
     assert incomplete["candidates"][0]["pipeline_status"] == "DISCOVERED"
+
+
+def test_pipeline_does_not_reject_candidate_for_empty_tdnet_context():
+    payload = build_candidate_pipeline(
+        market_research={
+            "target_date": "2026-08-10",
+            "discovery_candidates": [
+                {
+                    "ticker": "1234",
+                    "company_name": "Example Co.",
+                    "market": "TSE Prime",
+                    "discovery_reasons": [
+                        {
+                            "discovery_type": "VOLUME_RANKING",
+                            "source_id": "YAHOO_JP_VOLUME_RANKING",
+                            "source_url": "https://example.test/volume",
+                            "rank": 1,
+                            "display_value": "1000000",
+                            "title": None,
+                        }
+                    ],
+                }
+            ],
+            "candidate_research": [
+                {
+                    "ticker": "1234",
+                    "data_status": "VERIFIED",
+                    "status_reasons": [],
+                    "universe_status": "PASSED",
+                    "source_policy_status": "FOUND",
+                    "stage1_status": "PASSED",
+                    "stage2_status": "COMPLETE",
+                    "context_research_status": "COMPLETE",
+                }
+            ],
+        },
+        market_records=[],
+        candidates_payload={"candidates": []},
+        source_payload={
+            "sources": [],
+            "source_attempts": [
+                {
+                    "attempt_id": "tdnet-empty-1234",
+                    "source_id": "JPX_TDNET",
+                    "source_role": "CONTEXT",
+                    "criticality": "CONTEXT",
+                    "information_type": "TIMELY_DISCLOSURE",
+                    "candidate_code": "1234",
+                    "status": "FOUND",
+                    "values": [],
+                    "result_count": 0,
+                }
+            ],
+        },
+        config=load_strategy_config(),
+    )
+
+    candidate = payload["candidates"][0]
+    assert candidate["pipeline_status"] == "RESEARCH_COMPLETE"
+    assert candidate["failed_checks"] == []
+    assert "context_research" in candidate["completed_checks"]

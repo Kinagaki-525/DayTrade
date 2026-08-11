@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 
 from src.market import audit_official_ohlcv, validate_market_data, validate_source_ledger
 from src.source_matrix import load_source_matrix
@@ -200,6 +201,55 @@ def test_source_ledger_requires_attempt_id():
 
     assert result.valid is False
     assert any("attempt_id is required" in error for error in result.errors)
+
+
+def test_source_ledger_rejects_missing_source_page_path():
+    record = make_market_record()
+    attempt = make_source_attempt(
+        source_id="YAHOO_JP_HISTORY",
+        source_role="PRIMARY",
+        criticality="TRADE_CRITICAL",
+        information_type="OHLCV",
+    )
+    attempt["source_page_path"] = "source_pages/yahoo_history.html"
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [record],
+        {
+            "target_date": "2026-08-10",
+            "sources": [source.as_dict() for source in record.sources],
+            "source_attempts": [attempt],
+        },
+        source_base_dir=Path("tests/fixtures"),
+    )
+
+    assert result.valid is False
+    assert any("source_page_path does not exist" in error for error in result.errors)
+
+
+def test_source_ledger_accepts_existing_source_page_path():
+    record = make_market_record()
+    attempt = make_source_attempt(
+        source_id="YAHOO_JP_VOLUME_RANKING",
+        source_role="PRIMARY",
+        criticality="DISCOVERY_CRITICAL",
+        information_type="VOLUME_RANKING",
+    )
+    attempt["source_page_path"] = "source_pages/yahoo_volume.html"
+
+    result = validate_source_ledger(
+        "2026-08-10",
+        [record],
+        {
+            "target_date": "2026-08-10",
+            "sources": [source.as_dict() for source in record.sources],
+            "source_attempts": [attempt],
+        },
+        source_base_dir=Path("regression/2026-08-10-baseline/runs/2026-08-10"),
+    )
+
+    assert result.valid is True
 
 
 def test_source_ledger_treats_numeric_string_and_number_as_same_value():

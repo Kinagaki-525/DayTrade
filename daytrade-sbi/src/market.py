@@ -576,6 +576,7 @@ def validate_source_ledger(
     records: Iterable[MarketDataRecord],
     source_payload: dict[str, Any],
     source_matrix: dict[str, Any] | None = None,
+    source_base_dir: Path | None = None,
 ) -> SourceLedgerValidationResult:
     errors: list[str] = []
     effective_source_matrix = (
@@ -637,7 +638,33 @@ def validate_source_ledger(
                 prefix=f"source_attempts[{index}]",
             )
         )
+        errors.extend(
+            _source_page_path_errors(
+                attempt.get("source_page_path"),
+                source_base_dir,
+                f"source_attempts[{index}]",
+            )
+        )
     return SourceLedgerValidationResult(not errors, tuple(errors))
+
+
+def _source_page_path_errors(
+    source_page_path: Any,
+    source_base_dir: Path | None,
+    prefix: str,
+) -> list[str]:
+    if source_page_path is None or source_base_dir is None:
+        return []
+    relative_path = Path(str(source_page_path))
+    base = source_base_dir.resolve()
+    target = (base / relative_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return [f"{prefix}.source_page_path must stay under sources.json directory"]
+    if not target.is_file():
+        return [f"{prefix}.source_page_path does not exist: {source_page_path}"]
+    return []
 
 
 def audit_official_ohlcv(

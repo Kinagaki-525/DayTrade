@@ -16,6 +16,7 @@
   "shares": 100,
   "selection_reasons": ["test fixture"],
   "research_cutoff": "2026-08-07T20:00:00+09:00",
+  "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
   "pipeline_summary": {
     "discovered": 1,
     "research_complete": 1,

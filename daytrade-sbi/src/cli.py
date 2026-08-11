@@ -80,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     market_research_parser = subparsers.add_parser("validate-market-research")
     market_research_parser.add_argument("--market-research", required=True, type=Path)
     market_research_parser.add_argument("--research-window", required=True, type=Path)
+    market_research_parser.add_argument("--sources", type=Path)
     market_research_parser.add_argument(
         "--source-matrix",
         type=Path,
@@ -194,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         return _validate_market_research(
             args.market_research,
             args.research_window,
+            args.sources,
             args.source_matrix,
             args.output,
         )
@@ -300,15 +302,18 @@ def _validate_market(
     source_matrix_path: Path,
     market_research_path: Path | None,
 ) -> int:
-    target_date, records, ledger_result, _, source_matrix = _load_market_bundle(
-        market_data_path,
-        sources_path,
-        source_matrix_path,
-    )
+    (
+        target_date,
+        records,
+        ledger_result,
+        source_payload,
+        source_matrix,
+    ) = _load_market_bundle(market_data_path, sources_path, source_matrix_path)
     alignment_result = _load_market_research_alignment(
         records,
         market_research_path,
         source_matrix,
+        source_payload,
     )
     global_errors = (
         list(alignment_result.global_errors) if alignment_result is not None else []
@@ -357,17 +362,20 @@ def _screen_market(
     source_matrix_path: Path,
     market_research_path: Path | None,
 ) -> int:
-    target_date, records, ledger_result, _, source_matrix = _load_market_bundle(
-        market_data_path,
-        sources_path,
-        source_matrix_path,
-    )
+    (
+        target_date,
+        records,
+        ledger_result,
+        source_payload,
+        source_matrix,
+    ) = _load_market_bundle(market_data_path, sources_path, source_matrix_path)
     if not ledger_result.valid:
         raise ValueError("Source ledger validation failed: " + "; ".join(ledger_result.errors))
     alignment_result = _load_market_research_alignment(
         records,
         market_research_path,
         source_matrix,
+        source_payload,
     )
     if alignment_result is not None and not alignment_result.valid:
         raise ValueError(
@@ -418,15 +426,18 @@ def _risk_check(
             "current_positions and trades_today are required when "
             "recommendation decision is TRADE"
         )
-    market_target_date, records, ledger_result, source_payload, source_matrix = _load_market_bundle(
-        market_data_path,
-        sources_path,
-        source_matrix_path,
-    )
+    (
+        market_target_date,
+        records,
+        ledger_result,
+        source_payload,
+        source_matrix,
+    ) = _load_market_bundle(market_data_path, sources_path, source_matrix_path)
     alignment_result = _load_market_research_alignment(
         records,
         market_research_path,
         source_matrix,
+        source_payload,
     )
     validate_recommendation_sources(recommendation, source_payload)
     config = load_strategy_config(config_path)
@@ -599,6 +610,7 @@ def _validate_source_matrix(
 def _validate_market_research(
     market_research_path: Path,
     research_window_path: Path,
+    sources_path: Path | None,
     source_matrix_path: Path,
     output_path: Path,
 ) -> int:
@@ -610,8 +622,13 @@ def _validate_market_research(
         research_window_path,
         "research_window.schema.json",
     )
+    source_payload = (
+        load_json_document(sources_path, "sources.schema.json")
+        if sources_path is not None
+        else None
+    )
     source_matrix = load_source_matrix(source_matrix_path)
-    result = validate_market_research(market_research, source_matrix)
+    result = validate_market_research(market_research, source_matrix, source_payload)
     window_link_errors = validate_market_research_window_link(
         market_research,
         research_window,
@@ -721,6 +738,7 @@ def _load_market_bundle(
         records,
         source_payload,
         source_matrix,
+        source_base_dir=sources_path.parent,
     )
     return target_date, records, ledger_result, source_payload, source_matrix
 
@@ -737,6 +755,7 @@ def _load_market_research_alignment(
     records: list[MarketDataRecord],
     market_research_path: Path | None,
     source_matrix: dict[str, Any],
+    source_payload: dict[str, Any] | None = None,
 ) -> MarketDataResearchAlignmentResult | None:
     if market_research_path is None:
         return None
@@ -744,7 +763,11 @@ def _load_market_research_alignment(
         market_research_path,
         "market_research.schema.json",
     )
-    research_result = validate_market_research(market_research, source_matrix)
+    research_result = validate_market_research(
+        market_research,
+        source_matrix,
+        source_payload,
+    )
     alignment_result = validate_market_records_against_research(records, market_research)
     return MarketDataResearchAlignmentResult(
         research_result.valid and alignment_result.valid,

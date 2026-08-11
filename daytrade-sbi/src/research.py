@@ -7,9 +7,15 @@ from typing import Any
 
 from src.contracts import validate_json_document
 from src.source_matrix import DISCOVERY_SOURCE_IDS, DISCOVERY_TYPES, source_by_id
+from src.stage1 import (
+    source_attempt_ids_from_payload,
+    source_backed_stage1_reject,
+    source_refs_from_payload,
+    stage1_contract_errors,
+)
 
 
-DISCOVERY_ORDER = ("VOLUME_RANKING", "PRICE_GAIN_RANKING", "TIMELY_DISCLOSURE")
+DISCOVERY_ORDER = ("VOLUME_RANKING", "PRICE_GAIN_RANKING")
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,7 @@ class MarketDataResearchAlignmentResult:
 def validate_market_research(
     payload: dict[str, Any],
     source_matrix: dict[str, Any],
+    source_payload: dict[str, Any] | None = None,
 ) -> MarketResearchValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
@@ -48,6 +55,14 @@ def validate_market_research(
         return MarketResearchValidationResult(False, False, tuple(errors), tuple(warnings))
 
     source_definitions = source_by_id(source_matrix)
+    valid_source_refs = (
+        source_refs_from_payload(source_payload) if source_payload is not None else None
+    )
+    valid_source_attempt_ids = (
+        source_attempt_ids_from_payload(source_payload)
+        if source_payload is not None
+        else None
+    )
     target_date = _date(payload["target_date"])
     previous_trading_day = _date(payload["previous_trading_day"])
     if previous_trading_day >= target_date:
@@ -65,7 +80,7 @@ def validate_market_research(
     routes = payload["discovery"]
     route_types = [route["discovery_type"] for route in routes]
     if sorted(route_types) != sorted(DISCOVERY_TYPES):
-        errors.append("discovery must contain exactly the three standard discovery routes")
+        errors.append("discovery must contain exactly the two Yahoo ranking routes")
 
     discovery_complete = True
     for route in routes:
@@ -86,9 +101,6 @@ def validate_market_research(
             and route["result_count"] != 50
         ):
             errors.append(f"{discovery_type} must record TOP50 when FOUND")
-        if discovery_type == "TIMELY_DISCLOSURE" and route["status"] == "FOUND":
-            # result_count = 0 is a confirmed no-disclosure result, not a source failure.
-            continue
 
     if not discovery_complete and payload["overall_status"] == "COMPLETE":
         errors.append("overall_status cannot be COMPLETE when Discovery is incomplete")
@@ -150,6 +162,7 @@ def validate_market_research(
             warnings.append(message)
 
     for research in payload["candidate_research"]:
+        errors.extend(stage1_contract_errors(research))
         source_policy_status = research.get("source_policy_status")
         if (
             source_policy_status == "SOURCE_POLICY_UNDEFINED"
@@ -157,6 +170,18 @@ def validate_market_research(
         ):
             errors.append(
                 f"{research['ticker']} has SOURCE_POLICY_UNDEFINED without matching data_status"
+            )
+        if (
+            research.get("stage1_status") == "REJECTED"
+            and not source_backed_stage1_reject(
+                research,
+                valid_source_refs=valid_source_refs,
+                valid_source_attempt_ids=valid_source_attempt_ids,
+            )
+        ):
+            errors.append(
+                f"{research['ticker']} has stage1_status=REJECTED without "
+                "source-backed stage1_checks"
             )
 
     return MarketResearchValidationResult(

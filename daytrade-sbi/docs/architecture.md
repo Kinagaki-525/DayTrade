@@ -41,7 +41,13 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/execution.py` | 完全決済済み実績と日次成果物の照合、CSV行生成、重複防止付き追記 |
 | `schemas/` | nightly実行で保存するJSONの構造契約 |
 
-`research_window.json`はPythonが確定したTDnet調査対象期間です。`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。`candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
+`research_window.json`はPythonが確定したTDnet調査対象期間です。TDnetはDiscoveryではなく、Full Candidate Research内のCandidate Contextとして候補単位で確認します。対象日と前営業日の間に週末等の空白がある場合は`post_cutoff_information_status=OUT_OF_SCOPE`を出し、cutoff後情報を未確認0件として扱わないことを示します。
+
+`market_research.json`はDiscoveryとCandidate Researchの経緯を保存する正本で、同じ`research_window`を含めます。Discovery CandidateはYahoo!ファイナンス出来高TOP50と値上がり率TOP50のUnion/Dedupだけで作り、TDnet単独銘柄は追加しません。Universe判定結果は`candidate_research[].universe_status`に保存します。Stage 1除外は、`sources.json`または`source_attempts`に存在する参照で裏付けられた許可済み`stage1_checks`がある場合だけ有効です。資金条件のStage 1除外は固定金額ではなく、設定済みの`capital.total_yen`と`capital.position_size`に対する`capital_limit`として扱います。
+
+`candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。
+
+`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
 
 日次ディレクトリには`strategy_snapshot.yaml`を保存します。候補・推奨・Risk Engine結果へ同じ`strategy_version`と設定内容のSHA-256を引き継ぎ、別設定で作られた成果物の混在を拒否します。
 
