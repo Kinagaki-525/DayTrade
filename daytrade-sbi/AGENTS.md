@@ -1,6 +1,6 @@
 # AGENTS.md
 
-このリポジトリは、日本株デイトレードについて、Codexが出典付き市場調査と候補比較を行い、Pythonが固定条件を検証し、人間がSBI証券へ手動入力するためのプロジェクトです。
+このリポジトリは、日本株デイトレードについて、CodexがWeb市場調査・出典保存・イベント分類(決算・TDnet等)を行い、PythonがValidation・Hard Screening・Event Gate・Ranking・Selection・Recommendation Builder・Risk Engineを決定論的に実行し、人間が最終的な発注判断とSBI証券への手動入力を行うプロジェクトです。CodexやPythonのどちらも候補比較や最終選定の主体ではありません。候補の順位付けと選定は`src/ranking.py`・`src/selection.py`の決定論的ロジックだけが行い、AIが独自に比較・評価して`TRADE`を作ることはありません。
 
 ## 絶対禁止
 
@@ -22,6 +22,10 @@
 - `config/strategy.yaml`の`selection.enabled`、`selection.rules.minimum_turnover_yen.threshold_yen`、`selection.rules.maximum_relative_tick_size.threshold_ratio`を推測で変更しない（未決定のまま`false`/`null`を維持する）
 - Calibrationツールは`config/strategy.yaml`へ書き込まない。「最適な閾値」を推奨・自動適用しない。損益最適化を行わない
 - Calibrationツールは`regression/`・`tests/`のフィクスチャを読み取らない。出力は`runs/`・`trades/`配下に書き込まない
+- `recommendation.json`をagentが手で作成・編集しない。必ずPython CLI（Case A/Bは`build-ranking-terminal-recommendation`、Case Cは`build-selection`→`build-selection-recommendation`）が生成したものだけを使う
+- Ranking `COMPLETE`かつ`selection.enabled=false`（Case B、較正待ち）またはRanking `DATA_UNAVAILABLE`（Case A）の場合も、日次結果を口頭で記録するだけでなく必ず`build-ranking-terminal-recommendation`を実行して`recommendation.json`を生成する
+- Config v6でSelectionが有効なRecommendation（`recommendation.schema_version=2`）を`build-selection-recommendation`/`risk-check`へ渡す場合、`--ranking`・`--selection`の両方が必須であり、`ranking.json`/`selection.json`のSHA256ハッシュチェーンが実際に一致することを`build-selection-recommendation`/`risk-check`自身が再検証する。片方だけの指定や、ハッシュチェーンが崩れた状態でTRADE推奨を通すことはできない
+- Selection Calibrationが`ranking.json`をObservationとして採用する前に、その上流アーティファクト一式（`event_gate.json`・`candidates.json`・`market_data.json`・`sources.json`・source matrix・`strategy_snapshot.yaml`）を、Ranking CLI自身が使う実際のContract関数で完全に再検証する。コホート一致だけで内容未検証の`ranking.json`はObservationとして数えない
 
 ## Codexの役割
 

@@ -209,7 +209,7 @@ py -B -m src.cli validate-event-research --event-research runs/YYYY-MM-DD/event_
 py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_gate.json
 ```
 
-`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（`recommendation.json` は `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない。この場合の`recommendation.json`生成手順は本ドキュメントの対象範囲外（Event Gateの規定に従う）。
 
 Rankingが使う実際の売買代金の調査は「Ranking用Actual Turnover Research」で `screen-market` より前に完了させる。Event Gateの工程では新たにTurnover Researchを行わない。Event Gate生成時点のInput Hashは、その後変更しない。
 
@@ -228,9 +228,15 @@ Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、�
 - Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
 - `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。これは`ranking.json`の`ranking_complete`とは別のフィールドであり、`ranking.json`が`ranking_complete=true`でも`candidate_pipeline.summary.ranking_complete`は`false`のままである（Rankingの完了はTRADE可能を意味しない）。
 - `REJECTED` を候補へ戻さない。
-- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合はSelectionを実行せず、日次結果を `DATA_UNAVAILABLE` とする。
-- `ranking_status=COMPLETE` かつ `config/strategy.yaml`（対象日の`strategy_snapshot.yaml`）の `selection.enabled` がfalse（閾値未較正）の場合もSelectionを実行せず、日次結果を「較正待ちの `NO_TRADE`」とする。
-- `ranking_status=COMPLETE` かつ `selection.enabled` がtrueの場合だけ、次の順でCLIを実行する。main agentはRank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断せず、CLIの出力をそのまま報告する。
+- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合（Case A）はSelectionを実行せず、`build-ranking-terminal-recommendation` を実行して `decision=DATA_UNAVAILABLE` の `recommendation.json`（schema_version 1）を生成する。
+- `ranking_status=COMPLETE` かつ `config/strategy.yaml`（対象日の`strategy_snapshot.yaml`）の `selection.enabled` がfalse（閾値未較正、Case B）の場合もSelectionを実行せず、`build-ranking-terminal-recommendation` を実行して `decision=NO_TRADE`（理由 `SELECTION_NOT_ACTIVE_PENDING_CALIBRATION`）の `recommendation.json` を生成する。
+
+  ```powershell
+  py -B -m src.cli build-ranking-terminal-recommendation --ranking runs/YYYY-MM-DD/ranking.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/recommendation.json
+  ```
+
+  Case A・Case Bのいずれも `recommendation.json` を必ず生成する。手で `recommendation.json` を作成することはない。
+- `ranking_status=COMPLETE` かつ `selection.enabled` がtrueの場合（Case C）だけ、次の順でCLIを実行する。main agentはRank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断せず、CLIの出力をそのまま報告する。
 
   ```powershell
   py -B -m src.cli build-selection --ranking runs/YYYY-MM-DD/ranking.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/selection.json

@@ -46,10 +46,22 @@ py -B -m pytest
 
 ### Selectionの3ケース（Ranking完了後の分岐）
 
-Ranking完了後、main agentは`build-selection`・`build-selection-recommendation`のCLIを実行し、その結果を報告するだけです。Rank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断することはありません。
+Ranking完了後、main agentはCLI（Case A/Bは`build-ranking-terminal-recommendation`、Case Cは`build-selection`・`build-selection-recommendation`）を実行し、その結果を報告するだけです。Rank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断することはなく、`recommendation.json`を手で作成することもありません。
 
-- **Case A（Ranking `DATA_UNAVAILABLE`）**: `ranking.json`の`ranking_status`が`DATA_UNAVAILABLE`の場合、Selectionを実行しない。日次結果は`DATA_UNAVAILABLE`で確定し、`recommendation.json`は生成しない。
-- **Case B（Ranking `COMPLETE` かつ Selection未設定）**: `ranking_status`は`COMPLETE`だが、`config/strategy.yaml`の`selection.enabled`がfalse（または閾値が`null`のまま較正待ち）の場合、`build-selection`を実行しない（実行してもSelection側がHard Errorで停止し`selection.json`を生成しない）。日次結果は「較正待ちのため`NO_TRADE`」として記録する。
+- **Case A（Ranking `DATA_UNAVAILABLE`）**: `ranking.json`の`ranking_status`が`DATA_UNAVAILABLE`の場合、Selectionを実行しない。`build-ranking-terminal-recommendation`を実行し、`decision=DATA_UNAVAILABLE`の`recommendation.json`（schema_version 1、`selection_reasons`は`ranking.reason_codes`の転記）を生成して日次結果を確定する。
+- **Case B（Ranking `COMPLETE` かつ Selection未設定）**: `ranking_status`は`COMPLETE`だが、`config/strategy.yaml`の`selection.enabled`がfalse（または閾値が`null`のまま較正待ち）の場合、`build-selection`を実行しない（実行してもSelection側がHard Errorで停止し`selection.json`を生成しない）。代わりに`build-ranking-terminal-recommendation`を実行し、`decision=NO_TRADE`・理由`SELECTION_NOT_ACTIVE_PENDING_CALIBRATION`の`recommendation.json`を生成する。
+
+  ```bash
+  py -m src.cli build-ranking-terminal-recommendation \
+    --ranking runs/<target_date>/ranking.json \
+    --candidates runs/<target_date>/candidates.json \
+    --candidate-pipeline runs/<target_date>/candidate_pipeline.json \
+    --research-window runs/<target_date>/research_window.json \
+    --sources runs/<target_date>/sources.json \
+    --config runs/<target_date>/strategy_snapshot.yaml \
+    --output runs/<target_date>/recommendation.json
+  ```
+
 - **Case C（Ranking `COMPLETE` かつ Selection有効）**: `ranking_status`が`COMPLETE`で`selection.enabled`がtrue（閾値も設定済み）の場合、次の順にCLIを実行する。
 
   ```bash
@@ -71,8 +83,8 @@ Ranking完了後、main agentは`build-selection`・`build-selection-recommendat
 
   `selection.json`の`selection_status`が`SELECTED`なら`recommendation.json`の`decision`は`TRADE`、`NO_TRADE`なら`decision`は`NO_TRADE`になる（`build-selection-recommendation`はSelectionの判定結果を機械的に転記するだけで、独自の判定は行わない）。`TRADE`の場合だけ、続けて`risk-check`へ`--selection runs/<target_date>/selection.json`を渡してRisk Engineを実行する。
 
-22. Case Cで`decision=TRADE`の場合だけ人間に保有数・当日取引数を確認し、`risk-check --selection`でRisk Engineを実行して`risk_result.json`を保存
-23. Case A・Case B、またはCase Cで`decision=NO_TRADE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+22. Case Cで`decision=TRADE`の場合だけ人間に保有数・当日取引数を確認し、`risk-check --selection ... --ranking ...`（両方必須。Selection駆動の`recommendation.json`はSHA256チェーンで`--selection`・`--ranking`の両方をRisk Engineへ渡さない限りHard Errorで停止する）でRisk Engineを実行して`risk_result.json`を保存
+23. Case A・Case B、またはCase Cで`decision`が`TRADE`以外の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
 24. `recommendation.md`と`report.md`を生成
 25. run artifact allowlist（`event_research.json`、`event_gate.json`、`ranking.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
 26. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告

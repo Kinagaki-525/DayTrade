@@ -147,8 +147,9 @@ def render_research_report(
             "## Hard Screening",
             *_screening_summary_lines(summary),
             "",
-            "## Codexによる比較評価",
-            "- Selectionは本番設定で無効のまま(閾値未決定)のため、Ranking Rank 1があってもTRADEへ進めない。",
+            "## 下流選定工程",
+            "- Ranking/Selectionの結果はこのレポートの入力に含まれないため、ここでは判定しない。",
+            "- 最終的な選定・注文判断は ranking.json / selection.json / recommendation.json を参照すること。",
             "- この文書は最終構造化成果物から生成し、途中判断や注文プレビューは残さない。",
         ]
     )
@@ -331,8 +332,6 @@ def _screening_summary_lines(
         f"{prefix}Screening完了: {_yes_no(summary.get('screening_complete'))}",
         f"{prefix}Ranking完了: {_yes_no(summary.get('ranking_complete'))}",
     ]
-    if summary.get("ranking_complete") is not True:
-        lines.append(f"{prefix}Selectionは本番設定で無効のため、TRADE候補は確定しない。")
     return lines
 
 
