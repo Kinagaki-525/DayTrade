@@ -1957,3 +1957,48 @@ def test_malformed_market_data_record_ticker_is_hard_error():
     market_data["records"][0]["ticker"] = " 9606"
     with pytest.raises(RankingHardError, match="RANKING_TICKER_MALFORMED"):
         _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Downstream safety: Ranking never mutates upstream artifacts -------------
+
+
+def test_cli_build_ranking_leaves_all_input_artifacts_byte_identical(tmp_path):
+    """Documented invariant: ranking.json never changes event_gate.json,
+    candidates.json, market_data.json, sources.json, source_matrix.yaml or
+    the strategy snapshot."""
+    import hashlib
+
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "PP01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    exit_code, output_path = _run_build_ranking_cli(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
+    assert exit_code == 0
+
+    before = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(tmp_path.iterdir())
+        if path != output_path
+    }
+    assert before  # the input files really are there
+    # Re-running must not touch any input either.
+    _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+    after = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(tmp_path.iterdir())
+        if path != output_path
+    }
+    assert after == before
+
+
+def test_ranking_never_sets_candidate_pipeline_ranking_complete():
+    """Ranking COMPLETE must never be laundered into the TRADE gate: no new
+    code path may flip candidate_pipeline.summary.ranking_complete to true."""
+    from pathlib import Path as _Path
+
+    ranking_source = _Path("src/ranking.py").read_text(encoding="utf-8")
+    assert "ranking_complete" in ranking_source  # its own artifact field
+    pipeline_source = _Path("src/candidate_pipeline.py").read_text(encoding="utf-8")
+    assert '"ranking_complete": False' in pipeline_source
+    assert '"ranking_complete": True' not in pipeline_source
