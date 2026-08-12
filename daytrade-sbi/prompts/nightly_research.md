@@ -32,6 +32,7 @@ runs/YYYY-MM-DD/
   candidate_pipeline.json
   event_research.json
   event_gate.json
+  ranking.json
   performance.json
   research.md
   recommendation.json
@@ -94,6 +95,26 @@ news_context
 
 ```powershell
 py -B -m src.cli apply-stage1 --market-research runs/YYYY-MM-DD/market_research.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/market_research.json
+```
+
+Stage 1 PASS候補が確定する。
+
+## Stage 2着手前のTSE上場確認（Fail Closed）
+
+Stage 2 Candidate Researchは `YAHOO_JP_HISTORY`（OHLCV）や `YAHOO_JP_NEWS`（ニュース）を含め、`.T` Suffix固定のYahoo!ファイナンスURLを使い得る。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` のURL templateはいずれも `https://finance.yahoo.co.jp/quote/{ticker}.T...` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
+
+そのため、`apply-stage1` の直後に、Stage 1 `PASS` 候補**全件**についてTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを、個別候補の除外ではなく**一括ゲート**として判定する。手順の並びは次の通り。
+
+`apply-stage1` → Stage 1 PASS候補全件のTSE確認（一括ゲート） → 全件確認成功の場合のみ `plan-stage2-batches` を実行
+
+- Stage 1 `PASS` 候補全件についてTSE上場を確認できた場合のみ `plan-stage2-batches` を実行し、Stage 2 Candidate Researchを全候補について通常どおり進める。
+- **1件でも確認不能なら `plan-stage2-batches` を実行せず、以降の全ステージ（Stage 2 / Turnover Research / Event Research / Ranking）を開始しない。** これは個別候補をStage 1 `PASS`集合から除外・スキップして残りの候補だけ進める仕組みではない。`stage1_status` を書き換えたり、確認できない候補だけを取り除いたりしない。夜間実行全体をこの時点でFail Closedとして停止する。
+- `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。
+- 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
+
+Stage 1 PASS候補全件のTSE確認に成功した場合のみ実行。
+
+```powershell
 py -B -m src.cli plan-stage2-batches --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
 ```
 
@@ -105,9 +126,61 @@ py -B -m src.cli plan-stage2-batches --market-research runs/YYYY-MM-DD/market_re
 
 Subagentを使った場合は `market_research.subagent_batches[]` に `REQUESTED -> RETURNED -> VALIDATED -> MERGED` を記録する。`RETURNED` または `VALIDATED` なのに `merged_candidate_codes` に入っていない候補は `SUBAGENT_RESULT_NOT_MERGED` として pipeline incomplete にする。
 
+## Ranking用Actual Turnover Research
+
+Stage 2 Candidate Researchが完了したら、**`screen-market` を実行する前に**、Rankingが使う実際の売買代金（`turnover`）を調査する。対象はStage 1 `PASS`候補だけで、Discovery Candidate全件ではない。
+
+この調査は必ず `screen-market` より前に完了させる。`candidates.json` の `features.turnover` は `screen-market` が `market_data.json` の `turnover` から生成するため、`screen-market` の後にTurnover Researchを行うとRankingが要求する4箇所整合（`sources.json.source_attempts` / `sources.json.sources` / `market_data.json.turnover` / `candidates.json.features.turnover`）が成立しない。
+
+Turnover ResearchはStage 2内の補助Researchとして扱い、`market_research.json` の `source_checks[]` には新しいcheckを追加しない。Turnover状態のSSOTは従来どおり `sources.json` の `source_attempts` である。
+
+### Yahoo!ファイナンス Symbol Suffixの運用前提（Fail Closed）
+
+`YAHOO_JP_QUOTE` のURL templateは `https://finance.yahoo.co.jp/quote/{ticker}.T` であり、`.T`は東京証券取引所上場銘柄のSuffixである。TSE上場確認は「Stage 2着手前のTSE上場確認（Fail Closed）」で既にStage 2開始前に**全件一括ゲート**として完了している。つまりTurnover Researchが実行される時点では、Stage 1 `PASS`候補全件についてTSE上場確認が済んでいる状態しかあり得ない（1件でも確認不能ならその時点で夜間実行全体が停止しており、Turnover Researchまで到達しない）。
+
+- `.T` は全対象候補に共通して使う（一括ゲート通過済みのため）。
+- 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
+
+### Turnover Source Attempt契約
+
+`status=FOUND` のTurnover Source Attemptは以下の契約を厳密に満たすこと（`src/ranking.py` が値そのままではなくこの契約を再検証する）:
+
+- `source_id=YAHOO_JP_QUOTE`
+- `source_role=PRIMARY`
+- `criticality=TRADE_CRITICAL`
+- `information_type=TURNOVER`
+- `candidate_code=`（対象銘柄のticker）
+- `target_date=`（当日のtarget_date）
+- `status=FOUND`
+- `result_count=1`
+- `coverage_status=COMPLETE`
+- `covered_dates=[previous_trading_day]`（前営業日1件のみ）
+- `values`は要素数ちょうど1件で、以下を満たす:
+  - `field_name=turnover`
+  - `trading_date=`（previous_trading_day）
+  - `raw_value`: 半角数字のみの文字列、または3桁ごとにカンマ区切りされた数字文字列のいずれか（`^(?:\d+|\d{1,3}(?:,\d{3})+)$` に一致する形式。カンマなしの純粋な数字列も、正しく3桁区切りされたカンマ付き数字列も両方受理される。それ以外の区切り方や余分な文字は不可）
+  - `raw_unit=THOUSAND_YEN`
+  - `canonical_value_yen`: `raw_value`からカンマを除去して数値化した値 × 1000 と一致する数字のみの文字列
+  - `source_ref`: `sources.json`の対応するレコードを一意に指す参照
+
+### 保存先（FOUND時）
+
+`FOUND` の場合、同一のCanonical Turnover値（円）が最終的に次の4箇所へ揃う。
+
+1. `sources.json` の `source_attempts[]`（上記契約のCanonical Attempt）
+2. `sources.json` の `sources[]`（`source_ref` が一致するFOUNDレコード）
+3. `market_data.json` の該当recordの `turnover`
+4. `screen-market` 実行後の `candidates.json` の `features.turnover.value`（`market_data.json` からmirrorされる）
+
+`estimated_turnover` をRankingのTurnoverとして使わない。
+
+### 失敗時（NOT_FOUND / NOT_YET_AVAILABLE / ACCESS_FAILED / PARSE_FAILED / STALE / CONFLICT）
+
+失敗したSource Attemptを推測で補完せず、そのままの `status` で `sources.json` に保存する。加えて `market_data.json` の `turnover` を `null` にし、`screen-market` 後の `candidates.json` の `features.turnover.value` も `null` にする。古い `FOUND` 値を残さない（Rankingは残留値を矛盾として Hard Error にする）。この場合Rankingは `ranking_status=DATA_UNAVAILABLE` となる。
+
 ## 検証とパイプライン
 
-Web調査で `market_research.json`、`sources.json`、`market_data.json` を保存したら、必ず次を逐次実行する。
+Ranking用Actual Turnover Researchまで完了し、Web調査で `market_research.json`、`sources.json`、`market_data.json` を保存したら、必ず次を逐次実行する。
 
 ```powershell
 py -B -m src.cli validate-market-research --market-research runs/YYYY-MM-DD/market_research.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --output runs/YYYY-MM-DD/market_research_validation.json
@@ -136,14 +209,26 @@ py -B -m src.cli validate-event-research --event-research runs/YYYY-MM-DD/event_
 py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_gate.json
 ```
 
-`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（Ranking自体は未実装のため、`recommendation.json` は常に `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（`recommendation.json` は `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+
+Rankingが使う実際の売買代金の調査は「Ranking用Actual Turnover Research」で `screen-market` より前に完了させる。Event Gateの工程では新たにTurnover Researchを行わない。Event Gate生成時点のInput Hashは、その後変更しない。
+
+## Ranking
+
+`event_gate.json` が `ranking_ready=true` の場合だけ `build-ranking` を実行する。
+
+```powershell
+py -B -m src.cli build-ranking --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/ranking.json
+```
+
+Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、実際の売買代金（desc）と呼値/発動価格の相対比（asc）の2 FeatureだけをCompetition Rankingし、単純Rank合計（`rank_points`）で並べ替える。AI判断・Score・Weight・閾値・推定売買代金は使わない。1件でも売買代金データが揃わない候補があれば、Ranking全体を`ranking_status=DATA_UNAVAILABLE`とする（Fail Closed、部分的なRankingは行わない）。`ranking.json`は上流Artifact（`event_gate.json`、`candidates.json`、`market_data.json`、`sources.json`、`source_matrix.yaml`、`strategy_snapshot.yaml`、`candidate_pipeline.json`）を一切変更しない。
 
 ## Codex比較とRecommendation
 
 - Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
-- `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。
+- `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。これは`ranking.json`の`ranking_complete`とは別のフィールドであり、`ranking.json`が`ranking_complete=true`でも`candidate_pipeline.summary.ranking_complete`は`false`のままである（Rankingの完了はTRADE可能を意味しない）。
 - `REJECTED` を候補へ戻さない。
-- Ranking未実装中は、候補が残っている場合も `NO_TRADE` とし、理由にRanking未実装を記録する。必要データが外部要因で揃わない場合だけ `DATA_UNAVAILABLE`。
+- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合は日次結果を `DATA_UNAVAILABLE` とする。`ranking_status=COMPLETE` の場合でも、Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、`NO_TRADE` とし、理由にSelection未実装を記録する。Ranking `COMPLETE` はTRADE可能を意味しない。
 - `recommendation.json` には `research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて `source_statuses` を保存する。
 - `pipeline_summary` は `candidate_pipeline.summary` から転記し、推測で変更しない。
 

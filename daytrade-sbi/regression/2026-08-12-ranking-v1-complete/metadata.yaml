@@ -1,0 +1,79 @@
+target_date: 2026-08-12
+decision: RANKING_COMPLETE_NOT_TRADE
+regression_type: MINIMAL_RANKING_REGRESSION
+ranking_status: COMPLETE
+event_gate_pass_candidates: 1
+canonical_run_dir: "runs/2026-08-12"
+purpose: >
+  Minimal Ranking Regression: it reproduces the Event Gate -> Ranking trust
+  boundary only, not the whole nightly pipeline. The artifacts are generated
+  with the actual production functions (screen_market_record() for
+  candidates.json, build_order_plan() for the order plan, build_ranking() for
+  ranking.json) rather than hand-authored, and every sha256 recorded in
+  event_gate.json/ranking.json input_hashes is the genuine hash of the
+  sibling artifact bytes (or of config/source_matrix.yaml); there are no
+  placeholder hashes, and tests/test_ranking_regression.py asserts this.
+  Ranking COMPLETE never implies TRADE-eligibility -- no recommendation.json
+  is included, since Selection/rank1->TRADE is intentionally unimplemented.
+
+synthetic_data_notice: >
+  Every price, volume and turnover value in this fixture is SYNTHETIC. They
+  are chosen to satisfy the production Regression Contract (a candidate that
+  really can pass Hard Screening with capital.total_yen = 100000 and
+  position_size = 100 shares, i.e. entry_limit * shares <= capital), and they
+  do NOT represent real market data for ticker 7203 or any other issuer. Do
+  not read any market fact out of this directory.
+
+not_stored:
+  - artifact: runs/2026-08-12/candidate_pipeline.json
+    reason: >
+      Upstream of Event Gate, never read by Ranking. event_gate.json still
+      records candidate_pipeline_sha256 as Opaque Upstream Provenance, but a
+      Minimal Ranking Regression does not store or re-verify the referenced
+      file: reproducing the Candidate Pipeline is Pipeline scope, not Ranking
+      scope.
+  - artifact: runs/2026-08-12/event_research.json
+    reason: >
+      Upstream of Event Gate, never read by Ranking. event_gate.json still
+      records event_research_sha256 as Opaque Upstream Provenance, but the
+      referenced file is not stored or re-verified here for the same reason.
+  - artifact: runs/2026-08-12/market_research.json
+    reason: >
+      Market Research is upstream of screen-market and is not an input to
+      Ranking. The hash chain Ranking re-verifies covers only
+      candidates.json / sources.json / strategy_snapshot.yaml.
+
+# Why each artifact is kept, so the set is explicit rather than implicit.
+# Classification:
+#   DIRECT INPUT        - passed to build-ranking / validate_ranking_*
+#   EXPECTED OUTPUT     - the recorded artifact the rebuild is compared to
+artifacts:
+  runs/2026-08-12/event_gate.json:
+    classification: DIRECT INPUT
+    note: >
+      Ranking's primary precondition input. Its own input_hashes are
+      re-verified against the candidates/sources/strategy-snapshot bytes fed
+      to build-ranking (hash chain). Its event_research_sha256 and
+      candidate_pipeline_sha256 stay recorded as Opaque Upstream Provenance.
+  runs/2026-08-12/candidates.json:
+    classification: DIRECT INPUT
+    note: >
+      Produced by the production screener screen_market_record(); the single
+      candidate is ELIGIBLE / screening PASS with an affordable order_plan
+      (estimated_purchase_amount 90200 <= capital.total_yen 100000).
+  runs/2026-08-12/market_data.json:
+    classification: DIRECT INPUT
+  runs/2026-08-12/sources.json:
+    classification: DIRECT INPUT
+    note: >
+      Also the Source Ledger validated with source_base_dir pointing at this
+      run directory. Carries the canonical TRADE_CRITICAL YAHOO_JP_QUOTE /
+      TURNOVER attempt plus the matching FOUND source record.
+  runs/2026-08-12/strategy_snapshot.yaml:
+    classification: DIRECT INPUT
+    note: config_schema_version 5 (includes the ranking block).
+  runs/2026-08-12/ranking.json:
+    classification: EXPECTED OUTPUT
+    note: >
+      Rebuilt by build_ranking() and compared field-for-field except
+      generated_at.

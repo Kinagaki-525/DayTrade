@@ -27,25 +27,27 @@ py -B -m pytest
 8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
 9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
 10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
-11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
-12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
-13. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
-15. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
-16. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
-17. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
-18. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
-19. Event Gateの結果に応じて次のとおりFail Closedで分岐する。新しいReason CodeやSchemaは追加しない
+11. Stage 2着手前のTSE上場確認（Fail Closed、全件一括ゲート）: `apply-stage1`の直後、`plan-stage2-batches`を実行する前に、Stage 1 `PASS`候補**全件**について、検証済みSource Evidenceから東京証券取引所上場であると確認できるかを一括で判定する。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`.T`（東証）Suffix固定でDiscoveryは`ALL_MARKETS`のため、確認できない候補が混ざり得る。**1件でも確認できない候補があれば`plan-stage2-batches`を実行せず、Stage 2 Candidate Research・Turnover Research・Event Research・Rankingを含む以降の全ステージを開始せず、夜間実行全体をこの時点で停止する。** 個別候補をStage 1 `PASS`集合から除外・スキップして残りだけ進めることはしない
+12. Stage 1 `PASS`候補全件のTSE上場確認が成功した場合のみ`plan-stage2-batches`でStage 2調査対象をbatch化し、全候補についてCandidate Researchを実施・merge
+13. Ranking用Actual Turnover Research: Stage 2 Candidate Researchのmerge完了後、**`screen-market`を実行する前に**、（TSE上場確認は手順11で全件一括ゲート済みの）Stage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
+14. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
+15. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
+16. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
+17. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+18. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
+19. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
+20. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
+21. Event Gateの結果に応じて次のとおりFail Closedで分岐する。新しいReason CodeやSchemaは追加しない
     - `ranking_ready=false`の場合、Rankingを開始しない
     - Event Gate候補に`gate_status=DATA_UNAVAILABLE`が1件でも存在する場合、Rankingを開始せず日次結果を`DATA_UNAVAILABLE`とする
     - Event Gateが正常完了し`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合、Rankingを開始せず`NO_TRADE`とする
-    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となる。ただしRankingは未実装のため、main agentが独自比較して`TRADE`を作らず、既存フィールドでRanking未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
+    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となり`build-ranking`を実行して`ranking.json`を生成する。`ranking.json`の`ranking_status`は`COMPLETE`または`DATA_UNAVAILABLE`のいずれかであり、いずれの場合もRank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、main agentが独自比較して`TRADE`を作ることはない。`ranking_status=DATA_UNAVAILABLE`の場合は日次結果を`DATA_UNAVAILABLE`とし、`ranking_status=COMPLETE`の場合は既存フィールドでSelection未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
     - `REJECT`・`DATA_UNAVAILABLE`のEvent Gate候補はいずれのケースでもRankingへ渡さない
-20. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-21. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
-22. `recommendation.md`と`report.md`を生成
-23. run artifact allowlist（`event_research.json`、`event_gate.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
-24. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+22. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+23. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+24. `recommendation.md`と`report.md`を生成
+25. run artifact allowlist（`event_research.json`、`event_gate.json`、`ranking.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
+26. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 

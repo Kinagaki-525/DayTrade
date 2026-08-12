@@ -48,7 +48,17 @@
 - 適時開示・重要材料が出た銘柄の扱い
 - ストップ高・ストップ安付近の銘柄の扱い
 - 低位株をどこまで許容するか
-- 候補が複数ある場合の順位付け
+- 候補が複数ある場合の順位付け: `ranking-v1`として実装済み（`src/ranking.py`）。Event Gate `PASS`候補だけを対象に、実際の売買代金desc・呼値/発動価格の相対比ascの2 FeatureをCompetition RankingしてRank合計で並べる。ただしRank 1を`TRADE`へ変換する最終選定（Selection / Absolute Quality Gate）は未実装のまま。以下は引き続き未決定：
+  - 最低売買代金の閾値（Absolute Quality Gateの一部）
+  - 呼値/発動価格の相対比の上限閾値（Absolute Quality Gateの一部）
+  - Absolute Quality Gate自体の仕様
+  - Ranking Rank 1をTRADEへ変換する処理
+  - Risk EngineでRank 1がREJECTEDになった場合にRank 2へフォールバックするか
+  - 絶対的なNO_TRADE条件（Selectionの一部）
+- Yahoo Finance symbol suffix resolution（未決定）: `YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`https://finance.yahoo.co.jp/quote/{ticker}.T...`で`.T`（東証）固定だが、Discoveryの`default_discovery_market_filter`は`ALL_MARKETS`のため、東証以外・上場市場不明の候補が混ざり得る。現時点でCandidateごとに「東証上場である」ことを構造的に保証するField（enum化された市場コード等）は存在せず、`market_data.json`の`market`はSource付きだが自由文字列である。以下は未決定：
+  - 非東証市場向けSuffix（`.F` / `.S` / `.N` など）のMapping。推測で追加しない
+  - Candidateごとの上場市場を機械可読に保証するField/Contractを持つかどうか
+  - 現在の運用: `apply-stage1`の直後、`plan-stage2-batches`を実行する前に、Stage 1 `PASS`候補全件についてTSE上場確認を**一括ゲート**として行う。1件でも検証済みSource Evidenceから東証上場を確認できない候補があれば、`plan-stage2-batches`を実行せず、`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のいずれも取得せず、`.T`を推測して取得せず、Source Attemptを`FOUND`にせず、Stage 2以降（Turnover Research・Event Research・Ranking）を含む夜間実行全体をその時点で停止する（Fail Closed。個別候補の除外・スキップではない。新Reason Codeは追加しない）
 - 条件該当銘柄がない日は取引しないルール
 
 最終的に、

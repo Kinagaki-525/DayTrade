@@ -156,8 +156,8 @@ def snapshot_strategy_config(
 def validate_strategy_config(config: dict[str, Any]) -> None:
     """Validate the strategy configuration and its non-negotiable safety rules."""
     schema_version = config.get("config_schema_version")
-    if schema_version not in {2, 3, 4}:
-        raise ValueError("config_schema_version must be 2, 3, or 4")
+    if schema_version not in {2, 3, 4, 5}:
+        raise ValueError("config_schema_version must be 2, 3, 4, or 5")
     _non_empty_string(config.get("strategy_version"), "strategy_version")
     if config.get("validation_status") != "unvalidated":
         raise ValueError("validation_status must be 'unvalidated'")
@@ -221,7 +221,10 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
 
     screening = _required_mapping(config, "screening")
     normalize_screening_rules(screening)
-    if schema_version == 4:
+    if schema_version == 5:
+        _validate_event_gate_config_v4(config)
+        _validate_ranking_config(config)
+    elif schema_version == 4:
         _validate_event_gate_config_v4(config)
     elif schema_version == 3:
         _validate_event_gate_config(config)
@@ -303,6 +306,108 @@ def _validate_event_gate_config_v4(config: dict[str, Any]) -> None:
     post_cutoff = _required_mapping(event_gate, "post_cutoff")
     if post_cutoff.get("recheck_required") is not True:
         raise ValueError("event_gate.post_cutoff.recheck_required must be true")
+
+
+RANKING_ALLOWED_TOP_KEYS = frozenset(
+    {
+        "enabled",
+        "version",
+        "method",
+        "features",
+        "feature_rank_method",
+        "aggregation",
+        "tie_break",
+        "missing_data_policy",
+    }
+)
+RANKING_ALLOWED_FEATURE_KEYS = frozenset({"turnover", "relative_tick_size"})
+RANKING_ALLOWED_TURNOVER_KEYS = frozenset(
+    {"direction", "source_policy", "estimated_allowed"}
+)
+RANKING_ALLOWED_TICK_KEYS = frozenset({"direction"})
+RANKING_ALLOWED_AGGREGATION_KEYS = frozenset({"method"})
+RANKING_FORBIDDEN_FIELDS = frozenset(
+    {
+        "score",
+        "weight",
+        "weights",
+        "confidence",
+        "expected_return",
+        "expected_profit",
+        "probability",
+        "normalization",
+        "threshold",
+        "thresholds",
+        "minimum_turnover",
+        "maximum_relative_tick_size",
+    }
+)
+
+
+def _reject_ranking_block_fields(block: dict[str, Any], allowed: frozenset[str], path: str) -> None:
+    """Reject anything outside a ranking block's fixed field set.
+
+    The permanently-out-of-scope names (scores, weights, confidences,
+    normalization, and the minimum-turnover / maximum-relative-tick
+    thresholds) are reported first and by name: they are a deliberate scope
+    decision rather than a typo, and an operator must be told so explicitly.
+    Checking them after the generic unknown-field check would make that
+    message unreachable, because every forbidden name is also unknown.
+    """
+    forbidden = set(block) & RANKING_FORBIDDEN_FIELDS
+    if forbidden:
+        raise ValueError(f"{path} must not define: {', '.join(sorted(forbidden))}")
+    unknown = set(block) - allowed
+    if unknown:
+        raise ValueError(f"{path} contains unknown field(s): {', '.join(sorted(unknown))}")
+
+
+def _validate_ranking_config(config: dict[str, Any]) -> None:
+    ranking = _required_mapping(config, "ranking")
+    _reject_ranking_block_fields(ranking, RANKING_ALLOWED_TOP_KEYS, "ranking")
+    if ranking.get("enabled") is not True:
+        raise ValueError("ranking.enabled must be true")
+    if ranking.get("version") != "ranking-v1":
+        raise ValueError("ranking.version must be 'ranking-v1'")
+    if ranking.get("method") != "ordinal_rank_sum":
+        raise ValueError("ranking.method must be 'ordinal_rank_sum'")
+    if ranking.get("feature_rank_method") != "competition":
+        raise ValueError("ranking.feature_rank_method must be 'competition'")
+    if ranking.get("missing_data_policy") != "fail_closed":
+        raise ValueError("ranking.missing_data_policy must be 'fail_closed'")
+    if ranking.get("tie_break") != [
+        "turnover_desc",
+        "relative_tick_size_asc",
+        "ticker_asc",
+    ]:
+        raise ValueError("ranking.tie_break must be fixed")
+
+    features = _required_mapping(ranking, "features", "ranking")
+    _reject_ranking_block_fields(features, RANKING_ALLOWED_FEATURE_KEYS, "ranking.features")
+    turnover = _required_mapping(features, "turnover", "ranking.features")
+    _reject_ranking_block_fields(
+        turnover, RANKING_ALLOWED_TURNOVER_KEYS, "ranking.features.turnover"
+    )
+    if turnover.get("direction") != "desc":
+        raise ValueError("ranking.features.turnover.direction must be 'desc'")
+    if turnover.get("source_policy") != "actual_only":
+        raise ValueError("ranking.features.turnover.source_policy must be 'actual_only'")
+    if turnover.get("estimated_allowed") is not False:
+        raise ValueError("ranking.features.turnover.estimated_allowed must be false")
+
+    relative_tick_size = _required_mapping(features, "relative_tick_size", "ranking.features")
+    _reject_ranking_block_fields(
+        relative_tick_size, RANKING_ALLOWED_TICK_KEYS, "ranking.features.relative_tick_size"
+    )
+    if relative_tick_size.get("direction") != "asc":
+        raise ValueError("ranking.features.relative_tick_size.direction must be 'asc'")
+
+    aggregation = _required_mapping(ranking, "aggregation", "ranking")
+    _reject_ranking_block_fields(
+        aggregation, RANKING_ALLOWED_AGGREGATION_KEYS, "ranking.aggregation"
+    )
+    if aggregation.get("method") != "rank_sum":
+        raise ValueError("ranking.aggregation.method must be 'rank_sum'")
 
 
 def _validate_v2_legacy_event_rules(screening: dict[str, Any]) -> None:
@@ -453,10 +558,19 @@ def _required(mapping: dict[str, Any], key: str, path: str = "configuration") ->
     return mapping[key]
 
 
-def _required_mapping(config: dict[str, Any], key: str) -> dict[str, Any]:
-    value = _required(config, key)
+def _required_mapping(
+    config: dict[str, Any], key: str, path: str = "configuration"
+) -> dict[str, Any]:
+    """Fetch a required nested mapping.
+
+    ``path`` names the block ``config`` itself is, so a nested lookup can
+    report ``ranking.features`` instead of the ambiguous top-level-sounding
+    ``configuration.features``. It defaults to the top-level block name used
+    by every pre-existing caller, so their messages are unchanged.
+    """
+    value = _required(config, key, path)
     if not isinstance(value, dict):
-        raise ValueError(f"{key} must be a mapping")
+        raise ValueError(f"{key} must be a mapping" if path == "configuration" else f"{path}.{key} must be a mapping")
     return value
 
 

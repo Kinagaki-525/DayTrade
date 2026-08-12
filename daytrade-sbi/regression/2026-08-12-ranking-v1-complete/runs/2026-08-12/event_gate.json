@@ -1,0 +1,122 @@
+{
+  "schema_version": 2,
+  "event_gate_version": "event-gate-v1",
+  "target_date": "2026-08-12",
+  "previous_trading_day": "2026-08-10",
+  "event_window_start": "2026-08-10T00:00:00+09:00",
+  "event_gate_as_of": "2026-08-11T21:00:00+09:00",
+  "generated_at": "2026-08-12T13:35:34.670319+00:00",
+  "strategy_version": "v1",
+  "config_sha256": "b4ff2bd42ee1eeaefe451edaa2ec0d0957bfd27726f2972ad4f896a5c78e8e09",
+  "input_hashes": {
+    "event_research_sha256": "4520cded794e7905cdd645180698f7af3dd6ecec6301a82517e16cdb720ab358",
+    "candidate_pipeline_sha256": "3ab4d7a0cb14e949a1f191f36980670dfd2d050cee4a07745cd0a256cd2962a8",
+    "candidates_sha256": "609ee66c76031270fda28dda2dec7666118b429ab8ddc9fad89793e789c2e262",
+    "sources_sha256": "82829899a37a2cde55bbae215416ab170fb8821e4af8ea9af409131a15d1af5b",
+    "strategy_snapshot_sha256": "f81751ed61f6b1843fb5b3722cb2cfb0cc06c0580bdd73026bba099d96686236"
+  },
+  "upstream_candidate_tickers": [
+    "7203"
+  ],
+  "event_gate_input_tickers": [
+    "7203"
+  ],
+  "event_gate_complete": true,
+  "ranking_ready": true,
+  "ranking_block_reasons": [],
+  "summary": {
+    "input_count": 1,
+    "pass_count": 1,
+    "reject_count": 0,
+    "data_unavailable_count": 0,
+    "rule_counts": [
+      {
+        "rule_id": "earnings_on_target_date",
+        "pass_count": 1,
+        "reject_count": 0,
+        "data_unavailable_count": 0
+      },
+      {
+        "rule_id": "earnings_on_previous_trading_day",
+        "pass_count": 1,
+        "reject_count": 0,
+        "data_unavailable_count": 0
+      },
+      {
+        "rule_id": "tdnet_disclosure_in_event_window",
+        "pass_count": 1,
+        "reject_count": 0,
+        "data_unavailable_count": 0
+      },
+      {
+        "rule_id": "dangerous_news_with_primary_confirmation",
+        "pass_count": 1,
+        "reject_count": 0,
+        "data_unavailable_count": 0
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "ticker": "7203",
+      "gate_status": "PASS",
+      "reason_codes": [],
+      "rule_evaluations": [
+        {
+          "rule_id": "earnings_on_target_date",
+          "result": "PASS",
+          "reason_codes": [],
+          "source_ids": [
+            "JPX_EARNINGS_SCHEDULE",
+            "COMPANY_IR"
+          ],
+          "source_attempt_ids": [
+            "ir-7203",
+            "jpx_earnings-7203"
+          ],
+          "evidence_ids": []
+        },
+        {
+          "rule_id": "earnings_on_previous_trading_day",
+          "result": "PASS",
+          "reason_codes": [],
+          "source_ids": [
+            "JPX_TDNET",
+            "COMPANY_IR_DISCLOSURE"
+          ],
+          "source_attempt_ids": [
+            "ir_disclosure-7203",
+            "tdnet-7203"
+          ],
+          "evidence_ids": []
+        },
+        {
+          "rule_id": "tdnet_disclosure_in_event_window",
+          "result": "PASS",
+          "reason_codes": [],
+          "source_ids": [
+            "JPX_TDNET"
+          ],
+          "source_attempt_ids": [
+            "tdnet-7203"
+          ],
+          "evidence_ids": []
+        },
+        {
+          "rule_id": "dangerous_news_with_primary_confirmation",
+          "result": "PASS",
+          "reason_codes": [],
+          "source_ids": [
+            "YAHOO_JP_NEWS",
+            "KABUTAN_NEWS"
+          ],
+          "source_attempt_ids": [
+            "kabutan_news-7203",
+            "yahoo_news-7203"
+          ],
+          "evidence_ids": []
+        }
+      ]
+    }
+  ]
+}

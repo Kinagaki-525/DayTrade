@@ -7,18 +7,21 @@ Codex: Web調査・出典保存（sources.json）・Event Research（企業固�
   ↓
 Python: データ検証・固定条件スクリーニング・Event Gate判定・価格計算・Risk Engine
   ↓
-Ranking（未実装）: Event Gate PASS候補だけを入力とする次段の順位付け工程（詳細未定）
+Ranking（ranking-v1）: Event Gate PASS候補だけを入力とする決定論的な順位付け（実際の売買代金desc・呼値/発動価格の相対比asc、単純Rank合計）
+  ↓
+Selection / Absolute Quality Gate（未実装）: Ranking結果からRank 1をTRADEへ変換する工程
   ↓
 人間: 出典と注文案の最終確認・SBI株アプリへの手入力・実績記録
 ```
 
-Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Classificationなどの構造化に限られ、PASS/REJECT/DATA_UNAVAILABLEの判定や候補比較は行いません。PythonはHard ScreeningとEvent Gateで決定論的に判定し、AIの代わりに銘柄を評価しません。Ranking（未実装）はEvent Gate `PASS`候補だけを入力として受け取る次段の工程ですが、詳細な責務、入出力Artifact、順位付け方法、最終1銘柄選定方法、`TRADE`生成責務は未決定であり、別途要件定義します。Ranking未実装の間は、Event Gate `PASS`候補が存在してもmain agentが独自に比較して`TRADE`を作ることはなく、`NO_TRADE`または`DATA_UNAVAILABLE`を保存します。人間だけが実際の注文を決定・入力します。
+Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Classificationなどの構造化に限られ、PASS/REJECT/DATA_UNAVAILABLEの判定や候補比較は行いません。PythonはHard ScreeningとEvent Gateで決定論的に判定し、AIの代わりに銘柄を評価しません。Ranking（ranking-v1）はEvent Gate `PASS`候補だけを入力として受け取り、実際の売買代金（`turnover`）の降順と、呼値/発動価格の相対比（`relative_tick_size`）の昇順という2つのFeatureだけをCompetition RankingしてRank合計で並べ替えます。AI・スコア・Weight・閾値は使いません。Rankingは`ranking.json`を生成するだけで、Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは今回実装しません。Ranking `COMPLETE`はTRADE可能を意味しません。main agentが独自に比較して`TRADE`を作ることはなく、Selectionが実装されるまで`NO_TRADE`または`DATA_UNAVAILABLE`を保存します。人間だけが実際の注文を決定・入力します。
 
 ## 責務境界
 
 - AI（Codex） = Research / Classification（Web調査で得たSource Attempt・Evidenceの`sources.json`への保存、Event ResearchのNews Classification）。PASS/REJECT/DATA_UNAVAILABLEを決定しない。
 - Python = Validation / Screening / Event Gate（市場データ検証、Hard Screening、Event Gateの決定論的PASS/REJECT/DATA_UNAVAILABLE判定）。
-- Ranking（未実装） = Event Gate `PASS`候補だけを入力とする次段の銘柄順位付け工程。詳細な責務、入出力Artifact、順位付け方法、最終1銘柄選定方法、`TRADE`/`NO_TRADE`生成責務は未決定であり、別途要件定義する。実装されるまでTRADE推奨は作成しない。
+- Ranking（ranking-v1） = Event Gate `PASS`候補だけを入力とする決定論的な銘柄順位付け工程（`src/ranking.py`、`ranking.json`）。実際の売買代金desc・呼値/発動価格の相対比ascの2 Featureだけを単純Rank合計で並べる。AI・スコア・Weightは使わない。Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装であり、別途要件定義する。実装されるまでTRADE推奨は作成しない。
+- Rankingが使う実際の売買代金（`YAHOO_JP_QUOTE`）は、Stage 2 Candidate Researchの後・`screen-market`の前に調査して `sources.json` と `market_data.json.turnover` へ保存する。`candidates.json` の `features.turnover` は `screen-market` が `market_data.json` から生成するため、この順序でなければRankingが要求する4箇所整合が成立しない。
 
 ## AI実行構成
 
@@ -43,6 +46,7 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 | `src/screening.py` | Candidate Research済みの検証済み値だけでHard Screeningを行い、Rule評価、Source Provenance、分析Featureを保存 |
 | `src/event_research.py` | Event Research: Hard Screening `PASS`候補についてEvent Research用Artifactを管理する。Web調査で得たSource Attempt・Evidence自体は`sources.json`を正本とし、`event_research.json`にはそれらへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Gate Input Candidate情報を保存する。PASS/REJECT/DATA_UNAVAILABLEは判定しない |
 | `src/event_gate.py` | Event Gate: 保存済みArtifactから決算日・前営業日決算・TDnet開示・一次確認済み危険ニュースを決定論的に評価し、`event_gate.json`へPASS/REJECT/DATA_UNAVAILABLEを保存 |
+| `src/ranking.py` | Ranking v1: Event Gate `PASS`候補だけを対象に、実際の売買代金と呼値/発動価格の相対比の2 FeatureをCompetition Rankingし、単純Rank合計で`ranking.json`を生成する純粋関数。Selection/`TRADE`変換は行わない |
 | `src/strategy.py` | 前日高値ブレイクの価格計算 |
 | `src/risk.py` | AI案から独立した固定リスク検証。値は修正しない |
 | `src/reports.py` | PASS・REJECTED・NO_TRADE・DATA_UNAVAILABLEに応じた手動確認レポート |
@@ -66,10 +70,10 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 ## 状態
 
 - `ELIGIBLE`: 市場データ検証と設定済み固定条件を通過。取引推奨ではない。
-- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Event Gateでは対象日の決算・前営業日決算・TDnet開示・一次確認済み危険ニュースのいずれにも該当しないと判定された状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking完了までは取引推奨ではない。
+- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Event Gateでは対象日の決算・前営業日決算・TDnet開示・一次確認済み危険ニュースのいずれにも該当しないと判定された状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking `COMPLETE`後も、最終選定（Selection / Absolute Quality Gate）が実装・完了するまで取引推奨ではない。
 - `REJECT`: Hard Screeningの有効ruleにより候補から除外、またはEvent Gateで決算・TDnet開示・一次確認済み危険ニュースが確認され候補から除外された状態。Rankingへ渡さない。
-- `TRADE`: Rankingおよび最終選定の仕様確定後に生成可能となる、Event Gate `PASS`候補から選ばれる1銘柄の注文案。誰がどのように生成するかは今回確定しない。Ranking未実装中は生成しない。Risk Engine通過前は採用不可。
-- `NO_TRADE`: Event Gateが正常完了し、`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合の結果。Ranking未実装中にEvent Gate `PASS`候補が存在する場合も、Ranking未実装（`RANKING_NOT_IMPLEMENTED`相当の理由を記録）として`NO_TRADE`を保存できる。注文を作らない。
+- `TRADE`: 最終選定（Selection / Absolute Quality Gate）の仕様確定後に生成可能となる、Ranking結果から選ばれる1銘柄の注文案。誰がどのように生成するかは今回確定しない。Selection未実装中は生成しない。Ranking `COMPLETE`やRank 1の存在だけでは生成しない。Risk Engine通過前は採用不可。
+- `NO_TRADE`: Event Gateが正常完了し、`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合の結果。Rankingが`COMPLETE`しRank 1が存在する場合も、Selection未実装（Selection未実装である旨を既存フィールドへ記録）として`NO_TRADE`を保存する。注文を作らない。
 - `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。Event Gateに`DATA_UNAVAILABLE`の候補が1件でも存在する場合を含む。Rankingへ渡さない。
 - `REJECTED`: 注文案またはデータが固定条件に違反。値を自動修正しない。
 - `NOT_APPLICABLE`: `NO_TRADE`または`DATA_UNAVAILABLE`のため注文リスク評価対象がない。

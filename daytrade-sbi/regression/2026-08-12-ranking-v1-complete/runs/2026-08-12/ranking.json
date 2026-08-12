@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "ranking_version": "ranking-v1",
+  "ranking_method": "ordinal_rank_sum",
+  "target_date": "2026-08-12",
+  "previous_trading_day": "2026-08-10",
+  "event_gate_as_of": "2026-08-11T21:00:00+09:00",
+  "generated_at": "2026-08-12T13:35:34.691985+00:00",
+  "strategy_version": "v1",
+  "config_sha256": "b4ff2bd42ee1eeaefe451edaa2ec0d0957bfd27726f2972ad4f896a5c78e8e09",
+  "ranking_status": "COMPLETE",
+  "ranking_complete": true,
+  "reason_codes": [],
+  "input_hashes": {
+    "event_gate_sha256": "599d5f637e5e03ccd639fa28423002be087ef8144e26d7b3d3dafad98f7aa734",
+    "candidates_sha256": "609ee66c76031270fda28dda2dec7666118b429ab8ddc9fad89793e789c2e262",
+    "market_data_sha256": "b5c7442d058a90f12234a6c3a8c148e8f595dc26885ad6440f3025cd1c4440ed",
+    "sources_sha256": "82829899a37a2cde55bbae215416ab170fb8821e4af8ea9af409131a15d1af5b",
+    "source_matrix_sha256": "f141bb351a22548535cd6ea1f2b76002004abeef4a50c51c68d28659cdbd6b44",
+    "strategy_snapshot_sha256": "f81751ed61f6b1843fb5b3722cb2cfb0cc06c0580bdd73026bba099d96686236"
+  },
+  "input_candidate_tickers": [
+    "7203"
+  ],
+  "summary": {
+    "input_count": 1,
+    "valid_input_count": 1,
+    "data_unavailable_count": 0,
+    "ranked_count": 1,
+    "top_ranked_ticker": "7203"
+  },
+  "candidates": [
+    {
+      "ticker": "7203",
+      "input_status": "VALID",
+      "reason_codes": [],
+      "provenance": {
+        "turnover_attempt_id": "attempt-7203-turnover",
+        "turnover_source_ref": "src-7203-turnover",
+        "tick_size_source_refs": [
+          "JPX_TICK_SIZE-7203-tick_size",
+          "JPX_TOPIX500-7203-topix500_membership",
+          "YAHOO_JP_HISTORY-7203-previous_high"
+        ]
+      },
+      "feature_values": {
+        "turnover_yen": "2655000000",
+        "tick_size_yen": "1",
+        "entry_trigger_yen": "901",
+        "relative_tick_size": {
+          "numerator_yen": "1",
+          "denominator_yen": "901"
+        }
+      },
+      "feature_ranks": {
+        "turnover_rank": 1,
+        "relative_tick_size_rank": 1
+      },
+      "rank_points": 2,
+      "final_rank": 1
+    }
+  ]
+}

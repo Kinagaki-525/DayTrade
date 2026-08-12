@@ -29,6 +29,8 @@ from src.contracts import (
     validate_event_research_contract,
     validate_event_research_inputs,
     validate_performance_inputs,
+    validate_ranking_output_contract,
+    validate_ranking_preconditions,
     validate_recommendation_candidate_link,
     validate_recommendation_pipeline_link,
     validate_recommendation_risk_link,
@@ -48,6 +50,7 @@ from src.market import (
 )
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
+from src.ranking import build_ranking
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
 from src.event_gate import build_event_gate
@@ -177,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
     event_gate_parser.add_argument("--sources", required=True, type=Path)
     event_gate_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     event_gate_parser.add_argument("--output", required=True, type=Path)
+
+    ranking_parser = subparsers.add_parser("build-ranking")
+    ranking_parser.add_argument("--event-gate", required=True, type=Path)
+    ranking_parser.add_argument("--candidates", required=True, type=Path)
+    ranking_parser.add_argument("--market-data", required=True, type=Path)
+    ranking_parser.add_argument("--sources", required=True, type=Path)
+    # Every build-ranking input is explicit: no implicit config or
+    # source-matrix fallback, so the recorded input_hashes always describe
+    # files the operator named.
+    ranking_parser.add_argument("--source-matrix", required=True, type=Path)
+    ranking_parser.add_argument("--config", required=True, type=Path)
+    ranking_parser.add_argument("--output", required=True, type=Path)
 
     performance_parser = subparsers.add_parser("build-performance")
     performance_parser.add_argument("--market-research", required=True, type=Path)
@@ -345,6 +360,16 @@ def main(argv: list[str] | None = None) -> int:
             args.candidate_pipeline,
             args.candidates,
             args.sources,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-ranking":
+        return _build_ranking(
+            args.event_gate,
+            args.candidates,
+            args.market_data,
+            args.sources,
+            args.source_matrix,
             args.config,
             args.output,
         )
@@ -1177,6 +1202,70 @@ def _build_event_gate(
     validate_json_document(payload, "event_gate.schema.json")
     validate_event_gate_output_contract(event_gate=payload, event_research=event_research)
     _write_json(output_path, payload, "event_gate.schema.json")
+    return 0
+
+
+def _build_ranking(
+    event_gate_path: Path,
+    candidates_path: Path,
+    market_data_path: Path,
+    sources_path: Path,
+    source_matrix_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    # Fixed processing order: hash inputs -> load/validate schemas ->
+    # validate source ledger -> validate_ranking_preconditions ->
+    # build_ranking -> validate against ranking.schema.json ->
+    # validate_ranking_output_contract -> atomic write.
+    input_hashes = {
+        "event_gate_sha256": _sha256_bytes(event_gate_path.read_bytes()),
+        "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
+        "market_data_sha256": _sha256_bytes(market_data_path.read_bytes()),
+        "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
+        "source_matrix_sha256": _sha256_bytes(source_matrix_path.read_bytes()),
+        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+    }
+
+    event_gate = load_json_document(event_gate_path, "event_gate.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    market_data = load_json_document(market_data_path, "market_data.schema.json")
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    source_matrix = load_source_matrix(source_matrix_path)
+    config = load_strategy_config(config_path)
+
+    validate_ranking_preconditions(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        source_matrix=source_matrix,
+        config=config,
+        input_hashes=input_hashes,
+        source_base_dir=sources_path.parent,
+    )
+
+    payload = build_ranking(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        config=config,
+        input_hashes=input_hashes,
+    )
+    validate_json_document(payload, "ranking.schema.json")
+    validate_ranking_output_contract(
+        ranking=payload,
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        config=config,
+    )
+    # Never overwrite an existing ranking.json on hard error: this point is
+    # only reached for the two valid business outcomes (COMPLETE or
+    # DATA_UNAVAILABLE); any exception above aborts before this write.
+    _write_json(output_path, payload, "ranking.schema.json")
     return 0
 
 

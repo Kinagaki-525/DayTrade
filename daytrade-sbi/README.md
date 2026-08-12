@@ -77,6 +77,8 @@ PythonがTDnet調査期間を確定
   ↓ 固定Discovery経路をmarket_research.jsonへ保存
 Source Matrix順にCandidate Research
   ↓ 出典付きでruns/YYYY-MM-DDへ保存
+Ranking用の実際の売買代金をStage 1 PASS候補へ調査
+  ↓ screen-marketより前にsources.jsonとmarket_data.jsonへ保存
 Pythonが市場データを検証
   ↓
 Pythonが固定条件でスクリーニング
@@ -84,7 +86,7 @@ Pythonが固定条件でスクリーニング
 Pythonが候補パイプラインと性能計測を保存
   ↓
 Hard Screening PASS候補と分析Featureを保存
-  ↓ Ranking未実装中はTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
+  ↓ Selection未実装中はRanking COMPLETEでもTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
 Python Risk Engineが注文案を再計算・検証
   ↓ PASS、REJECTED、または NOT_APPLICABLE
 MarkdownのSBI手入力候補を生成
