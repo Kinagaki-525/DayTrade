@@ -628,8 +628,11 @@ def validate_recommendation_pipeline_link(
         raise ValueError(
             "recommendation/candidate_pipeline pipeline_summary does not match"
         )
-    if recommendation.get("decision") == "TRADE" and summary.get("ranking_complete") is not True:
-        raise ValueError("TRADE recommendation requires ranking_complete=true")
+    # Note: candidate_pipeline.json is upstream of Ranking and its own
+    # schema always carries summary.ranking_complete == false; Ranking
+    # completion is tracked separately in ranking.json (and now
+    # selection.json), never here. A TRADE recommendation therefore does
+    # NOT require candidate_pipeline.summary.ranking_complete to be true.
 
 
 def validate_research_report_inputs(
@@ -803,6 +806,61 @@ def validate_selection_output_contract(
         raise ValueError(
             "SELECTION_OUTPUT_CONTRACT_MISMATCH: selection.json does not match the "
             "recomputed selection payload for the same inputs"
+        )
+
+
+def validate_recommendation_selection_link(
+    *,
+    recommendation: dict[str, Any],
+    selection: dict[str, Any],
+    selection_sha256: str,
+) -> None:
+    """Cross-check a Recommendation v2 payload against its selection.json."""
+    if recommendation.get("schema_version") != 2:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.schema_version must be 2"
+        )
+    for field_name in ("target_date", "strategy_version", "config_sha256"):
+        _require_equal(
+            recommendation,
+            selection,
+            field_name,
+            "recommendation/selection",
+        )
+    if recommendation.get("selection_sha256") != selection_sha256:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.selection_sha256 does not "
+            "match the actual SHA256 of selection.json"
+        )
+    status = selection.get("selection_status")
+    if status == "SELECTED":
+        if recommendation.get("decision") != "TRADE":
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: SELECTED selection requires decision=TRADE"
+            )
+        if recommendation.get("ticker") != selection.get("selected_ticker"):
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: recommendation.ticker does not match "
+                "selection.selected_ticker"
+            )
+    elif status == "NO_TRADE":
+        if recommendation.get("decision") != "NO_TRADE":
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: NO_TRADE selection requires decision=NO_TRADE"
+            )
+        if recommendation.get("ticker") is not None:
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: NO_TRADE selection requires ticker=null"
+            )
+    else:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: selection.selection_status must be "
+            "SELECTED or NO_TRADE"
+        )
+    if recommendation.get("selection_reasons") != selection.get("reason_codes"):
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.selection_reasons does not "
+            "match selection.reason_codes"
         )
 
 

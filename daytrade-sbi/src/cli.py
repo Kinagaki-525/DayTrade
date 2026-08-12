@@ -201,6 +201,16 @@ def build_parser() -> argparse.ArgumentParser:
     selection_parser.add_argument("--config", required=True, type=Path)
     selection_parser.add_argument("--output", required=True, type=Path)
 
+    selection_recommendation_parser = subparsers.add_parser("build-selection-recommendation")
+    selection_recommendation_parser.add_argument("--selection", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--candidates", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--market-data", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--research-window", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--sources", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--config", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--output", required=True, type=Path)
+
     performance_parser = subparsers.add_parser("build-performance")
     performance_parser.add_argument("--market-research", required=True, type=Path)
     performance_parser.add_argument("--candidate-pipeline", required=True, type=Path)
@@ -385,6 +395,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build-selection":
         return _build_selection(
             args.ranking,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-selection-recommendation":
+        return _build_selection_recommendation(
+            args.selection,
+            args.candidates,
+            args.candidate_pipeline,
+            args.market_data,
+            args.research_window,
+            args.sources,
             args.config,
             args.output,
         )
@@ -1369,6 +1390,56 @@ def _build_selection(
         input_hashes=input_hashes,
     )
     _write_json(output_path, payload, "selection.schema.json")
+    return 0
+
+
+def _build_selection_recommendation(
+    selection_path: Path,
+    candidates_path: Path,
+    candidate_pipeline_path: Path,
+    market_data_path: Path,
+    research_window_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    from src.contracts import validate_recommendation_selection_link
+    from src.selection_recommendation import build_selection_recommendation
+
+    selection_sha256 = _sha256_bytes(selection_path.read_bytes())
+
+    selection = load_json_document(selection_path, "selection.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path, "candidate_pipeline.schema.json"
+    )
+    market_data = load_json_document(market_data_path, "market_data.schema.json")
+    research_window = load_json_document(research_window_path, "research_window.schema.json")
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    config = load_strategy_config(config_path)
+
+    if selection.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("selection strategy_version does not match --config")
+    if selection.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("selection config_sha256 does not match --config")
+
+    payload = build_selection_recommendation(
+        selection=selection,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
+        selection_sha256=selection_sha256,
+    )
+    validate_json_document(payload, "recommendation.schema.json")
+    validate_recommendation_selection_link(
+        recommendation=payload,
+        selection=selection,
+        selection_sha256=selection_sha256,
+    )
+    _write_json(output_path, payload, "recommendation.schema.json")
     return 0
 
 

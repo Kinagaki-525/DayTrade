@@ -121,7 +121,10 @@ def test_recommendation_pipeline_link_requires_summary_counts_to_match():
         validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
 
 
-def test_trade_recommendation_requires_completed_ranking():
+def test_trade_recommendation_allowed_with_pipeline_ranking_complete_false():
+    # candidate_pipeline.json is upstream of Ranking and its schema always
+    # carries summary.ranking_complete == false; Ranking completion is
+    # tracked in ranking.json (and selection.json), not candidate_pipeline.
     recommendation = {
         **METADATA,
         "decision": "TRADE",
@@ -130,8 +133,7 @@ def test_trade_recommendation_requires_completed_ranking():
     }
     candidate_pipeline = {**METADATA, "summary": complete_summary()}
 
-    with pytest.raises(ValueError, match="ranking_complete"):
-        validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+    validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
 
 
 def test_recommendation_and_risk_result_must_use_same_config():
