@@ -77,6 +77,8 @@ PythonがTDnet調査期間を確定
   ↓ 固定Discovery経路をmarket_research.jsonへ保存
 Source Matrix順にCandidate Research
   ↓ 出典付きでruns/YYYY-MM-DDへ保存
+Ranking用の実際の売買代金をStage 1 PASS候補へ調査
+  ↓ screen-marketより前にsources.jsonとmarket_data.jsonへ保存
 Pythonが市場データを検証
   ↓
 Pythonが固定条件でスクリーニング

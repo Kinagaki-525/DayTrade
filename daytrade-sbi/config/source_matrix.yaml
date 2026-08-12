@@ -162,6 +162,15 @@ sources:
     url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T"
     update_timing: MARKET_CLOSE_AFTER_UPDATE
     zero_results_are_found: false
+    notes: >
+      The .T suffix denotes a Tokyo Stock Exchange listing, but Discovery runs
+      with default_discovery_market_filter ALL_MARKETS, so a candidate is not
+      guaranteed to be TSE-listed. Use this url_template only for a candidate
+      whose TSE listing is confirmable from already-verified Source Evidence.
+      Suffix resolution for non-TSE venues is undefined and must not be
+      guessed; when TSE listing cannot be confirmed, do not fetch a guessed
+      symbol and do not record a FOUND attempt for it. See TODO.md
+      "Yahoo Finance symbol suffix resolution".
 
   - source_id: KABUTAN_NEWS
     information_type: NEWS

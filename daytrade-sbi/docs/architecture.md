@@ -21,6 +21,7 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 - AI（Codex） = Research / Classification（Web調査で得たSource Attempt・Evidenceの`sources.json`への保存、Event ResearchのNews Classification）。PASS/REJECT/DATA_UNAVAILABLEを決定しない。
 - Python = Validation / Screening / Event Gate（市場データ検証、Hard Screening、Event Gateの決定論的PASS/REJECT/DATA_UNAVAILABLE判定）。
 - Ranking（ranking-v1） = Event Gate `PASS`候補だけを入力とする決定論的な銘柄順位付け工程（`src/ranking.py`、`ranking.json`）。実際の売買代金desc・呼値/発動価格の相対比ascの2 Featureだけを単純Rank合計で並べる。AI・スコア・Weightは使わない。Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装であり、別途要件定義する。実装されるまでTRADE推奨は作成しない。
+- Rankingが使う実際の売買代金（`YAHOO_JP_QUOTE`）は、Stage 2 Candidate Researchの後・`screen-market`の前に調査して `sources.json` と `market_data.json.turnover` へ保存する。`candidates.json` の `features.turnover` は `screen-market` が `market_data.json` から生成するため、この順序でなければRankingが要求する4箇所整合が成立しない。
 
 ## AI実行構成
 

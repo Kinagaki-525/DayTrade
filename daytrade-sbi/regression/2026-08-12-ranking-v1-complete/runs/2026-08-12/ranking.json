@@ -16,7 +16,7 @@
     "candidates_sha256": "609ee66c76031270fda28dda2dec7666118b429ab8ddc9fad89793e789c2e262",
     "market_data_sha256": "b5c7442d058a90f12234a6c3a8c148e8f595dc26885ad6440f3025cd1c4440ed",
     "sources_sha256": "82829899a37a2cde55bbae215416ab170fb8821e4af8ea9af409131a15d1af5b",
-    "source_matrix_sha256": "a25f1ab5b93577721bc369355c6eb1af2c6a7ca1849b444af74f37c10a1b6429",
+    "source_matrix_sha256": "417492a87a824dd31edb970e7f9ecc09ed59b9e4706d455cc173cb4c9f569194",
     "strategy_snapshot_sha256": "f81751ed61f6b1843fb5b3722cb2cfb0cc06c0580bdd73026bba099d96686236"
   },
   "input_candidate_tickers": [

@@ -153,3 +153,31 @@ def test_source_matrix_rejects_yahoo_jp_quote_wrong_information_type():
     assert any(
         "YAHOO_JP_QUOTE must have information_type TURNOVER" in error for error in result.errors
     )
+
+
+def test_yahoo_jp_quote_documents_tse_only_suffix_policy():
+    """HIGH-2: the .T suffix is TSE-specific while Discovery is ALL_MARKETS.
+    Until per-candidate market identity is a machine-checkable contract, the
+    operational rule (never guess a suffix, never record FOUND for an
+    unconfirmed venue) lives in the Source Matrix notes, so it cannot be
+    dropped silently."""
+    payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
+    yahoo_jp_quote = next(
+        source for source in payload["sources"] if source["source_id"] == "YAHOO_JP_QUOTE"
+    )
+
+    assert yahoo_jp_quote["url_template"].endswith("{ticker}.T")
+    notes = yahoo_jp_quote["notes"]
+    assert "Tokyo Stock Exchange" in notes
+    assert "ALL_MARKETS" in notes
+    assert "guessed" in notes
+
+
+def test_discovery_market_filter_and_schema_version_are_unchanged():
+    """HIGH-2 guardrails: the unresolved suffix question must not be 'fixed'
+    by narrowing Discovery to TSE, and documenting the policy in notes does
+    not change the Source Matrix schema version."""
+    payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
+
+    assert payload["default_discovery_market_filter"] == "ALL_MARKETS"
+    assert payload["source_matrix_schema_version"] == 2
