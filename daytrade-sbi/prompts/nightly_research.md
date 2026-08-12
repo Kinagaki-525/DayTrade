@@ -69,19 +69,6 @@ py -B -m src.cli resolve-research-window --target-date YYYY-MM-DD --previous-tra
 py -B -m src.cli init-candidate-research --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
 ```
 
-## Stage 2着手前のTSE上場確認（Fail Closed）
-
-Stage 2 Candidate Researchは `YAHOO_JP_HISTORY`（OHLCV）や `YAHOO_JP_NEWS`（ニュース）を含め、`.T` Suffix固定のYahoo!ファイナンスURLを使い得る。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` のURL templateはいずれも `https://finance.yahoo.co.jp/quote/{ticker}.T...` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
-
-そのため、`apply-stage1` の直後に、Stage 1 `PASS` 候補**全件**についてTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを、個別候補の除外ではなく**一括ゲート**として判定する。手順の並びは次の通り。
-
-`apply-stage1` → Stage 1 PASS候補全件のTSE確認（一括ゲート） → 全件確認成功の場合のみ `plan-stage2-batches` を実行
-
-- Stage 1 `PASS` 候補全件についてTSE上場を確認できた場合のみ `plan-stage2-batches` を実行し、Stage 2 Candidate Researchを全候補について通常どおり進める。
-- **1件でも確認不能なら `plan-stage2-batches` を実行せず、以降の全ステージ（Stage 2 / Turnover Research / Event Research / Ranking）を開始しない。** これは個別候補をStage 1 `PASS`集合から除外・スキップして残りの候補だけ進める仕組みではない。`stage1_status` を書き換えたり、確認できない候補だけを取り除いたりしない。夜間実行全体をこの時点でFail Closedとして停止する。
-- `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。
-- 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
-
 ## Candidate Research
 
 Discovery Candidate全件を起点にする。候補を途中で消さない。
@@ -108,6 +95,26 @@ news_context
 
 ```powershell
 py -B -m src.cli apply-stage1 --market-research runs/YYYY-MM-DD/market_research.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/market_research.json
+```
+
+Stage 1 PASS候補が確定する。
+
+## Stage 2着手前のTSE上場確認（Fail Closed）
+
+Stage 2 Candidate Researchは `YAHOO_JP_HISTORY`（OHLCV）や `YAHOO_JP_NEWS`（ニュース）を含め、`.T` Suffix固定のYahoo!ファイナンスURLを使い得る。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` のURL templateはいずれも `https://finance.yahoo.co.jp/quote/{ticker}.T...` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
+
+そのため、`apply-stage1` の直後に、Stage 1 `PASS` 候補**全件**についてTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを、個別候補の除外ではなく**一括ゲート**として判定する。手順の並びは次の通り。
+
+`apply-stage1` → Stage 1 PASS候補全件のTSE確認（一括ゲート） → 全件確認成功の場合のみ `plan-stage2-batches` を実行
+
+- Stage 1 `PASS` 候補全件についてTSE上場を確認できた場合のみ `plan-stage2-batches` を実行し、Stage 2 Candidate Researchを全候補について通常どおり進める。
+- **1件でも確認不能なら `plan-stage2-batches` を実行せず、以降の全ステージ（Stage 2 / Turnover Research / Event Research / Ranking）を開始しない。** これは個別候補をStage 1 `PASS`集合から除外・スキップして残りの候補だけ進める仕組みではない。`stage1_status` を書き換えたり、確認できない候補だけを取り除いたりしない。夜間実行全体をこの時点でFail Closedとして停止する。
+- `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。
+- 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
+
+Stage 1 PASS候補全件のTSE確認に成功した場合のみ実行。
+
+```powershell
 py -B -m src.cli plan-stage2-batches --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
 ```
 
