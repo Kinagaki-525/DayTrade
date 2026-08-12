@@ -464,6 +464,69 @@ def make_complete_ranking_payload(
     }
 
 
+def make_data_unavailable_ranking_payload(
+    *,
+    target_date: str = "2026-08-12",
+    previous_trading_day: str = "2026-08-11",
+    strategy_version: str = "v1",
+    config_sha256: str = "a" * 64,
+    strategy_snapshot_sha256: str = "b" * 64,
+    ticker: str = "1234",
+    reason_codes: list[str] | None = None,
+) -> dict[str, object]:
+    reason_codes = reason_codes if reason_codes is not None else ["TURNOVER_SOURCE_NOT_FOUND"]
+    candidate = {
+        "ticker": ticker,
+        "input_status": "DATA_UNAVAILABLE",
+        "reason_codes": reason_codes,
+        "provenance": {
+            "turnover_attempt_id": None,
+            "turnover_source_ref": None,
+            "tick_size_source_refs": [],
+        },
+        "feature_values": {
+            "turnover_yen": None,
+            "tick_size_yen": None,
+            "entry_trigger_yen": None,
+            "relative_tick_size": None,
+        },
+        "feature_ranks": None,
+        "rank_points": None,
+        "final_rank": None,
+    }
+    return {
+        "schema_version": 1,
+        "ranking_version": "ranking-v1",
+        "ranking_method": "ordinal_rank_sum",
+        "target_date": target_date,
+        "previous_trading_day": previous_trading_day,
+        "event_gate_as_of": "2026-08-11T21:00:00+09:00",
+        "generated_at": "2026-08-11T21:30:00+09:00",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "input_hashes": {
+            "event_gate_sha256": "c" * 64,
+            "candidates_sha256": "d" * 64,
+            "market_data_sha256": "e" * 64,
+            "sources_sha256": "f" * 64,
+            "source_matrix_sha256": "0" * 64,
+            "strategy_snapshot_sha256": strategy_snapshot_sha256,
+        },
+        "ranking_status": "DATA_UNAVAILABLE",
+        "ranking_complete": False,
+        "reason_codes": reason_codes,
+        "input_candidate_tickers": [ticker],
+        "summary": {
+            "input_count": 1,
+            "valid_input_count": 0,
+            "data_unavailable_count": 1,
+            "ranked_count": 0,
+            "top_ranked_ticker": None,
+        },
+        "candidates": [candidate],
+    }
+
+
 def make_selection_config(
     *,
     enabled: bool = True,

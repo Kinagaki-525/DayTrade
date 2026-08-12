@@ -5,7 +5,7 @@ import pytest
 
 import src.cli as cli
 from src.config import load_strategy_config, strategy_config_sha256
-from src.contracts import validate_json_document
+from src.contracts import RUN_ARTIFACT_ALLOWLIST, validate_json_document
 from src.market import SourceLedgerValidationResult
 from src.research import merge_discovery_candidates
 from src.source_matrix import load_source_matrix
@@ -1439,12 +1439,143 @@ def test_build_event_gate_command_rejects_pipeline_incomplete(tmp_path):
         ["build-event-gate", "--help"],
         ["init-event-research", "--help"],
         ["validate-event-research", "--help"],
+        ["build-ranking-terminal-recommendation", "--help"],
     ],
 )
 def test_cli_help_is_importable_and_does_not_crash(argv):
     with pytest.raises(SystemExit) as exc_info:
         cli.main(argv)
     assert exc_info.value.code == 0
+
+
+def test_build_ranking_terminal_recommendation_requires_all_arguments():
+    for missing in (
+        "--ranking",
+        "--candidates",
+        "--candidate-pipeline",
+        "--research-window",
+        "--sources",
+        "--config",
+        "--output",
+    ):
+        full_args = [
+            "--ranking",
+            "ranking.json",
+            "--candidates",
+            "candidates.json",
+            "--candidate-pipeline",
+            "candidate_pipeline.json",
+            "--research-window",
+            "research_window.json",
+            "--sources",
+            "sources.json",
+            "--config",
+            "strategy.yaml",
+            "--output",
+            "recommendation.json",
+        ]
+        missing_index = full_args.index(missing)
+        args_without = full_args[:missing_index] + full_args[missing_index + 2 :]
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args(
+                ["build-ranking-terminal-recommendation", *args_without]
+            )
+
+
+def test_build_ranking_terminal_recommendation_cli_writes_output(tmp_path):
+    from src.config import DEFAULT_CONFIG_PATH, strategy_config_sha256
+    from tests.factories import make_data_unavailable_ranking_payload
+
+    config = load_strategy_config()
+    config_sha = strategy_config_sha256(config)
+
+    def _write(path, payload):
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ranking = make_data_unavailable_ranking_payload(
+        target_date="2026-08-12",
+        previous_trading_day="2026-08-11",
+        strategy_version=config["strategy_version"],
+        config_sha256=config_sha,
+    )
+    ranking_path = tmp_path / "ranking.json"
+    candidates_path = tmp_path / "candidates.json"
+    candidate_pipeline_path = tmp_path / "candidate_pipeline.json"
+    research_window_path = tmp_path / "research_window.json"
+    sources_path = tmp_path / "sources.json"
+    output_path = tmp_path / "recommendation.json"
+    _write(ranking_path, ranking)
+    _write(
+        candidates_path,
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-12",
+            "generated_at": "2026-08-11T21:00:00+00:00",
+            "strategy_version": config["strategy_version"],
+            "config_sha256": config_sha,
+            "candidates": [],
+        },
+    )
+    _write(
+        candidate_pipeline_path,
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-12",
+            "generated_at": "2026-08-11T21:30:00+00:00",
+            "strategy_version": config["strategy_version"],
+            "config_sha256": config_sha,
+            "summary": complete_pipeline_summary(),
+            "candidates": [],
+        },
+    )
+    _write(
+        research_window_path,
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-12",
+            "previous_trading_day": "2026-08-11",
+            "research_cutoff": "2026-08-11T21:00:00+00:00",
+            "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
+            "research_window": {
+                "run_type": "FIRST_RUN",
+                "window_start": "2026-08-11T00:00:00+00:00",
+                "window_end": "2026-08-11T21:00:00+00:00",
+                "previous_research_cutoff": None,
+                "previous_run_date": None,
+                "bootstrap_lookback_days": 5,
+            },
+        },
+    )
+    _write(
+        sources_path,
+        {"schema_version": 1, "target_date": "2026-08-12", "sources": [], "source_attempts": []},
+    )
+
+    result = cli.main(
+        [
+            "build-ranking-terminal-recommendation",
+            "--ranking",
+            str(ranking_path),
+            "--candidates",
+            str(candidates_path),
+            "--candidate-pipeline",
+            str(candidate_pipeline_path),
+            "--research-window",
+            str(research_window_path),
+            "--sources",
+            str(sources_path),
+            "--config",
+            str(DEFAULT_CONFIG_PATH),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["decision"] == "DATA_UNAVAILABLE"
+    assert "recommendation.json" in RUN_ARTIFACT_ALLOWLIST
 
 
 def test_risk_check_rejects_v1_trade_recommendation_under_v6_config(monkeypatch):

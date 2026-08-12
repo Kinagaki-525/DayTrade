@@ -232,6 +232,21 @@ def build_parser() -> argparse.ArgumentParser:
     selection_recommendation_parser.add_argument("--config", required=True, type=Path)
     selection_recommendation_parser.add_argument("--output", required=True, type=Path)
 
+    ranking_terminal_recommendation_parser = subparsers.add_parser(
+        "build-ranking-terminal-recommendation"
+    )
+    ranking_terminal_recommendation_parser.add_argument("--ranking", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument("--candidates", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument(
+        "--candidate-pipeline", required=True, type=Path
+    )
+    ranking_terminal_recommendation_parser.add_argument(
+        "--research-window", required=True, type=Path
+    )
+    ranking_terminal_recommendation_parser.add_argument("--sources", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument("--config", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument("--output", required=True, type=Path)
+
     performance_parser = subparsers.add_parser("build-performance")
     performance_parser.add_argument("--market-research", required=True, type=Path)
     performance_parser.add_argument("--candidate-pipeline", required=True, type=Path)
@@ -442,6 +457,16 @@ def main(argv: list[str] | None = None) -> int:
             args.candidates,
             args.candidate_pipeline,
             args.market_data,
+            args.research_window,
+            args.sources,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-ranking-terminal-recommendation":
+        return _build_ranking_terminal_recommendation(
+            args.ranking,
+            args.candidates,
+            args.candidate_pipeline,
             args.research_window,
             args.sources,
             args.config,
@@ -1632,6 +1657,60 @@ def _build_selection_recommendation(
         selection=selection,
         selection_sha256=selection_sha256,
     )
+    _write_json(output_path, payload, "recommendation.schema.json")
+    return 0
+
+
+def _build_ranking_terminal_recommendation(
+    ranking_path: Path,
+    candidates_path: Path,
+    candidate_pipeline_path: Path,
+    research_window_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    from src.ranking_terminal_recommendation import build_ranking_terminal_recommendation
+
+    ranking = load_json_document(ranking_path, "ranking.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    candidate_pipeline = load_json_document(
+        candidate_pipeline_path, "candidate_pipeline.schema.json"
+    )
+    research_window = load_json_document(research_window_path, "research_window.schema.json")
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    config = load_strategy_config(config_path)
+
+    if ranking.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError(
+            "RANKING_TERMINAL_STRATEGY_VERSION_MISMATCH: ranking strategy_version does not "
+            "match --config"
+        )
+    if ranking.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError(
+            "RANKING_TERMINAL_CONFIG_SHA256_MISMATCH: ranking config_sha256 does not match --config"
+        )
+    if research_window.get("target_date") != ranking.get("target_date"):
+        raise ValueError(
+            "RANKING_TERMINAL_TARGET_DATE_MISMATCH: research_window.target_date does not match "
+            "ranking.target_date"
+        )
+
+    payload = build_ranking_terminal_recommendation(
+        ranking=ranking,
+        candidate_pipeline=candidate_pipeline,
+        research_window=research_window,
+        config=config,
+    )
+    validate_json_document(payload, "recommendation.schema.json")
+    # Reuse the existing, generic recommendation contract-validation
+    # functions rather than duplicating them: these also transitively
+    # re-verify candidate_pipeline.target_date and candidates.target_date /
+    # sources.target_date against ranking.target_date (since payload's
+    # target_date is copied verbatim from ranking).
+    validate_recommendation_candidate_link(payload, candidates)
+    validate_recommendation_pipeline_link(payload, candidate_pipeline)
+    validate_recommendation_sources(payload, source_payload)
     _write_json(output_path, payload, "recommendation.schema.json")
     return 0
 
