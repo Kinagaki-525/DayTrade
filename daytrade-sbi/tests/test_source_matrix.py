@@ -89,6 +89,19 @@ def test_source_matrix_rejects_changed_market_research_version():
     assert "'market-research-v2' was expected" in result.errors[0]
 
 
+def test_yahoo_dot_t_sources_share_the_same_tse_confirmation_precondition():
+    payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
+    marker = "TSE_LISTING_CONFIRMATION_PRECONDITION"
+    dot_t_source_ids = ("YAHOO_JP_HISTORY", "YAHOO_JP_NEWS", "YAHOO_JP_QUOTE")
+
+    for source_id in dot_t_source_ids:
+        source = next(s for s in payload["sources"] if s["source_id"] == source_id)
+        assert ".T" in source["url_template"]
+        assert marker in source.get("notes", ""), (
+            f"{source_id} notes must carry the shared TSE-confirmation precondition marker"
+        )
+
+
 def test_yahoo_jp_quote_is_primary_trade_critical_turnover_source():
     payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
     yahoo_jp_quote = next(

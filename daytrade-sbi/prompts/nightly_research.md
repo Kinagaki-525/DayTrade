@@ -69,6 +69,16 @@ py -B -m src.cli resolve-research-window --target-date YYYY-MM-DD --previous-tra
 py -B -m src.cli init-candidate-research --market-research runs/YYYY-MM-DD/market_research.json --output runs/YYYY-MM-DD/market_research.json
 ```
 
+## Stage 2着手前のTSE上場確認（Fail Closed）
+
+Stage 2 Candidate Researchは `YAHOO_JP_HISTORY`（OHLCV）や `YAHOO_JP_NEWS`（ニュース）を含め、`.T` Suffix固定のYahoo!ファイナンスURLを使い得る。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` のURL templateはいずれも `https://finance.yahoo.co.jp/quote/{ticker}.T...` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
+
+そのため、**Stage 2 Candidate Researchを開始する前に**、Stage 1 `PASS` 候補ごとにTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを判定する。
+
+- 確認できた候補だけ、Stage 2で `YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` の `.T` URLを構築・取得してよい。
+- 確認できない候補は、これら3 Source向けに `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。その候補はStage 2 Candidate Research（そして以降のTurnover Research、Ranking）へ進めない（Fail Closed）。停止位置はStage 2開始前であり、Turnover Researchのステップまで待たない。
+- 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
+
 ## Candidate Research
 
 Discovery Candidate全件を起点にする。候補を途中で消さない。
@@ -116,10 +126,10 @@ Turnover ResearchはStage 2内の補助Researchとして扱い、`market_researc
 
 ### Yahoo!ファイナンス Symbol Suffixの運用前提（Fail Closed）
 
-`YAHOO_JP_QUOTE` のURL templateは `https://finance.yahoo.co.jp/quote/{ticker}.T` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
+`YAHOO_JP_QUOTE` のURL templateは `https://finance.yahoo.co.jp/quote/{ticker}.T` であり、`.T`は東京証券取引所上場銘柄のSuffixである。TSE上場確認は「Stage 2着手前のTSE上場確認（Fail Closed）」で既にStage 2開始前に完了しているため、ここで改めて確認できていない候補（＝Stage 2に進めなかった候補）はTurnover Researchの対象にもならない。
 
-- 既に検証済みのSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から、その候補が東京証券取引所上場であると確認できる場合だけ `.T` を使う。
-- 確認できない場合は `.T` を推測で使わない。Turnover Source Attemptを `FOUND` として記録せず、推測したSuffixで取得したデータも保存しない。その候補についてはTurnover値が得られていない状態のまま扱い、Rankingへ進めない（Fail Closed）。
+- Stage 2着手前の確認でTSE上場と確認できた候補だけ `.T` を使う。
+- 確認できていない場合は `.T` を推測で使わない。Turnover Source Attemptを `FOUND` として記録せず、推測したSuffixで取得したデータも保存しない。その候補についてはTurnover値が得られていない状態のまま扱い、Rankingへ進めない（Fail Closed）。
 - 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
 
 ### Turnover Source Attempt契約

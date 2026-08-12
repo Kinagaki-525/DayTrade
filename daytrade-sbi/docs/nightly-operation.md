@@ -27,16 +27,17 @@ py -B -m pytest
 8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
 9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
 10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
-11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
-12. Ranking用Actual Turnover Research: Stage 2 Candidate Researchのmerge完了後、**`screen-market`を実行する前に**、Stage 1 `PASS`候補全件について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`YAHOO_JP_QUOTE`のURL templateは`.T`（東証）固定でDiscoveryは`ALL_MARKETS`のため、検証済みSource Evidenceから東証上場と確認できる候補だけを対象とする。確認できない場合はSuffixを推測せず、`FOUND`として記録せず、その候補をRankingへ進めない。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
-13. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
-14. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-15. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
-16. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
-17. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
-18. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
-19. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
-20. Event Gateの結果に応じて次のとおりFail Closedで分岐する。新しいReason CodeやSchemaは追加しない
+11. Stage 2着手前のTSE上場確認（Fail Closed）: **Stage 2 Candidate Researchを開始する前に**、Stage 1 `PASS`候補全件について、検証済みSource Evidenceから東京証券取引所上場であると確認できるかを判定する。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`.T`（東証）Suffix固定でDiscoveryは`ALL_MARKETS`のため、確認できない候補が混ざり得る。確認できない候補については、これら3 Source向けに`.T`を推測したURLを構築・取得せず、`FOUND`として記録せず、その候補をStage 2 Candidate Research（およびそれ以降のTurnover Research・Event Research・Ranking）へ進めない
+12. `plan-stage2-batches`でStage 2調査対象をbatch化し、TSE上場が確認できた候補についてのみ必要なCandidate Researchを実施・merge
+13. Ranking用Actual Turnover Research: Stage 2 Candidate Researchのmerge完了後、**`screen-market`を実行する前に**、TSE上場が確認済みのStage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
+14. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
+15. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
+16. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
+17. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+18. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
+19. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
+20. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
+21. Event Gateの結果に応じて次のとおりFail Closedで分岐する。新しいReason CodeやSchemaは追加しない
     - `ranking_ready=false`の場合、Rankingを開始しない
     - Event Gate候補に`gate_status=DATA_UNAVAILABLE`が1件でも存在する場合、Rankingを開始せず日次結果を`DATA_UNAVAILABLE`とする
     - Event Gateが正常完了し`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合、Rankingを開始せず`NO_TRADE`とする
