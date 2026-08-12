@@ -1533,16 +1533,10 @@ def _build_selection_calibration(
             "written under a 'runs/' or 'trades/' directory"
         )
 
-    config = load_strategy_config(config_path)
-    source_matrix_bytes = source_matrix_path.read_bytes()
-    source_matrix_sha256 = _sha256_bytes(source_matrix_bytes)
-
     payload = build_selection_calibration_report(
         runs_dir=runs_dir,
-        cohort_strategy_version=config["strategy_version"],
-        cohort_config_sha256=strategy_config_sha256(config),
-        source_matrix_sha256=source_matrix_sha256,
-        validate_json_document=validate_json_document,
+        config_path=config_path,
+        source_matrix_path=source_matrix_path,
     )
     _write_json(output_path, payload, "selection_calibration.schema.json")
     return 0

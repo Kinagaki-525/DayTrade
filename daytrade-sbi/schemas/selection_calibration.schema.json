@@ -32,6 +32,7 @@
         "matching_complete_observations",
         "ranking_data_unavailable_count",
         "config_mismatch_count",
+        "source_matrix_mismatch_count",
         "missing_ranking_count",
         "ignored_non_date_entries"
       ],
@@ -41,6 +42,7 @@
         "matching_complete_observations": {"type": "integer", "minimum": 0},
         "ranking_data_unavailable_count": {"type": "integer", "minimum": 0},
         "config_mismatch_count": {"type": "integer", "minimum": 0},
+        "source_matrix_mismatch_count": {"type": "integer", "minimum": 0},
         "missing_ranking_count": {"type": "integer", "minimum": 0},
         "ignored_non_date_entries": {"type": "integer", "minimum": 0}
       },
