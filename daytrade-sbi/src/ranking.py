@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -117,7 +118,6 @@ class _CandidateInput:
     ticker: str
     input_status: str
     reason_codes: tuple[str, ...]
-    turnover_source_id: str | None
     turnover_attempt_id: str | None
     turnover_source_ref: str | None
     turnover_value: Decimal | None
@@ -274,7 +274,6 @@ def _collect_ranking_inputs(
                     ticker=ticker,
                     input_status="DATA_UNAVAILABLE",
                     reason_codes=turnover_result.reason_codes,
-                    turnover_source_id=turnover_result.source_id,
                     turnover_attempt_id=turnover_result.attempt_id,
                     turnover_source_ref=None,
                     turnover_value=None,
@@ -289,7 +288,6 @@ def _collect_ranking_inputs(
                     ticker=ticker,
                     input_status="VALID",
                     reason_codes=(),
-                    turnover_source_id=turnover_result.source_id,
                     turnover_attempt_id=turnover_result.attempt_id,
                     turnover_source_ref=turnover_result.source_ref,
                     turnover_value=turnover_result.value,
@@ -712,11 +710,17 @@ def _competition_rank_turnover(inputs: list[_CandidateInput]) -> dict[str, int]:
     return ranks
 
 
+def _compare_relative_tick_then_ticker(left: _CandidateInput, right: _CandidateInput) -> int:
+    """Total order used only to lay candidates out for competition ranking:
+    relative tick asc, then ticker asc so the ordering is deterministic."""
+    tick_cmp = _compare_relative_tick(left, right)
+    if tick_cmp != 0:
+        return tick_cmp
+    return (left.ticker > right.ticker) - (left.ticker < right.ticker)
+
+
 def _competition_rank_relative_tick(inputs: list[_CandidateInput]) -> dict[str, int]:
-    ordered = sorted(
-        inputs,
-        key=_cmp_to_key(lambda a, b: _compare_relative_tick(a, b) or (a.ticker > b.ticker) - (a.ticker < b.ticker)),
-    )
+    ordered = sorted(inputs, key=functools.cmp_to_key(_compare_relative_tick_then_ticker))
     ranks: dict[str, int] = {}
     current_rank = 0
     previous_item: _CandidateInput | None = None
@@ -726,12 +730,6 @@ def _competition_rank_relative_tick(inputs: list[_CandidateInput]) -> dict[str, 
         ranks[item.ticker] = current_rank
         previous_item = item
     return ranks
-
-
-def _cmp_to_key(comparator: Any) -> Any:
-    import functools
-
-    return functools.cmp_to_key(comparator)
 
 
 def _compare_final_candidate(
@@ -886,7 +884,7 @@ def build_ranking(
 
         inputs_by_ticker = {item.ticker: item for item in inputs}
         interim.sort(
-            key=_cmp_to_key(
+            key=functools.cmp_to_key(
                 lambda a, b: _compare_final_candidate(a, b, inputs_by_ticker)
             )
         )
