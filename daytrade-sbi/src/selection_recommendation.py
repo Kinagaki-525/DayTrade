@@ -137,7 +137,7 @@ def build_selection_recommendation(
 
     source_urls: set[str] = set()
     for source in source_payload.get("sources", []):
-        if source.get("candidate_code") == ticker and source.get("source_url"):
+        if source.get("ticker") == ticker and source.get("source_url"):
             source_urls.add(source["source_url"])
     if not source_urls:
         _hard_error(

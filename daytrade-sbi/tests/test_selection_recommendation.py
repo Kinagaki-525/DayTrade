@@ -86,9 +86,9 @@ def _base_selected():
     }
     source_payload = {
         "sources": [
-            {"candidate_code": "1234", "source_url": "https://example.test/a"},
-            {"candidate_code": "1234", "source_url": "https://example.test/b"},
-            {"candidate_code": "9999", "source_url": "https://example.test/c"},
+            {"ticker": "1234", "source_url": "https://example.test/a"},
+            {"ticker": "1234", "source_url": "https://example.test/b"},
+            {"ticker": "9999", "source_url": "https://example.test/c"},
         ]
     }
     return dict(
