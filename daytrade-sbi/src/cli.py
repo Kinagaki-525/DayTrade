@@ -201,6 +201,25 @@ def build_parser() -> argparse.ArgumentParser:
     selection_parser.add_argument("--config", required=True, type=Path)
     selection_parser.add_argument("--output", required=True, type=Path)
 
+    selection_calibration_parser = subparsers.add_parser("build-selection-calibration")
+    selection_calibration_parser.add_argument("--runs-dir", required=True, type=Path)
+    selection_calibration_parser.add_argument("--config", required=True, type=Path)
+    selection_calibration_parser.add_argument("--source-matrix", required=True, type=Path)
+    selection_calibration_parser.add_argument("--output", required=True, type=Path)
+
+    threshold_evaluation_parser = subparsers.add_parser("evaluate-selection-thresholds")
+    threshold_evaluation_parser.add_argument("--calibration-report", required=True, type=Path)
+    threshold_evaluation_parser.add_argument(
+        "--minimum-turnover-yen", required=True, type=int
+    )
+    threshold_evaluation_parser.add_argument(
+        "--maximum-relative-tick-numerator", required=True, type=int
+    )
+    threshold_evaluation_parser.add_argument(
+        "--maximum-relative-tick-denominator", required=True, type=int
+    )
+    threshold_evaluation_parser.add_argument("--output", required=True, type=Path)
+
     selection_recommendation_parser = subparsers.add_parser("build-selection-recommendation")
     selection_recommendation_parser.add_argument("--selection", required=True, type=Path)
     selection_recommendation_parser.add_argument("--candidates", required=True, type=Path)
@@ -396,6 +415,21 @@ def main(argv: list[str] | None = None) -> int:
         return _build_selection(
             args.ranking,
             args.config,
+            args.output,
+        )
+    if args.command == "build-selection-calibration":
+        return _build_selection_calibration(
+            args.runs_dir,
+            args.config,
+            args.source_matrix,
+            args.output,
+        )
+    if args.command == "evaluate-selection-thresholds":
+        return _evaluate_selection_thresholds(
+            args.calibration_report,
+            args.minimum_turnover_yen,
+            args.maximum_relative_tick_numerator,
+            args.maximum_relative_tick_denominator,
             args.output,
         )
     if args.command == "build-selection-recommendation":
@@ -1390,6 +1424,62 @@ def _build_selection(
         input_hashes=input_hashes,
     )
     _write_json(output_path, payload, "selection.schema.json")
+    return 0
+
+
+def _build_selection_calibration(
+    runs_dir: Path,
+    config_path: Path,
+    source_matrix_path: Path,
+    output_path: Path,
+) -> int:
+    from src.selection_calibration import build_selection_calibration_report
+
+    resolved_output = output_path.resolve()
+    if {"runs", "trades"} & set(resolved_output.parts):
+        raise ValueError(
+            "CALIBRATION_OUTPUT_LOCATION_FORBIDDEN: calibration output must not be "
+            "written under a 'runs/' or 'trades/' directory"
+        )
+
+    config = load_strategy_config(config_path)
+    source_matrix_bytes = source_matrix_path.read_bytes()
+    source_matrix_sha256 = _sha256_bytes(source_matrix_bytes)
+
+    payload = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        cohort_strategy_version=config["strategy_version"],
+        cohort_config_sha256=strategy_config_sha256(config),
+        source_matrix_sha256=source_matrix_sha256,
+        validate_json_document=validate_json_document,
+    )
+    _write_json(output_path, payload, "selection_calibration.schema.json")
+    return 0
+
+
+def _evaluate_selection_thresholds(
+    calibration_report_path: Path,
+    minimum_turnover_yen: int,
+    maximum_relative_tick_numerator: int,
+    maximum_relative_tick_denominator: int,
+    output_path: Path,
+) -> int:
+    from src.selection_calibration import evaluate_calibration_against_thresholds
+
+    calibration_bytes = calibration_report_path.read_bytes()
+    source_calibration_sha256 = _sha256_bytes(calibration_bytes)
+    calibration_report = load_json_document(
+        calibration_report_path, "selection_calibration.schema.json"
+    )
+
+    payload = evaluate_calibration_against_thresholds(
+        calibration_report=calibration_report,
+        source_calibration_sha256=source_calibration_sha256,
+        minimum_turnover_yen=minimum_turnover_yen,
+        maximum_relative_tick_numerator=maximum_relative_tick_numerator,
+        maximum_relative_tick_denominator=maximum_relative_tick_denominator,
+    )
+    _write_json(output_path, payload, "selection_threshold_evaluation.schema.json")
     return 0
 
 
