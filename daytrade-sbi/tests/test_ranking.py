@@ -250,6 +250,15 @@ def _build_case(
     return event_gate, candidates, market_data, source_payload
 
 
+def _sha256_of_json(payload: dict) -> str:
+    """Matches cli._write_json_file / cli._sha256_bytes serialization exactly,
+    so tests exercise the real hash-chain check rather than bypassing it."""
+    import hashlib
+
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _build_full_case(specs: list[dict]) -> tuple[dict, dict, dict, dict]:
     event_gate, candidates, market_data, source_payload = _build_case(specs)
     tickers = [spec["ticker"] for spec in specs]
@@ -273,6 +282,16 @@ def _build_full_case(specs: list[dict]) -> tuple[dict, dict, dict, dict]:
         "sources": source_payload["sources"],
         "source_attempts": source_payload["source_attempts"],
     }
+    # The hash-chain check requires event_gate.input_hashes to be the real
+    # hashes of the candidates.json/sources.json/strategy-snapshot files that
+    # will actually be fed into build-ranking (same bytes Event Gate used).
+    config_path_text = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    strategy_snapshot_sha256 = __import__("hashlib").sha256(
+        config_path_text.encode("utf-8")
+    ).hexdigest()
+    full_event_gate["input_hashes"]["candidates_sha256"] = _sha256_of_json(candidates_full)
+    full_event_gate["input_hashes"]["sources_sha256"] = _sha256_of_json(sources_full)
+    full_event_gate["input_hashes"]["strategy_snapshot_sha256"] = strategy_snapshot_sha256
     return full_event_gate, candidates_full, market_data_full, sources_full
 
 
@@ -370,6 +389,39 @@ def test_relative_tick_exact_tie_via_cross_multiplication():
         by_ticker["4001"]["feature_ranks"]["relative_tick_size_rank"]
         == by_ticker["4002"]["feature_ranks"]["relative_tick_size_rank"]
     )
+
+
+def test_competition_ranking_is_1_1_3_not_1_1_2():
+    # Two candidates tie for turnover (rank 1, rank 1), the third is strictly
+    # lower and must receive rank 3 -- not rank 2 (standard/"dense" ranking).
+    specs = [
+        {"ticker": "6001", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"},
+        {"ticker": "6002", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"},
+        {"ticker": "6003", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+    ]
+    event_gate, candidates, market_data, source_payload = _build_case(specs)
+    result = _run(event_gate, candidates, market_data, source_payload)
+    by_ticker = {c["ticker"]: c for c in result["candidates"]}
+    turnover_ranks = sorted(
+        by_ticker[t]["feature_ranks"]["turnover_rank"] for t in ("6001", "6002", "6003")
+    )
+    assert turnover_ranks == [1, 1, 3]
+
+    # Same shape for relative_tick_size: two exact ratio ties then a
+    # strictly larger third -- must be [1, 1, 3], not [1, 1, 2].
+    tick_specs = [
+        {"ticker": "6101", "previous_high": "99", "tick_size": "1", "raw_value": "10,000"},
+        {"ticker": "6102", "previous_high": "198", "tick_size": "2", "raw_value": "20,000"},
+        {"ticker": "6103", "previous_high": "50", "tick_size": "1", "raw_value": "30,000"},
+    ]
+    event_gate2, candidates2, market_data2, source_payload2 = _build_case(tick_specs)
+    result2 = _run(event_gate2, candidates2, market_data2, source_payload2)
+    by_ticker2 = {c["ticker"]: c for c in result2["candidates"]}
+    tick_ranks = sorted(
+        by_ticker2[t]["feature_ranks"]["relative_tick_size_rank"]
+        for t in ("6101", "6102", "6103")
+    )
+    assert tick_ranks == [1, 1, 3]
 
 
 def test_forbidden_fields_never_present():
@@ -568,6 +620,27 @@ def _write_json_file(path, payload) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_ranking_inputs(tmp_path, event_gate, candidates, market_data, sources):
+    """Writes the four build-ranking input files, re-syncing event_gate's
+    recorded input_hashes to the final (post-mutation) candidates.json /
+    sources.json bytes first, so tests that intentionally corrupt a field
+    after `_build_full_case` still exercise the real hash-chain check
+    instead of tripping over it for an unrelated reason."""
+    event_gate = copy.deepcopy(event_gate)
+    event_gate["input_hashes"]["candidates_sha256"] = _sha256_of_json(candidates)
+    event_gate["input_hashes"]["sources_sha256"] = _sha256_of_json(sources)
+
+    event_gate_path = tmp_path / "event_gate.json"
+    candidates_path = tmp_path / "candidates.json"
+    market_data_path = tmp_path / "market_data.json"
+    sources_path = tmp_path / "sources.json"
+    _write_json_file(event_gate_path, event_gate)
+    _write_json_file(candidates_path, candidates)
+    _write_json_file(market_data_path, market_data)
+    _write_json_file(sources_path, sources)
+    return event_gate_path, candidates_path, market_data_path, sources_path
+
+
 def test_cli_build_ranking_complete(tmp_path):
     event_gate, candidates, market_data, sources = _build_full_case(
         [
@@ -624,15 +697,10 @@ def test_cli_build_ranking_data_unavailable(tmp_path):
     sources["source_attempts"][0]["values"] = None
     sources["source_attempts"][0]["result_count"] = None
 
-    event_gate_path = tmp_path / "event_gate.json"
-    candidates_path = tmp_path / "candidates.json"
-    market_data_path = tmp_path / "market_data.json"
-    sources_path = tmp_path / "sources.json"
     output_path = tmp_path / "ranking.json"
-    _write_json_file(event_gate_path, event_gate)
-    _write_json_file(candidates_path, candidates)
-    _write_json_file(market_data_path, market_data)
-    _write_json_file(sources_path, sources)
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
 
     result = cli.main(
         [
@@ -667,15 +735,10 @@ def test_cli_build_ranking_invalid_input_no_output_written(tmp_path):
     # Corrupt the candidate order_plan so build_ranking raises a hard error.
     candidates["candidates"][0]["order_plan"]["entry_trigger"] = "999"
 
-    event_gate_path = tmp_path / "event_gate.json"
-    candidates_path = tmp_path / "candidates.json"
-    market_data_path = tmp_path / "market_data.json"
-    sources_path = tmp_path / "sources.json"
     output_path = tmp_path / "ranking.json"
-    _write_json_file(event_gate_path, event_gate)
-    _write_json_file(candidates_path, candidates)
-    _write_json_file(market_data_path, market_data)
-    _write_json_file(sources_path, sources)
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
 
     with pytest.raises(RankingHardError, match="RANKING_ORDER_PLAN_MISMATCH"):
         cli.main(
@@ -704,20 +767,17 @@ def test_cli_build_ranking_never_overwrites_existing_output_on_hard_error(tmp_pa
     event_gate, candidates, market_data, sources = _build_full_case(
         [{"ticker": "DD01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
     )
-    event_gate_path = tmp_path / "event_gate.json"
-    candidates_path = tmp_path / "candidates.json"
-    market_data_path = tmp_path / "market_data.json"
-    sources_path = tmp_path / "sources.json"
-    output_path = tmp_path / "ranking.json"
-    _write_json_file(event_gate_path, event_gate)
-    _write_json_file(candidates_path, candidates)
-    _write_json_file(market_data_path, market_data)
-    _write_json_file(sources_path, sources)
-    output_path.write_text('{"pre_existing": true}', encoding="utf-8")
+    # Corrupt the candidate order_plan up front so the written candidates.json
+    # is self-consistent with event_gate's recorded hash (the hash-chain
+    # check must not be what trips this test; the order-plan recompute check
+    # inside build_ranking must be what catches the corruption).
+    candidates["candidates"][0]["order_plan"]["entry_trigger"] = "999"
 
-    broken_candidates = json.loads(candidates_path.read_text(encoding="utf-8"))
-    broken_candidates["candidates"][0]["order_plan"]["entry_trigger"] = "999"
-    _write_json_file(candidates_path, broken_candidates)
+    output_path = tmp_path / "ranking.json"
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
+    output_path.write_text('{"pre_existing": true}', encoding="utf-8")
 
     with pytest.raises(RankingHardError):
         cli.main(

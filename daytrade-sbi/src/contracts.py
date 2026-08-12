@@ -248,6 +248,27 @@ def validate_ranking_preconditions(
     if set(input_hashes.keys()) != required_hashes:
         raise ValueError("input_hashes mismatch")
 
+    # Hash-chain re-verification: candidates.json, sources.json, and the
+    # strategy snapshot fed into ranking must be byte-identical to what
+    # event_gate recorded, so a candidates/sources/config swap between the
+    # Event Gate run and the ranking run is detected and rejected rather
+    # than silently accepted.
+    event_gate_hashes = event_gate.get("input_hashes") or {}
+    for ranking_key, event_gate_key in (
+        ("candidates_sha256", "candidates_sha256"),
+        ("sources_sha256", "sources_sha256"),
+        ("strategy_snapshot_sha256", "strategy_snapshot_sha256"),
+    ):
+        recorded = event_gate_hashes.get(event_gate_key)
+        current = input_hashes.get(ranking_key)
+        if not recorded or recorded != current:
+            raise ValueError(
+                f"event_gate.input_hashes.{event_gate_key} does not match the "
+                f"{ranking_key} of the file supplied to build-ranking "
+                "(candidates.json/sources.json/strategy snapshot must be "
+                "identical to what Event Gate used)"
+            )
+
 
 def _check_market_data_uniqueness(market_data: dict[str, Any]) -> None:
     tickers: set[str] = set()
