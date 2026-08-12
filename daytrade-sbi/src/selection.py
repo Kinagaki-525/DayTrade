@@ -18,7 +18,15 @@ from typing import Any
 SELECTION_VERSION = "selection-v1"
 SELECTION_SCHEMA_VERSION = 1
 
-_REASON_ORDER = ("TURNOVER", "RELATIVE_TICK")
+# Canonical Selection business reason codes. These are the only valid
+# values for selection.json's reason_codes / rule_evaluations.reason_code
+# fields -- never the shortened TURNOVER / RELATIVE_TICK forms.
+REASON_ALL_RULES_PASSED = "SELECTION_ALL_RULES_PASSED"
+REASON_TURNOVER_BELOW_MINIMUM = "SELECTION_TURNOVER_BELOW_MINIMUM"
+REASON_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM = "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+
+# Fixed canonical order (never derived from set/dict iteration order).
+_REASON_ORDER = (REASON_TURNOVER_BELOW_MINIMUM, REASON_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM)
 
 
 class SelectionHardError(ValueError):
@@ -293,10 +301,11 @@ def evaluate_selection_rules(rank1: dict[str, Any], selection_config: dict[str, 
     turnover_pass = turnover_yen >= Decimal(threshold_yen)
     turnover_eval = {
         "rule_id": "minimum_turnover_yen",
-        "reason_code": "TURNOVER",
-        "status": "PASS" if turnover_pass else "REJECT",
-        "observed_value_yen": str(turnover_yen),
-        "threshold_yen": threshold_yen,
+        "operator": ">=",
+        "actual_value_yen": str(turnover_yen),
+        "threshold_value_yen": threshold_yen,
+        "result": "PASS" if turnover_pass else "REJECT",
+        "reason_code": None if turnover_pass else REASON_TURNOVER_BELOW_MINIMUM,
     }
 
     relative_tick_size = feature_values["relative_tick_size"]
@@ -311,13 +320,14 @@ def evaluate_selection_rules(rank1: dict[str, Any], selection_config: dict[str, 
     )
     tick_eval = {
         "rule_id": "maximum_relative_tick_size",
-        "reason_code": "RELATIVE_TICK",
-        "status": "PASS" if tick_pass else "REJECT",
-        "observed_ratio": {
+        "operator": "<=",
+        "actual_ratio": {
             "numerator_yen": str(numerator_yen),
             "denominator_yen": str(denominator_yen),
         },
         "threshold_ratio": threshold_ratio,
+        "result": "PASS" if tick_pass else "REJECT",
+        "reason_code": None if tick_pass else REASON_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM,
     }
 
     return [turnover_eval, tick_eval]
@@ -377,34 +387,62 @@ def build_selection(
         _hard_error("SELECTION_HASH_CHAIN_MISMATCH", "ranking.strategy_version does not match --config")
 
     rule_evaluations = evaluate_selection_rules(rank1, selection_config)
-    all_passed = all(item["status"] == "PASS" for item in rule_evaluations)
+    all_passed = all(item["result"] == "PASS" for item in rule_evaluations)
+    evaluated_ticker = rank1["ticker"]
+
+    rejected_reason_codes_by_code = {
+        item["reason_code"] for item in rule_evaluations if item["result"] == "REJECT"
+    }
 
     if all_passed:
         status = "SELECTED"
-        selected_ticker = rank1["ticker"]
-        reason_codes = ["SELECTION_ALL_RULES_PASSED"]
+        selected_ticker = evaluated_ticker
+        reason_codes = [REASON_ALL_RULES_PASSED]
     else:
         status = "NO_TRADE"
         selected_ticker = None
-        reason_codes = [
-            item["reason_code"] for item in rule_evaluations if item["status"] == "REJECT"
-        ]
+        # Fixed canonical order, never derived from set/dict iteration order.
+        reason_codes = [code for code in _REASON_ORDER if code in rejected_reason_codes_by_code]
 
-    return {
+    payload = {
         "schema_version": SELECTION_SCHEMA_VERSION,
         "selection_version": SELECTION_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
         "target_date": ranking["target_date"],
         "previous_trading_day": ranking["previous_trading_day"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "strategy_version": ranking["strategy_version"],
         "config_sha256": ranking["config_sha256"],
         "input_hashes": {
             "ranking_sha256": ranking_sha256,
             "strategy_snapshot_sha256": strategy_snapshot_sha256,
         },
-        "rank1_ticker": rank1["ticker"],
+        "ranking_version": "ranking-v1",
+        "ranking_method": "ordinal_rank_sum",
+        "evaluated_ticker": evaluated_ticker,
+        "ranking_final_rank": 1,
         "selection_status": status,
         "selected_ticker": selected_ticker,
         "reason_codes": reason_codes,
         "rule_evaluations": rule_evaluations,
     }
+
+    # Python-level output-contract enforcement (defense in depth; the schema
+    # and validate_selection_output_contract also check this via recompute).
+    if status == "SELECTED":
+        if selected_ticker != evaluated_ticker:
+            _hard_error("SELECTION_OUTPUT_CONTRACT_INVALID", "SELECTED requires selected_ticker == evaluated_ticker")
+        if reason_codes != [REASON_ALL_RULES_PASSED]:
+            _hard_error(
+                "SELECTION_OUTPUT_CONTRACT_INVALID",
+                "SELECTED requires reason_codes == ['SELECTION_ALL_RULES_PASSED']",
+            )
+    else:
+        if selected_ticker is not None:
+            _hard_error("SELECTION_OUTPUT_CONTRACT_INVALID", "NO_TRADE requires selected_ticker is None")
+        if not reason_codes or REASON_ALL_RULES_PASSED in reason_codes:
+            _hard_error(
+                "SELECTION_OUTPUT_CONTRACT_INVALID",
+                "NO_TRADE requires at least one REJECT reason code and never SELECTION_ALL_RULES_PASSED",
+            )
+
+    return payload

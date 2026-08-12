@@ -153,6 +153,36 @@ def test_cli_build_selection_no_partial_output_on_hard_error(tmp_path):
     assert not output_path.exists()
 
 
+def test_cli_build_selection_no_partial_overwrite_on_hard_error(tmp_path):
+    """A Hard Error must never overwrite (even partially) a pre-existing
+    output file: byte-for-byte, not just 'file still exists'."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    ranking = make_complete_ranking_payload(
+        strategy_version=config["strategy_version"],
+        config_sha256="0" * 64,  # wrong: will trigger config sha256 mismatch
+        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    )
+    ranking_path = tmp_path / "ranking.json"
+    _write_json_file(ranking_path, ranking)
+    output_path = tmp_path / "selection.json"
+    sentinel_bytes = b"SENTINEL: pre-existing selection.json content, must survive untouched\n"
+    output_path.write_bytes(sentinel_bytes)
+
+    with pytest.raises(ValueError):
+        cli.main(
+            [
+                "build-selection",
+                "--ranking",
+                str(ranking_path),
+                "--config",
+                str(config_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+    assert output_path.read_bytes() == sentinel_bytes
+
+
 # ---------------------------------------------------------------------------
 # P0-2 / P0-3: build-selection-recommendation trust-chain tests.
 # ---------------------------------------------------------------------------
@@ -372,7 +402,8 @@ def test_cli_build_selection_recommendation_forged_selection_is_hard_error(tmp_p
     forged_selection["selected_ticker"] = "1234"
     forged_selection["reason_codes"] = ["SELECTION_ALL_RULES_PASSED"]
     for rule in forged_selection["rule_evaluations"]:
-        rule["status"] = "PASS"
+        rule["result"] = "PASS"
+        rule["reason_code"] = None
     assert forged_selection["input_hashes"] == {
         "ranking_sha256": ranking_sha256,
         "strategy_snapshot_sha256": strategy_snapshot_sha256,
@@ -530,7 +561,7 @@ def test_risk_check_selection_sha256_tamper_is_hard_error(tmp_path):
     # Tamper the file after recommendation.json was built against the
     # original bytes: recommendation.selection_sha256 still names the
     # original hash, but the real (current) file hash now differs.
-    tampered["rank1_ticker"] = tampered["rank1_ticker"]
+    tampered["evaluated_ticker"] = tampered["evaluated_ticker"]
     tampered_path = tmp_path / "tampered_selection.json"
     tampered_text = json.dumps(tampered, ensure_ascii=False, indent=2) + "\n \n"
     tampered_path.write_text(tampered_text, encoding="utf-8")
@@ -580,9 +611,14 @@ def test_risk_check_target_date_mismatch_is_hard_error(tmp_path):
 def test_risk_check_forged_selection_is_hard_error(tmp_path):
     chain = _full_v6_chain(tmp_path)
     forged = json.loads(chain["selection_path"].read_text(encoding="utf-8"))
-    forged["reason_codes"] = ["TURNOVER"]
+    forged["reason_codes"] = ["SELECTION_TURNOVER_BELOW_MINIMUM"]
     for rule in forged["rule_evaluations"]:
-        rule["status"] = "REJECT"
+        rule["result"] = "REJECT"
+        rule["reason_code"] = (
+            "SELECTION_TURNOVER_BELOW_MINIMUM"
+            if rule["rule_id"] == "minimum_turnover_yen"
+            else "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+        )
     forged_path = tmp_path / "forged_selection.json"
     _write_json_file(forged_path, forged)
     with pytest.raises(ValueError, match="SELECTION_OUTPUT_CONTRACT_MISMATCH"):

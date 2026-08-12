@@ -111,7 +111,7 @@ def _base_no_trade():
         "config_sha256": CONFIG_SHA,
         "selection_status": "NO_TRADE",
         "selected_ticker": None,
-        "reason_codes": ["TURNOVER"],
+        "reason_codes": ["SELECTION_TURNOVER_BELOW_MINIMUM"],
     }
     return kwargs
 

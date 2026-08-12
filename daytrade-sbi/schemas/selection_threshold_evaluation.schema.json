@@ -58,7 +58,12 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": {"enum": ["TURNOVER", "RELATIVE_TICK"]}
+            "items": {
+              "enum": [
+                "SELECTION_TURNOVER_BELOW_MINIMUM",
+                "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+              ]
+            }
           }
         },
         "additionalProperties": false

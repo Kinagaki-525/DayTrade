@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from src.config import load_strategy_config, strategy_config_sha256
+from src.contracts import validate_json_document, validate_selection_preconditions
 from src.selection import (
     SelectionHardError,
     build_selection,
@@ -160,9 +161,12 @@ def test_evaluate_selection_rules_both_evaluated_no_short_circuit():
     config = make_selection_config(threshold_yen=999_999_999, threshold_numerator=1, threshold_denominator=1)
     evaluations = evaluate_selection_rules(rank1, config)
     assert len(evaluations) == 2
-    assert [e["reason_code"] for e in evaluations] == ["TURNOVER", "RELATIVE_TICK"]
-    assert evaluations[0]["status"] == "REJECT"
-    assert evaluations[1]["status"] == "PASS"
+    assert [e["reason_code"] for e in evaluations] == [
+        "SELECTION_TURNOVER_BELOW_MINIMUM",
+        None,
+    ]
+    assert evaluations[0]["result"] == "REJECT"
+    assert evaluations[1]["result"] == "PASS"
 
 
 # --- build_selection --------------------------------------------------------
@@ -185,7 +189,7 @@ def test_build_selection_no_trade_when_turnover_rejected():
     payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
     assert payload["selection_status"] == "NO_TRADE"
     assert payload["selected_ticker"] is None
-    assert payload["reason_codes"] == ["TURNOVER"]
+    assert payload["reason_codes"] == ["SELECTION_TURNOVER_BELOW_MINIMUM"]
 
 
 def test_build_selection_no_trade_when_tick_rejected():
@@ -194,7 +198,7 @@ def test_build_selection_no_trade_when_tick_rejected():
     hashes = make_selection_input_hashes()
     payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
     assert payload["selection_status"] == "NO_TRADE"
-    assert payload["reason_codes"] == ["RELATIVE_TICK"]
+    assert payload["reason_codes"] == ["SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"]
 
 
 def test_build_selection_no_trade_both_rejected_canonical_order():
@@ -204,7 +208,10 @@ def test_build_selection_no_trade_both_rejected_canonical_order():
     ranking = _ranking_for(config)
     hashes = make_selection_input_hashes()
     payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
-    assert payload["reason_codes"] == ["TURNOVER", "RELATIVE_TICK"]
+    assert payload["reason_codes"] == [
+        "SELECTION_TURNOVER_BELOW_MINIMUM",
+        "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM",
+    ]
 
 
 def test_build_selection_rejects_when_disabled():
@@ -274,4 +281,187 @@ def test_build_selection_no_fallback_to_rank2_when_rank1_rejected():
     payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
     assert payload["selection_status"] == "NO_TRADE"
     assert payload["selected_ticker"] is None
-    assert payload["rank1_ticker"] == "1111"
+    assert payload["evaluated_ticker"] == "1111"
+
+
+# --- Selection Artifact structural tests (canonical contract, P1-1) --------
+
+
+def test_build_selection_structural_fields_present():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    assert payload["ranking_version"] == "ranking-v1"
+    assert payload["ranking_method"] == "ordinal_rank_sum"
+    assert payload["evaluated_ticker"] == "1234"
+    assert payload["ranking_final_rank"] == 1
+    assert "rank1_ticker" not in payload
+    assert [e["rule_id"] for e in payload["rule_evaluations"]] == [
+        "minimum_turnover_yen",
+        "maximum_relative_tick_size",
+    ]
+    validate_json_document(payload, "selection.schema.json")
+
+
+def test_build_selection_selected_ticker_equals_evaluated_ticker():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    assert payload["selection_status"] == "SELECTED"
+    assert payload["selected_ticker"] == payload["evaluated_ticker"]
+
+
+def test_build_selection_no_trade_selected_ticker_is_none():
+    config = _config_with_selection(threshold_yen=999_999_999_999)
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    assert payload["selection_status"] == "NO_TRADE"
+    assert payload["selected_ticker"] is None
+
+
+def test_build_selection_pass_rule_has_null_reason_code():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    for rule in payload["rule_evaluations"]:
+        assert rule["result"] == "PASS"
+        assert rule["reason_code"] is None
+
+
+def test_schema_rejects_duplicate_rule_evaluations():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    payload["rule_evaluations"] = [payload["rule_evaluations"][0], payload["rule_evaluations"][0]]
+    with pytest.raises(ValueError, match="selection.schema.json validation failed"):
+        validate_json_document(payload, "selection.schema.json")
+
+
+def test_schema_rejects_reversed_rule_evaluations():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    payload["rule_evaluations"] = list(reversed(payload["rule_evaluations"]))
+    with pytest.raises(ValueError, match="selection.schema.json validation failed"):
+        validate_json_document(payload, "selection.schema.json")
+
+
+def test_schema_rejects_third_rule_evaluation():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    payload = build_selection(ranking=ranking, config=config, input_hashes=hashes)
+    payload["rule_evaluations"] = payload["rule_evaluations"] + [
+        copy.deepcopy(payload["rule_evaluations"][0])
+    ]
+    with pytest.raises(ValueError, match="selection.schema.json validation failed"):
+        validate_json_document(payload, "selection.schema.json")
+
+
+# --- validate_selection_preconditions mutation coverage (P1-2) -------------
+
+
+def _valid_preconditions_args():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes(
+        strategy_snapshot_sha256=ranking["input_hashes"]["strategy_snapshot_sha256"]
+    )
+    return {"ranking": ranking, "config": config, "input_hashes": hashes}
+
+
+def test_validate_selection_preconditions_accepts_valid_input():
+    validate_selection_preconditions(**_valid_preconditions_args())
+
+
+def test_validate_selection_preconditions_rejects_wrong_config_schema_version():
+    args = _valid_preconditions_args()
+    args["config"] = copy.deepcopy(args["config"])
+    args["config"]["config_schema_version"] = 5
+    with pytest.raises(ValueError, match="SELECTION_CONFIG_SCHEMA_VERSION_INVALID"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_missing_selection_block():
+    args = _valid_preconditions_args()
+    args["config"] = copy.deepcopy(args["config"])
+    del args["config"]["selection"]
+    with pytest.raises(ValueError, match="SELECTION_CONFIG_BLOCK_MISSING"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_disabled_selection():
+    args = _valid_preconditions_args()
+    args["config"] = copy.deepcopy(args["config"])
+    args["config"]["selection"]["enabled"] = False
+    with pytest.raises(ValueError, match="SELECTION_CONFIG_DISABLED"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_extra_input_hash_key():
+    args = _valid_preconditions_args()
+    args["input_hashes"] = dict(args["input_hashes"])
+    args["input_hashes"]["extra_key"] = "x" * 64
+    with pytest.raises(ValueError, match="SELECTION_INPUT_HASHES_INVALID"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_missing_input_hash_key():
+    args = _valid_preconditions_args()
+    args["input_hashes"] = {"ranking_sha256": args["input_hashes"]["ranking_sha256"]}
+    with pytest.raises(ValueError, match="SELECTION_INPUT_HASHES_INVALID"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_strategy_version_mismatch():
+    args = _valid_preconditions_args()
+    args["ranking"] = copy.deepcopy(args["ranking"])
+    args["ranking"]["strategy_version"] = "other-version"
+    with pytest.raises(ValueError, match="SELECTION_STRATEGY_VERSION_MISMATCH"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_config_sha256_mismatch():
+    args = _valid_preconditions_args()
+    args["ranking"] = copy.deepcopy(args["ranking"])
+    args["ranking"]["config_sha256"] = "9" * 64
+    with pytest.raises(ValueError, match="SELECTION_CONFIG_SHA256_MISMATCH"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_hash_chain_mismatch():
+    args = _valid_preconditions_args()
+    args["input_hashes"] = dict(args["input_hashes"])
+    args["input_hashes"]["strategy_snapshot_sha256"] = "8" * 64
+    with pytest.raises(ValueError, match="SELECTION_HASH_CHAIN_MISMATCH"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_ranking_status_not_complete():
+    args = _valid_preconditions_args()
+    args["ranking"] = copy.deepcopy(args["ranking"])
+    args["ranking"]["ranking_status"] = "DATA_UNAVAILABLE"
+    with pytest.raises(ValueError, match="SELECTION_RANKING_STATUS_INVALID"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_ranking_not_complete_flag():
+    args = _valid_preconditions_args()
+    args["ranking"] = copy.deepcopy(args["ranking"])
+    args["ranking"]["ranking_complete"] = False
+    with pytest.raises(ValueError, match="SELECTION_RANKING_NOT_COMPLETE"):
+        validate_selection_preconditions(**args)
+
+
+def test_validate_selection_preconditions_rejects_rank1_integrity_violation():
+    args = _valid_preconditions_args()
+    args["ranking"] = copy.deepcopy(args["ranking"])
+    args["ranking"]["summary"]["top_ranked_ticker"] = "9999"
+    with pytest.raises(SelectionHardError, match="SELECTION_TOP_RANKED_TICKER_MISMATCH"):
+        validate_selection_preconditions(**args)

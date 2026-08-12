@@ -6,13 +6,16 @@
   "required": [
     "schema_version",
     "selection_version",
-    "generated_at",
     "target_date",
     "previous_trading_day",
+    "generated_at",
     "strategy_version",
     "config_sha256",
     "input_hashes",
-    "rank1_ticker",
+    "ranking_version",
+    "ranking_method",
+    "evaluated_ticker",
+    "ranking_final_rank",
     "selection_status",
     "selected_ticker",
     "reason_codes",
@@ -21,9 +24,9 @@
   "properties": {
     "schema_version": {"const": 1},
     "selection_version": {"const": "selection-v1"},
-    "generated_at": {"type": "string", "format": "date-time"},
     "target_date": {"type": "string", "format": "date"},
     "previous_trading_day": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
     "strategy_version": {"type": "string", "minLength": 1},
     "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "input_hashes": {
@@ -35,7 +38,10 @@
       },
       "additionalProperties": false
     },
-    "rank1_ticker": {"type": "string", "minLength": 1},
+    "ranking_version": {"const": "ranking-v1"},
+    "ranking_method": {"const": "ordinal_rank_sum"},
+    "evaluated_ticker": {"type": "string", "minLength": 1},
+    "ranking_final_rank": {"const": 1},
     "selection_status": {"enum": ["SELECTED", "NO_TRADE"]},
     "selected_ticker": {
       "oneOf": [
@@ -45,19 +51,50 @@
     },
     "reason_codes": {
       "type": "array",
+      "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": ["SELECTION_ALL_RULES_PASSED", "TURNOVER", "RELATIVE_TICK"]
+        "enum": [
+          "SELECTION_ALL_RULES_PASSED",
+          "SELECTION_TURNOVER_BELOW_MINIMUM",
+          "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+        ]
       }
     },
     "rule_evaluations": {
       "type": "array",
       "minItems": 2,
       "maxItems": 2,
-      "items": {"$ref": "#/$defs/ruleEvaluation"}
+      "prefixItems": [
+        {"$ref": "#/$defs/turnoverRuleEvaluation"},
+        {"$ref": "#/$defs/relativeTickRuleEvaluation"}
+      ],
+      "items": false
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {"selection_status": {"const": "SELECTED"}}
+      },
+      "then": {
+        "properties": {
+          "selected_ticker": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"selection_status": {"const": "NO_TRADE"}}
+      },
+      "then": {
+        "properties": {
+          "selected_ticker": {"type": "null"}
+        }
+      }
+    }
+  ],
   "$defs": {
     "decimal": {
       "type": "string",
@@ -72,38 +109,81 @@
       },
       "additionalProperties": false
     },
-    "ruleEvaluation": {
+    "turnoverRuleEvaluation": {
       "type": "object",
-      "oneOf": [
+      "required": [
+        "rule_id",
+        "operator",
+        "actual_value_yen",
+        "threshold_value_yen",
+        "result",
+        "reason_code"
+      ],
+      "properties": {
+        "rule_id": {"const": "minimum_turnover_yen"},
+        "operator": {"const": ">="},
+        "actual_value_yen": {"$ref": "#/$defs/decimal"},
+        "threshold_value_yen": {"type": "integer", "minimum": 1},
+        "result": {"enum": ["PASS", "REJECT"]},
+        "reason_code": {
+          "oneOf": [
+            {"type": "null"},
+            {"const": "SELECTION_TURNOVER_BELOW_MINIMUM"}
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
         {
-          "required": ["rule_id", "reason_code", "status", "observed_value_yen", "threshold_yen"],
+          "if": {"properties": {"result": {"const": "PASS"}}},
+          "then": {"properties": {"reason_code": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"result": {"const": "REJECT"}}},
+          "then": {"properties": {"reason_code": {"const": "SELECTION_TURNOVER_BELOW_MINIMUM"}}}
+        }
+      ]
+    },
+    "relativeTickRuleEvaluation": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "operator",
+        "actual_ratio",
+        "threshold_ratio",
+        "result",
+        "reason_code"
+      ],
+      "properties": {
+        "rule_id": {"const": "maximum_relative_tick_size"},
+        "operator": {"const": "<="},
+        "actual_ratio": {
+          "type": "object",
+          "required": ["numerator_yen", "denominator_yen"],
           "properties": {
-            "rule_id": {"const": "minimum_turnover_yen"},
-            "reason_code": {"const": "TURNOVER"},
-            "status": {"enum": ["PASS", "REJECT"]},
-            "observed_value_yen": {"$ref": "#/$defs/decimal"},
-            "threshold_yen": {"type": "integer", "minimum": 1}
+            "numerator_yen": {"$ref": "#/$defs/decimal"},
+            "denominator_yen": {"$ref": "#/$defs/decimal"}
           },
           "additionalProperties": false
         },
+        "threshold_ratio": {"$ref": "#/$defs/ratio"},
+        "result": {"enum": ["PASS", "REJECT"]},
+        "reason_code": {
+          "oneOf": [
+            {"type": "null"},
+            {"const": "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"}
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
         {
-          "required": ["rule_id", "reason_code", "status", "observed_ratio", "threshold_ratio"],
-          "properties": {
-            "rule_id": {"const": "maximum_relative_tick_size"},
-            "reason_code": {"const": "RELATIVE_TICK"},
-            "status": {"enum": ["PASS", "REJECT"]},
-            "observed_ratio": {
-              "type": "object",
-              "required": ["numerator_yen", "denominator_yen"],
-              "properties": {
-                "numerator_yen": {"$ref": "#/$defs/decimal"},
-                "denominator_yen": {"$ref": "#/$defs/decimal"}
-              },
-              "additionalProperties": false
-            },
-            "threshold_ratio": {"$ref": "#/$defs/ratio"}
-          },
-          "additionalProperties": false
+          "if": {"properties": {"result": {"const": "PASS"}}},
+          "then": {"properties": {"reason_code": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"result": {"const": "REJECT"}}},
+          "then": {"properties": {"reason_code": {"const": "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"}}}
         }
       ]
     }

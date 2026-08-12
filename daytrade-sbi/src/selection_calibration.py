@@ -341,7 +341,7 @@ def evaluate_calibration_against_thresholds(
             },
         }
         rule_evaluations = evaluate_selection_rules(rank1, selection_config)
-        reason_codes = [item["reason_code"] for item in rule_evaluations if item["status"] == "REJECT"]
+        reason_codes = [item["reason_code"] for item in rule_evaluations if item["result"] == "REJECT"]
 
         if not reason_codes:
             selected_count += 1
@@ -357,9 +357,9 @@ def evaluate_calibration_against_thresholds(
                     "reason_codes": reason_codes,
                 }
             )
-            if reason_codes == ["TURNOVER"]:
+            if reason_codes == ["SELECTION_TURNOVER_BELOW_MINIMUM"]:
                 rejected_turnover_only_count += 1
-            elif reason_codes == ["RELATIVE_TICK"]:
+            elif reason_codes == ["SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"]:
                 rejected_relative_tick_only_count += 1
             else:
                 rejected_both_count += 1

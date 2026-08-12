@@ -773,20 +773,96 @@ def validate_selection_preconditions(
     config: dict[str, Any],
     input_hashes: dict[str, Any],
 ) -> None:
-    """Preconditions checked before build_selection is invoked by the CLI."""
+    """Preconditions checked before build_selection is invoked by the CLI.
+
+    Fixed order (each check raises a SELECTION_*-namespaced hard error, never
+    a bare KeyError/TypeError/InvalidOperation/ZeroDivisionError):
+      1. config_schema_version == 6
+      2. selection block exists in config
+      3. selection.enabled is True
+      4. input_hashes key set is exactly {ranking_sha256, strategy_snapshot_sha256}
+      5. ranking.strategy_version == config.strategy_version
+      6. ranking.config_sha256 == strategy_config_sha256(config)
+      7. ranking.input_hashes.strategy_snapshot_sha256 == input_hashes.strategy_snapshot_sha256
+      8. ranking.ranking_status == "COMPLETE"
+      9. ranking.ranking_complete is True
+     10. validate_rank1_integrity(ranking) passes
+     11. selection thresholds in config already passed config-level
+         validation -- relied upon via load_strategy_config's
+         _validate_selection_config path; not re-derived here.
+    """
+    from src.selection import validate_rank1_integrity
+
+    # 1. config_schema_version == 6.
     if config.get("config_schema_version") != 6:
         raise ValueError(
             "SELECTION_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 6 for build-selection"
         )
-    if "selection" not in config:
+
+    # 2. selection block exists in config.
+    selection_config = config.get("selection")
+    if not isinstance(selection_config, dict):
         raise ValueError(
             "SELECTION_CONFIG_BLOCK_MISSING: config is missing the selection block required for build-selection"
         )
+
+    # 3. selection.enabled is True.
+    if selection_config.get("enabled") is not True:
+        raise ValueError(
+            "SELECTION_CONFIG_DISABLED: selection.enabled must be true to build a selection"
+        )
+
+    # 4. input_hashes key set is exactly {ranking_sha256, strategy_snapshot_sha256}.
     if set(input_hashes) != {"ranking_sha256", "strategy_snapshot_sha256"}:
         raise ValueError(
             "SELECTION_INPUT_HASHES_INVALID: input_hashes must contain exactly "
             "{ranking_sha256, strategy_snapshot_sha256}"
         )
+
+    # 5. ranking.strategy_version == config.strategy_version.
+    if ranking.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError(
+            "SELECTION_STRATEGY_VERSION_MISMATCH: ranking.strategy_version does not match --config"
+        )
+
+    # 6. ranking.config_sha256 == strategy_config_sha256(config).
+    if ranking.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError(
+            "SELECTION_CONFIG_SHA256_MISMATCH: ranking.config_sha256 does not match --config"
+        )
+
+    # 7. ranking.input_hashes.strategy_snapshot_sha256 must match the
+    #    strategy_snapshot_sha256 supplied to build-selection.
+    ranking_strategy_snapshot_sha256 = (ranking.get("input_hashes") or {}).get(
+        "strategy_snapshot_sha256"
+    )
+    if ranking_strategy_snapshot_sha256 != input_hashes.get("strategy_snapshot_sha256"):
+        raise ValueError(
+            "SELECTION_HASH_CHAIN_MISMATCH: input_hashes.strategy_snapshot_sha256 does not match "
+            "ranking.input_hashes.strategy_snapshot_sha256"
+        )
+
+    # 8. ranking.ranking_status == "COMPLETE".
+    if ranking.get("ranking_status") != "COMPLETE":
+        raise ValueError(
+            "SELECTION_RANKING_STATUS_INVALID: ranking.ranking_status must be COMPLETE for build-selection"
+        )
+
+    # 9. ranking.ranking_complete is True.
+    if ranking.get("ranking_complete") is not True:
+        raise ValueError(
+            "SELECTION_RANKING_NOT_COMPLETE: ranking.ranking_complete must be true for build-selection"
+        )
+
+    # 10. validate_rank1_integrity(ranking) passes (reused from selection.py,
+    #     never duplicated here).
+    validate_rank1_integrity(ranking)
+
+    # 11. selection thresholds in config are relied upon to have already
+    #     passed config-level validation via load_strategy_config's
+    #     _validate_selection_config path (invoked when the config was
+    #     loaded); this function trusts that path rather than re-deriving
+    #     threshold-validity checks from scratch.
 
 
 def validate_selection_output_contract(
