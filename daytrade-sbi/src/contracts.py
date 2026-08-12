@@ -41,6 +41,7 @@ RUN_ARTIFACT_ALLOWLIST = {
     "execution_result.json",
     "source_pages",
     "ranking.json",
+    "selection.json",
 }
 
 
@@ -760,6 +761,48 @@ def validate_recommendation_risk_link(
             risk_result,
             field_name,
             "recommendation/risk_result",
+        )
+
+
+def validate_selection_preconditions(
+    *,
+    ranking: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    """Preconditions checked before build_selection is invoked by the CLI."""
+    if config.get("config_schema_version") != 6:
+        raise ValueError(
+            "SELECTION_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 6 for build-selection"
+        )
+    if "selection" not in config:
+        raise ValueError(
+            "SELECTION_CONFIG_BLOCK_MISSING: config is missing the selection block required for build-selection"
+        )
+    if set(input_hashes) != {"ranking_sha256", "strategy_snapshot_sha256"}:
+        raise ValueError(
+            "SELECTION_INPUT_HASHES_INVALID: input_hashes must contain exactly "
+            "{ranking_sha256, strategy_snapshot_sha256}"
+        )
+
+
+def validate_selection_output_contract(
+    *,
+    selection: dict[str, Any],
+    ranking: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    """Recompute selection from the same inputs and compare, excluding generated_at."""
+    from src.selection import build_selection
+
+    recomputed = build_selection(ranking=ranking, config=config, input_hashes=input_hashes)
+    left = {k: v for k, v in selection.items() if k != "generated_at"}
+    right = {k: v for k, v in recomputed.items() if k != "generated_at"}
+    if left != right:
+        raise ValueError(
+            "SELECTION_OUTPUT_CONTRACT_MISMATCH: selection.json does not match the "
+            "recomputed selection payload for the same inputs"
         )
 
 

@@ -37,6 +37,8 @@ from src.contracts import (
     validate_recommendation_sources,
     validate_research_report_inputs,
     validate_run_artifact_allowlist,
+    validate_selection_output_contract,
+    validate_selection_preconditions,
 )
 from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
@@ -51,6 +53,7 @@ from src.market import (
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
 from src.ranking import build_ranking
+from src.selection import build_selection
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
 from src.event_gate import build_event_gate
@@ -192,6 +195,11 @@ def build_parser() -> argparse.ArgumentParser:
     ranking_parser.add_argument("--source-matrix", required=True, type=Path)
     ranking_parser.add_argument("--config", required=True, type=Path)
     ranking_parser.add_argument("--output", required=True, type=Path)
+
+    selection_parser = subparsers.add_parser("build-selection")
+    selection_parser.add_argument("--ranking", required=True, type=Path)
+    selection_parser.add_argument("--config", required=True, type=Path)
+    selection_parser.add_argument("--output", required=True, type=Path)
 
     performance_parser = subparsers.add_parser("build-performance")
     performance_parser.add_argument("--market-research", required=True, type=Path)
@@ -370,6 +378,12 @@ def main(argv: list[str] | None = None) -> int:
             args.market_data,
             args.sources,
             args.source_matrix,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-selection":
+        return _build_selection(
+            args.ranking,
             args.config,
             args.output,
         )
@@ -1266,6 +1280,54 @@ def _build_ranking(
     # only reached for the two valid business outcomes (COMPLETE or
     # DATA_UNAVAILABLE); any exception above aborts before this write.
     _write_json(output_path, payload, "ranking.schema.json")
+    return 0
+
+
+def _build_selection(
+    ranking_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    # Fixed 10-step processing order:
+    #  1. hash ranking.json and the config snapshot bytes
+    #  2. load+schema-validate ranking.json
+    #  3. load+validate the strategy config
+    #  4. validate_selection_preconditions (config schema v6, selection block present, hash key set)
+    #  5. build_selection (Rank-1-only, no fallback)
+    #  6. schema-validate the resulting payload
+    #  7. validate_selection_output_contract (recompute-and-compare)
+    #  8. atomic write only on full success
+    #
+    # Selection-disabled nightly runs never reach build_selection's success
+    # path (SelectionHardError SELECTION_CONFIG_DISABLED aborts first) and
+    # therefore never produce a selection.json file.
+    input_hashes = {
+        "ranking_sha256": _sha256_bytes(ranking_path.read_bytes()),
+        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+    }
+
+    ranking = load_json_document(ranking_path, "ranking.schema.json")
+    config = load_strategy_config(config_path)
+
+    validate_selection_preconditions(
+        ranking=ranking,
+        config=config,
+        input_hashes=input_hashes,
+    )
+
+    payload = build_selection(
+        ranking=ranking,
+        config=config,
+        input_hashes=input_hashes,
+    )
+    validate_json_document(payload, "selection.schema.json")
+    validate_selection_output_contract(
+        selection=payload,
+        ranking=ranking,
+        config=config,
+        input_hashes=input_hashes,
+    )
+    _write_json(output_path, payload, "selection.schema.json")
     return 0
 
 

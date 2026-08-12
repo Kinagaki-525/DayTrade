@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "selection.schema.json",
+  "title": "Selection v1 result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "selection_version",
+    "generated_at",
+    "target_date",
+    "previous_trading_day",
+    "strategy_version",
+    "config_sha256",
+    "input_hashes",
+    "rank1_ticker",
+    "selection_status",
+    "selected_ticker",
+    "reason_codes",
+    "rule_evaluations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "selection_version": {"const": "selection-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input_hashes": {
+      "type": "object",
+      "required": ["ranking_sha256", "strategy_snapshot_sha256"],
+      "properties": {
+        "ranking_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "rank1_ticker": {"type": "string", "minLength": 1},
+    "selection_status": {"enum": ["SELECTED", "NO_TRADE"]},
+    "selected_ticker": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "null"}
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["SELECTION_ALL_RULES_PASSED", "TURNOVER", "RELATIVE_TICK"]
+      }
+    },
+    "rule_evaluations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"$ref": "#/$defs/ruleEvaluation"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "ratio": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "ruleEvaluation": {
+      "type": "object",
+      "oneOf": [
+        {
+          "required": ["rule_id", "reason_code", "status", "observed_value_yen", "threshold_yen"],
+          "properties": {
+            "rule_id": {"const": "minimum_turnover_yen"},
+            "reason_code": {"const": "TURNOVER"},
+            "status": {"enum": ["PASS", "REJECT"]},
+            "observed_value_yen": {"$ref": "#/$defs/decimal"},
+            "threshold_yen": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        {
+          "required": ["rule_id", "reason_code", "status", "observed_ratio", "threshold_ratio"],
+          "properties": {
+            "rule_id": {"const": "maximum_relative_tick_size"},
+            "reason_code": {"const": "RELATIVE_TICK"},
+            "status": {"enum": ["PASS", "REJECT"]},
+            "observed_ratio": {
+              "type": "object",
+              "required": ["numerator_yen", "denominator_yen"],
+              "properties": {
+                "numerator_yen": {"$ref": "#/$defs/decimal"},
+                "denominator_yen": {"$ref": "#/$defs/decimal"}
+              },
+              "additionalProperties": false
+            },
+            "threshold_ratio": {"$ref": "#/$defs/ratio"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
