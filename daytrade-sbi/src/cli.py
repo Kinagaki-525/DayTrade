@@ -40,6 +40,7 @@ from src.contracts import (
     validate_run_artifact_allowlist,
     validate_selection_output_contract,
     validate_selection_preconditions,
+    validate_selection_recommendation_preconditions,
 )
 from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
@@ -1634,6 +1635,20 @@ def _build_selection_recommendation(
         raise ValueError("selection strategy_version does not match --config")
     if selection.get("config_sha256") != strategy_config_sha256(config):
         raise ValueError("selection config_sha256 does not match --config")
+
+    # P1-4: broad cross-artifact consistency check across ALL inputs (not
+    # just selection/ranking), run after the P0-2 checks and before
+    # build_selection_recommendation() is invoked.
+    validate_selection_recommendation_preconditions(
+        selection=selection,
+        ranking=ranking,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
+    )
 
     payload = build_selection_recommendation(
         selection=selection,

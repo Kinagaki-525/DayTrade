@@ -885,6 +885,90 @@ def validate_selection_output_contract(
         )
 
 
+def validate_selection_recommendation_preconditions(
+    *,
+    selection: dict[str, Any],
+    ranking: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Cross-artifact consistency check across ALL of
+    build-selection-recommendation's inputs, run after the P0-2
+    selection/ranking hash-chain and recompute checks
+    (validate_selection_preconditions / validate_selection_output_contract)
+    and before build_selection_recommendation() is invoked.
+
+    Every artifact this CLI reads must agree on target_date; strategy
+    identity (strategy_version/config_sha256) must be consistent across the
+    artifacts that carry it; the candidate pipeline must actually be
+    complete; and previous_trading_day must match between selection.json
+    and research_window.json. Any mismatch is a Hard Error.
+    """
+    target_dates = {
+        "selection": selection.get("target_date"),
+        "ranking": ranking.get("target_date"),
+        "candidates": candidates.get("target_date"),
+        "candidate_pipeline": candidate_pipeline.get("target_date"),
+        "market_data": market_data.get("target_date"),
+        "research_window": research_window.get("target_date"),
+        "sources": source_payload.get("target_date"),
+    }
+    if len(set(target_dates.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH: target_date does not match "
+            "across all inputs: " + ", ".join(f"{k}={v!r}" for k, v in sorted(target_dates.items()))
+        )
+
+    strategy_versions = {
+        "selection": selection.get("strategy_version"),
+        "candidates": candidates.get("strategy_version"),
+        "candidate_pipeline": candidate_pipeline.get("strategy_version"),
+        "config": config.get("strategy_version"),
+    }
+    if len(set(strategy_versions.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_STRATEGY_VERSION_MISMATCH: strategy_version does not "
+            "match across selection/candidates/candidate_pipeline/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(strategy_versions.items()))
+        )
+
+    expected_config_sha256 = strategy_config_sha256(config)
+    config_sha256s = {
+        "selection": selection.get("config_sha256"),
+        "candidates": candidates.get("config_sha256"),
+        "candidate_pipeline": candidate_pipeline.get("config_sha256"),
+        "config": expected_config_sha256,
+    }
+    if len(set(config_sha256s.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_CONFIG_SHA256_MISMATCH: config_sha256 does not match "
+            "across selection/candidates/candidate_pipeline/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(config_sha256s.items()))
+        )
+
+    summary = candidate_pipeline.get("summary") or {}
+    if summary.get("pipeline_complete") is not True:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_PIPELINE_NOT_COMPLETE: "
+            "candidate_pipeline.summary.pipeline_complete must be true"
+        )
+    if summary.get("screening_complete") is not True:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_SCREENING_NOT_COMPLETE: "
+            "candidate_pipeline.summary.screening_complete must be true"
+        )
+
+    if research_window.get("previous_trading_day") != selection.get("previous_trading_day"):
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_PREVIOUS_TRADING_DAY_MISMATCH: "
+            "research_window.previous_trading_day does not match selection.previous_trading_day"
+        )
+
+
 def validate_recommendation_selection_link(
     *,
     recommendation: dict[str, Any],

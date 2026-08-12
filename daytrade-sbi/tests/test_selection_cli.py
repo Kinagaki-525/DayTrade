@@ -498,6 +498,171 @@ def test_cli_build_selection_recommendation_input_hashes_mismatch_is_hard_error(
 
 
 # ---------------------------------------------------------------------------
+# P1-4: broad cross-artifact validation for build-selection-recommendation.
+# ---------------------------------------------------------------------------
+
+
+def _run_selection_recommendation(chain, tmp_path, *, overrides=None, output_name="recommendation2.json"):
+    """Re-run build-selection-recommendation over chain's artifacts, with an
+    optional {arg_flag: replacement_path} override for one input file."""
+    argv = [
+        "build-selection-recommendation",
+        "--ranking",
+        str(chain["ranking_path"]),
+        "--selection",
+        str(chain["selection_path"]),
+        "--candidates",
+        str(chain["candidates_path"]),
+        "--candidate-pipeline",
+        str(chain["candidate_pipeline_path"]),
+        "--market-data",
+        str(chain["market_data_path"]),
+        "--research-window",
+        str(chain["research_window_path"]),
+        "--sources",
+        str(chain["sources_path"]),
+        "--config",
+        str(chain["config_path"]),
+        "--output",
+        str(tmp_path / output_name),
+    ]
+    if overrides:
+        for flag, replacement_path in overrides.items():
+            index = argv.index(flag)
+            argv[index + 1] = str(replacement_path)
+    return cli.main(argv)
+
+
+def _tamper_json_file(src_path, tmp_path, name, mutate):
+    payload = json.loads(src_path.read_text(encoding="utf-8"))
+    mutate(payload)
+    tampered_path = tmp_path / name
+    _write_json_file(tampered_path, payload)
+    return tampered_path
+
+
+def test_selection_recommendation_candidates_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidates_path"], tmp_path, "bad_candidates.json", lambda p: p.__setitem__("target_date", "2099-01-01")
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidates": tampered})
+
+
+def test_selection_recommendation_candidate_pipeline_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidate_pipeline_path"],
+        tmp_path,
+        "bad_pipeline.json",
+        lambda p: p.__setitem__("target_date", "2099-01-01"),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidate-pipeline": tampered})
+
+
+def test_selection_recommendation_market_data_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["market_data_path"], tmp_path, "bad_market_data.json", lambda p: p.__setitem__("target_date", "2099-01-01")
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--market-data": tampered})
+
+
+def test_selection_recommendation_research_window_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["research_window_path"],
+        tmp_path,
+        "bad_research_window.json",
+        lambda p: p.__setitem__("target_date", "2099-01-01"),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--research-window": tampered})
+
+
+def test_selection_recommendation_sources_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["sources_path"], tmp_path, "bad_sources.json", lambda p: p.__setitem__("target_date", "2099-01-01")
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--sources": tampered})
+
+
+def test_selection_recommendation_ranking_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    # ranking.target_date differing from selection/candidates/etc. is caught
+    # by the P0-2 output-contract recompute before P1-4 even runs; both are
+    # legitimate Hard Errors here, so accept either error code.
+    tampered = _tamper_json_file(
+        chain["ranking_path"], tmp_path, "bad_ranking.json", lambda p: p.__setitem__("target_date", "2099-01-01")
+    )
+    with pytest.raises(
+        ValueError,
+        match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH|SELECTION_OUTPUT_CONTRACT_MISMATCH|"
+        "SELECTION_RECOMMENDATION_INPUT_HASHES_MISMATCH",
+    ):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--ranking": tampered})
+
+
+def test_selection_recommendation_strategy_version_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidates_path"], tmp_path, "bad_candidates_sv.json", lambda p: p.__setitem__("strategy_version", "other-v")
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_STRATEGY_VERSION_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidates": tampered})
+
+
+def test_selection_recommendation_config_sha256_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidate_pipeline_path"], tmp_path, "bad_pipeline_cs.json", lambda p: p.__setitem__("config_sha256", "9" * 64)
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_CONFIG_SHA256_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidate-pipeline": tampered})
+
+
+def test_selection_recommendation_pipeline_not_complete_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidate_pipeline_path"],
+        tmp_path,
+        "bad_pipeline_complete.json",
+        lambda p: p["summary"].__setitem__("pipeline_complete", False),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_PIPELINE_NOT_COMPLETE"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidate-pipeline": tampered})
+
+
+def test_selection_recommendation_screening_not_complete_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["candidate_pipeline_path"],
+        tmp_path,
+        "bad_pipeline_screening.json",
+        lambda p: p["summary"].__setitem__("screening_complete", False),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_SCREENING_NOT_COMPLETE"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--candidate-pipeline": tampered})
+
+
+def test_selection_recommendation_previous_trading_day_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered = _tamper_json_file(
+        chain["research_window_path"],
+        tmp_path,
+        "bad_research_window_ptd.json",
+        lambda p: p.__setitem__("previous_trading_day", "2020-01-01"),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_PREVIOUS_TRADING_DAY_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides={"--research-window": tampered})
+
+
+# ---------------------------------------------------------------------------
 # P0-2 / P0-3: risk-check trust-chain tests.
 # ---------------------------------------------------------------------------
 
