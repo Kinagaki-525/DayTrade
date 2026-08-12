@@ -41,10 +41,38 @@ py -B -m pytest
     - `ranking_ready=false`の場合、Rankingを開始しない
     - Event Gate候補に`gate_status=DATA_UNAVAILABLE`が1件でも存在する場合、Rankingを開始せず日次結果を`DATA_UNAVAILABLE`とする
     - Event Gateが正常完了し`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合、Rankingを開始せず`NO_TRADE`とする
-    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となり`build-ranking`を実行して`ranking.json`を生成する。`ranking.json`の`ranking_status`は`COMPLETE`または`DATA_UNAVAILABLE`のいずれかであり、いずれの場合もRank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、main agentが独自比較して`TRADE`を作ることはない。`ranking_status=DATA_UNAVAILABLE`の場合は日次結果を`DATA_UNAVAILABLE`とし、`ranking_status=COMPLETE`の場合は既存フィールドでSelection未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
+    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となり`build-ranking`を実行して`ranking.json`を生成する。`ranking.json`の`ranking_status`は`COMPLETE`または`DATA_UNAVAILABLE`のいずれかであり、以降はSelectionの3ケース（Case A/B/C、下記）へ分岐する。main agentがRank 1を独自比較して`TRADE`を作ることは一切なく、Selection関連のCLI実行と結果報告に徹する
     - `REJECT`・`DATA_UNAVAILABLE`のEvent Gate候補はいずれのケースでもRankingへ渡さない
-22. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-23. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+
+### Selectionの3ケース（Ranking完了後の分岐）
+
+Ranking完了後、main agentは`build-selection`・`build-selection-recommendation`のCLIを実行し、その結果を報告するだけです。Rank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断することはありません。
+
+- **Case A（Ranking `DATA_UNAVAILABLE`）**: `ranking.json`の`ranking_status`が`DATA_UNAVAILABLE`の場合、Selectionを実行しない。日次結果は`DATA_UNAVAILABLE`で確定し、`recommendation.json`は生成しない。
+- **Case B（Ranking `COMPLETE` かつ Selection未設定）**: `ranking_status`は`COMPLETE`だが、`config/strategy.yaml`の`selection.enabled`がfalse（または閾値が`null`のまま較正待ち）の場合、`build-selection`を実行しない（実行してもSelection側がHard Errorで停止し`selection.json`を生成しない）。日次結果は「較正待ちのため`NO_TRADE`」として記録する。
+- **Case C（Ranking `COMPLETE` かつ Selection有効）**: `ranking_status`が`COMPLETE`で`selection.enabled`がtrue（閾値も設定済み）の場合、次の順にCLIを実行する。
+
+  ```bash
+  py -m src.cli build-selection \
+    --ranking runs/<target_date>/ranking.json \
+    --config runs/<target_date>/strategy_snapshot.yaml \
+    --output runs/<target_date>/selection.json
+
+  py -m src.cli build-selection-recommendation \
+    --selection runs/<target_date>/selection.json \
+    --candidates runs/<target_date>/candidates.json \
+    --candidate-pipeline runs/<target_date>/candidate_pipeline.json \
+    --market-data runs/<target_date>/market_data.json \
+    --research-window runs/<target_date>/research_window.json \
+    --sources runs/<target_date>/sources.json \
+    --config runs/<target_date>/strategy_snapshot.yaml \
+    --output runs/<target_date>/recommendation.json
+  ```
+
+  `selection.json`の`selection_status`が`SELECTED`なら`recommendation.json`の`decision`は`TRADE`、`NO_TRADE`なら`decision`は`NO_TRADE`になる（`build-selection-recommendation`はSelectionの判定結果を機械的に転記するだけで、独自の判定は行わない）。`TRADE`の場合だけ、続けて`risk-check`へ`--selection runs/<target_date>/selection.json`を渡してRisk Engineを実行する。
+
+22. Case Cで`decision=TRADE`の場合だけ人間に保有数・当日取引数を確認し、`risk-check --selection`でRisk Engineを実行して`risk_result.json`を保存
+23. Case A・Case B、またはCase Cで`decision=NO_TRADE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
 24. `recommendation.md`と`report.md`を生成
 25. run artifact allowlist（`event_research.json`、`event_gate.json`、`ranking.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
 26. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
