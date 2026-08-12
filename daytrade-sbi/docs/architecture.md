@@ -3,14 +3,22 @@
 ## 責任分界
 
 ```text
-Codex: Web調査・出典保存・候補比較・TRADE/NO_TRADE/DATA_UNAVAILABLE案
+Codex: Web調査・出典保存（sources.json）・Event Research（企業固有EventのNews Classification）
   ↓
-Python: データ検証・固定条件スクリーニング・価格計算・Risk Engine
+Python: データ検証・固定条件スクリーニング・Event Gate判定・価格計算・Risk Engine
+  ↓
+Ranking（未実装）: Event Gate PASS候補だけを入力とする次段の順位付け工程（詳細未定）
   ↓
 人間: 出典と注文案の最終確認・SBI株アプリへの手入力・実績記録
 ```
 
-Codexの評価は入力データに基づく候補比較であり、利益予測や発注権限ではありません。PythonはAIの代わりに銘柄を評価せず、設定された数値と構造だけを検証します。人間だけが実際の注文を決定・入力します。
+Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Classificationなどの構造化に限られ、PASS/REJECT/DATA_UNAVAILABLEの判定や候補比較は行いません。PythonはHard ScreeningとEvent Gateで決定論的に判定し、AIの代わりに銘柄を評価しません。Ranking（未実装）はEvent Gate `PASS`候補だけを入力として受け取る次段の工程ですが、詳細な責務、入出力Artifact、順位付け方法、最終1銘柄選定方法、`TRADE`生成責務は未決定であり、別途要件定義します。Ranking未実装の間は、Event Gate `PASS`候補が存在してもmain agentが独自に比較して`TRADE`を作ることはなく、`NO_TRADE`または`DATA_UNAVAILABLE`を保存します。人間だけが実際の注文を決定・入力します。
+
+## 責務境界
+
+- AI（Codex） = Research / Classification（Web調査で得たSource Attempt・Evidenceの`sources.json`への保存、Event ResearchのNews Classification）。PASS/REJECT/DATA_UNAVAILABLEを決定しない。
+- Python = Validation / Screening / Event Gate（市場データ検証、Hard Screening、Event Gateの決定論的PASS/REJECT/DATA_UNAVAILABLE判定）。
+- Ranking（未実装） = Event Gate `PASS`候補だけを入力とする次段の銘柄順位付け工程。詳細な責務、入出力Artifact、順位付け方法、最終1銘柄選定方法、`TRADE`/`NO_TRADE`生成責務は未決定であり、別途要件定義する。実装されるまでTRADE推奨は作成しない。
 
 ## AI実行構成
 
@@ -33,6 +41,8 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 | `src/performance.py` | Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に集計 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
 | `src/screening.py` | Candidate Research済みの検証済み値だけでHard Screeningを行い、Rule評価、Source Provenance、分析Featureを保存 |
+| `src/event_research.py` | Event Research: Hard Screening `PASS`候補についてEvent Research用Artifactを管理する。Web調査で得たSource Attempt・Evidence自体は`sources.json`を正本とし、`event_research.json`にはそれらへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Gate Input Candidate情報を保存する。PASS/REJECT/DATA_UNAVAILABLEは判定しない |
+| `src/event_gate.py` | Event Gate: 保存済みArtifactから決算日・前営業日決算・TDnet開示・一次確認済み危険ニュースを決定論的に評価し、`event_gate.json`へPASS/REJECT/DATA_UNAVAILABLEを保存 |
 | `src/strategy.py` | 前日高値ブレイクの価格計算 |
 | `src/risk.py` | AI案から独立した固定リスク検証。値は修正しない |
 | `src/reports.py` | PASS・REJECTED・NO_TRADE・DATA_UNAVAILABLEに応じた手動確認レポート |
@@ -47,18 +57,20 @@ Codexの評価は入力データに基づく候補比較であり、利益予測
 
 `candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。`summary`にはHard Screening件数、Rule別件数、`screening_complete`、`ranking_complete=false`も保存します。
 
-`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。
+`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。Event Researchで得た決算予定・TDnet開示・ニュースのWeb調査結果も含め、`sources.json`がSource Attempt・EvidenceのSingle Source of Truthです。
+
+`event_research.json`はHard Screening `PASS`候補（`status=ELIGIBLE`かつ`screening_status=PASS`）だけを対象に、`sources.json`のSource Attemptへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Research構造を保存する成果物です。Source Attempt・Evidence自体を`event_research.json`へ複製しません。PASS/REJECT/DATA_UNAVAILABLEの判定は含みません。`event_gate.json`は`event_research.json`と`sources.json`のSource Attemptを入力に、`earnings_on_target_date`・`earnings_on_previous_trading_day`・`tdnet_disclosure_in_event_window`・`dangerous_news_with_primary_confirmation`をPythonが決定論的に評価し、候補ごとの`gate_status`（PASS/REJECT/DATA_UNAVAILABLE）と`event_gate_complete`・`ranking_ready`を保存します。詳細なCLI手順は`prompts/nightly_research.md`を正本とします。
 
 日次ディレクトリには`strategy_snapshot.yaml`を保存します。候補・推奨・Risk Engine結果へ同じ`strategy_version`と設定内容のSHA-256を引き継ぎ、別設定で作られた成果物の混在を拒否します。
 
 ## 状態
 
 - `ELIGIBLE`: 市場データ検証と設定済み固定条件を通過。取引推奨ではない。
-- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking完了までは取引推奨ではない。
-- `REJECT`: Hard Screeningの有効ruleにより候補から除外。
-- `TRADE`: Codexが比較結果として作った1銘柄の注文案。Risk Engine通過前は採用不可。
-- `NO_TRADE`: 適切な候補がない正常な結果。注文を作らない。
-- `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。
+- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Event Gateでは対象日の決算・前営業日決算・TDnet開示・一次確認済み危険ニュースのいずれにも該当しないと判定された状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking完了までは取引推奨ではない。
+- `REJECT`: Hard Screeningの有効ruleにより候補から除外、またはEvent Gateで決算・TDnet開示・一次確認済み危険ニュースが確認され候補から除外された状態。Rankingへ渡さない。
+- `TRADE`: Rankingおよび最終選定の仕様確定後に生成可能となる、Event Gate `PASS`候補から選ばれる1銘柄の注文案。誰がどのように生成するかは今回確定しない。Ranking未実装中は生成しない。Risk Engine通過前は採用不可。
+- `NO_TRADE`: Event Gateが正常完了し、`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合の結果。Ranking未実装中にEvent Gate `PASS`候補が存在する場合も、Ranking未実装（`RANKING_NOT_IMPLEMENTED`相当の理由を記録）として`NO_TRADE`を保存できる。注文を作らない。
+- `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。Event Gateに`DATA_UNAVAILABLE`の候補が1件でも存在する場合を含む。Rankingへ渡さない。
 - `REJECTED`: 注文案またはデータが固定条件に違反。値を自動修正しない。
 - `NOT_APPLICABLE`: `NO_TRADE`または`DATA_UNAVAILABLE`のため注文リスク評価対象がない。
 

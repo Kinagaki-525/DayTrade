@@ -30,13 +30,22 @@ py -B -m pytest
 11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
 12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
 13. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`、`ranking_complete=false`を確認する
-15. Ranking未実装中は`TRADE`へ進めず、`recommendation.json`へ`NO_TRADE`または`DATA_UNAVAILABLE`を保存
-16. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-17. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
-18. `recommendation.md`と`report.md`を生成
-19. run artifact allowlistを検証し、`trades/recommendations.csv`へ推奨履歴を追加
-20. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
+15. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+16. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
+17. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
+18. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
+19. Event Gateの結果に応じて次のとおりFail Closedで分岐する。新しいReason CodeやSchemaは追加しない
+    - `ranking_ready=false`の場合、Rankingを開始しない
+    - Event Gate候補に`gate_status=DATA_UNAVAILABLE`が1件でも存在する場合、Rankingを開始せず日次結果を`DATA_UNAVAILABLE`とする
+    - Event Gateが正常完了し`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合、Rankingを開始せず`NO_TRADE`とする
+    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となる。ただしRankingは未実装のため、main agentが独自比較して`TRADE`を作らず、既存フィールドでRanking未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
+    - `REJECT`・`DATA_UNAVAILABLE`のEvent Gate候補はいずれのケースでもRankingへ渡さない
+20. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+21. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+22. `recommendation.md`と`report.md`を生成
+23. run artifact allowlist（`event_research.json`、`event_gate.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
+24. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 
