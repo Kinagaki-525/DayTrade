@@ -54,13 +54,18 @@ Ranking完了後、main agentはCLI（Case A/Bは`build-ranking-terminal-recomme
   ```bash
   py -m src.cli build-ranking-terminal-recommendation \
     --ranking runs/<target_date>/ranking.json \
+    --event-gate runs/<target_date>/event_gate.json \
     --candidates runs/<target_date>/candidates.json \
     --candidate-pipeline runs/<target_date>/candidate_pipeline.json \
+    --market-data runs/<target_date>/market_data.json \
     --research-window runs/<target_date>/research_window.json \
     --sources runs/<target_date>/sources.json \
+    --source-matrix config/source_matrix.yaml \
     --config runs/<target_date>/strategy_snapshot.yaml \
     --output runs/<target_date>/recommendation.json
   ```
+
+  `build-ranking-terminal-recommendation`はCase Cの`build-selection-recommendation`と同じ厳密さで、`ranking.json`が主張する全上流アーティファクト（`event_gate.json`・`candidates.json`・`market_data.json`・`sources.json`・source matrix・`strategy_snapshot.yaml`）の生バイトSHA256を`ranking.input_hashes`と完全一致で再検証し、Ranking CLI自身が使う`validate_ranking_preconditions`/`validate_ranking_output_contract`を再実行してからCase A/Bを判定する。
 
 - **Case C（Ranking `COMPLETE` かつ Selection有効）**: `ranking_status`が`COMPLETE`で`selection.enabled`がtrue（閾値も設定済み）の場合、次の順にCLIを実行する。
 

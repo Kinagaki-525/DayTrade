@@ -77,6 +77,15 @@
     },
     {
       "if": {
+        "properties": {"schema_version": {"const": 2}},
+        "required": ["schema_version"]
+      },
+      "then": {
+        "properties": {"decision": {"enum": ["TRADE", "NO_TRADE"]}}
+      }
+    },
+    {
+      "if": {
         "required": ["decision"],
         "properties": {"decision": {"const": "TRADE"}}
       },

@@ -31,6 +31,7 @@ from src.contracts import (
     validate_performance_inputs,
     validate_ranking_output_contract,
     validate_ranking_preconditions,
+    validate_ranking_terminal_recommendation_preconditions,
     validate_recommendation_candidate_link,
     validate_recommendation_pipeline_link,
     validate_recommendation_risk_link,
@@ -237,14 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
         "build-ranking-terminal-recommendation"
     )
     ranking_terminal_recommendation_parser.add_argument("--ranking", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument("--event-gate", required=True, type=Path)
     ranking_terminal_recommendation_parser.add_argument("--candidates", required=True, type=Path)
     ranking_terminal_recommendation_parser.add_argument(
         "--candidate-pipeline", required=True, type=Path
     )
+    ranking_terminal_recommendation_parser.add_argument("--market-data", required=True, type=Path)
     ranking_terminal_recommendation_parser.add_argument(
         "--research-window", required=True, type=Path
     )
     ranking_terminal_recommendation_parser.add_argument("--sources", required=True, type=Path)
+    ranking_terminal_recommendation_parser.add_argument("--source-matrix", required=True, type=Path)
     ranking_terminal_recommendation_parser.add_argument("--config", required=True, type=Path)
     ranking_terminal_recommendation_parser.add_argument("--output", required=True, type=Path)
 
@@ -466,10 +470,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build-ranking-terminal-recommendation":
         return _build_ranking_terminal_recommendation(
             args.ranking,
+            args.event_gate,
             args.candidates,
             args.candidate_pipeline,
+            args.market_data,
             args.research_window,
             args.sources,
+            args.source_matrix,
             args.config,
             args.output,
         )
@@ -1672,38 +1679,107 @@ def _build_selection_recommendation(
 
 def _build_ranking_terminal_recommendation(
     ranking_path: Path,
+    event_gate_path: Path,
     candidates_path: Path,
     candidate_pipeline_path: Path,
+    market_data_path: Path,
     research_window_path: Path,
     sources_path: Path,
+    source_matrix_path: Path,
     config_path: Path,
     output_path: Path,
 ) -> int:
     from src.ranking_terminal_recommendation import build_ranking_terminal_recommendation
 
+    # Fixed 13-step processing order -- brings Case A/B up to the same
+    # trust-chain rigor as Case C (build-selection-recommendation):
+    #  1. raw-byte SHA256 of every claimed Ranking input (never re-serialize)
+    #  2. schema-validating load of every JSON artifact
+    #  3. load+validate source_matrix.yaml
+    #  4. load the strategy config snapshot
+    #  5. assert ranking.input_hashes == the actual hashes computed in step 1
+    #     (full dict equality, not a subset check)
+    #  6. validate_ranking_preconditions (the SAME function build-ranking
+    #     itself calls, with source_base_dir set so Source Ledger file
+    #     existence is re-checked)
+    #  7. validate_ranking_output_contract (catches a schema-valid but
+    #     hand-edited ranking.json)
+    #  8. validate_ranking_terminal_recommendation_preconditions (P1-4-style
+    #     broad cross-artifact check: target_date, previous_trading_day,
+    #     strategy_version, config_sha256, pipeline/screening completeness)
+    #  9. determine_ranking_terminal_case (Case A / Case B / wrong-tool) --
+    #     only reached after the full Ranking Contract is re-verified, so a
+    #     forged ranking_status can never be trusted before its provenance
+    #     is proven
+    #  10. build_ranking_terminal_recommendation() (pure function)
+    #  11. schema-validate the resulting payload
+    #  12. validate_recommendation_candidate_link / _pipeline_link / _sources
+    #  13. atomic write only on full success
+    actual_ranking_input_hashes = {
+        "event_gate_sha256": _sha256_bytes(event_gate_path.read_bytes()),
+        "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
+        "market_data_sha256": _sha256_bytes(market_data_path.read_bytes()),
+        "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
+        "source_matrix_sha256": _sha256_bytes(source_matrix_path.read_bytes()),
+        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+    }
+
     ranking = load_json_document(ranking_path, "ranking.schema.json")
+    event_gate = load_json_document(event_gate_path, "event_gate.schema.json")
     candidates = load_json_document(candidates_path, "candidates.schema.json")
     candidate_pipeline = load_json_document(
         candidate_pipeline_path, "candidate_pipeline.schema.json"
     )
+    market_data = load_json_document(market_data_path, "market_data.schema.json")
     research_window = load_json_document(research_window_path, "research_window.schema.json")
     source_payload = load_json_document(sources_path, "sources.schema.json")
+
+    source_matrix = load_source_matrix(source_matrix_path)
+    validate_source_matrix(source_matrix)
+
     config = load_strategy_config(config_path)
 
-    if ranking.get("strategy_version") != config.get("strategy_version"):
-        raise ValueError(
-            "RANKING_TERMINAL_STRATEGY_VERSION_MISMATCH: ranking strategy_version does not "
-            "match --config"
+    if ranking.get("input_hashes") != actual_ranking_input_hashes:
+        mismatched_keys = sorted(
+            key
+            for key in set(actual_ranking_input_hashes) | set(ranking.get("input_hashes") or {})
+            if (ranking.get("input_hashes") or {}).get(key) != actual_ranking_input_hashes.get(key)
         )
-    if ranking.get("config_sha256") != strategy_config_sha256(config):
         raise ValueError(
-            "RANKING_TERMINAL_CONFIG_SHA256_MISMATCH: ranking config_sha256 does not match --config"
+            "RANKING_TERMINAL_INPUT_HASHES_MISMATCH: ranking.input_hashes does not match the "
+            "actual SHA256 of the --event-gate/--candidates/--market-data/--sources/"
+            "--source-matrix/--config files supplied here; mismatched keys: "
+            + ", ".join(mismatched_keys)
         )
-    if research_window.get("target_date") != ranking.get("target_date"):
-        raise ValueError(
-            "RANKING_TERMINAL_TARGET_DATE_MISMATCH: research_window.target_date does not match "
-            "ranking.target_date"
-        )
+
+    validate_ranking_preconditions(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        source_matrix=source_matrix,
+        config=config,
+        input_hashes=actual_ranking_input_hashes,
+        source_base_dir=sources_path.parent,
+    )
+    validate_ranking_output_contract(
+        ranking=ranking,
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        config=config,
+    )
+    validate_ranking_terminal_recommendation_preconditions(
+        ranking=ranking,
+        event_gate=event_gate,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
+    )
 
     payload = build_ranking_terminal_recommendation(
         ranking=ranking,

@@ -1451,24 +1451,33 @@ def test_cli_help_is_importable_and_does_not_crash(argv):
 def test_build_ranking_terminal_recommendation_requires_all_arguments():
     for missing in (
         "--ranking",
+        "--event-gate",
         "--candidates",
         "--candidate-pipeline",
+        "--market-data",
         "--research-window",
         "--sources",
+        "--source-matrix",
         "--config",
         "--output",
     ):
         full_args = [
             "--ranking",
             "ranking.json",
+            "--event-gate",
+            "event_gate.json",
             "--candidates",
             "candidates.json",
             "--candidate-pipeline",
             "candidate_pipeline.json",
+            "--market-data",
+            "market_data.json",
             "--research-window",
             "research_window.json",
             "--sources",
             "sources.json",
+            "--source-matrix",
+            "source_matrix.yaml",
             "--config",
             "strategy.yaml",
             "--output",
@@ -1483,89 +1492,38 @@ def test_build_ranking_terminal_recommendation_requires_all_arguments():
 
 
 def test_build_ranking_terminal_recommendation_cli_writes_output(tmp_path):
-    from src.config import DEFAULT_CONFIG_PATH, strategy_config_sha256
-    from tests.factories import make_data_unavailable_ranking_payload
-
-    config = load_strategy_config()
-    config_sha = strategy_config_sha256(config)
-
-    def _write(path, payload):
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    ranking = make_data_unavailable_ranking_payload(
-        target_date="2026-08-12",
-        previous_trading_day="2026-08-11",
-        strategy_version=config["strategy_version"],
-        config_sha256=config_sha,
+    from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
+    from tests.ranking_terminal_recommendation_fixtures import (
+        build_terminal_recommendation_run_dir,
     )
-    ranking_path = tmp_path / "ranking.json"
-    candidates_path = tmp_path / "candidates.json"
-    candidate_pipeline_path = tmp_path / "candidate_pipeline.json"
-    research_window_path = tmp_path / "research_window.json"
-    sources_path = tmp_path / "sources.json"
+
+    specs = [{"ticker": "AA01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}]
+    run_dir = build_terminal_recommendation_run_dir(
+        tmp_path / "runs", specs, data_unavailable=True
+    )
     output_path = tmp_path / "recommendation.json"
-    _write(ranking_path, ranking)
-    _write(
-        candidates_path,
-        {
-            "schema_version": 1,
-            "target_date": "2026-08-12",
-            "generated_at": "2026-08-11T21:00:00+00:00",
-            "strategy_version": config["strategy_version"],
-            "config_sha256": config_sha,
-            "candidates": [],
-        },
-    )
-    _write(
-        candidate_pipeline_path,
-        {
-            "schema_version": 1,
-            "target_date": "2026-08-12",
-            "generated_at": "2026-08-11T21:30:00+00:00",
-            "strategy_version": config["strategy_version"],
-            "config_sha256": config_sha,
-            "summary": complete_pipeline_summary(),
-            "candidates": [],
-        },
-    )
-    _write(
-        research_window_path,
-        {
-            "schema_version": 1,
-            "target_date": "2026-08-12",
-            "previous_trading_day": "2026-08-11",
-            "research_cutoff": "2026-08-11T21:00:00+00:00",
-            "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
-            "research_window": {
-                "run_type": "FIRST_RUN",
-                "window_start": "2026-08-11T00:00:00+00:00",
-                "window_end": "2026-08-11T21:00:00+00:00",
-                "previous_research_cutoff": None,
-                "previous_run_date": None,
-                "bootstrap_lookback_days": 5,
-            },
-        },
-    )
-    _write(
-        sources_path,
-        {"schema_version": 1, "target_date": "2026-08-12", "sources": [], "source_attempts": []},
-    )
 
     result = cli.main(
         [
             "build-ranking-terminal-recommendation",
             "--ranking",
-            str(ranking_path),
+            str(run_dir / "ranking.json"),
+            "--event-gate",
+            str(run_dir / "event_gate.json"),
             "--candidates",
-            str(candidates_path),
+            str(run_dir / "candidates.json"),
             "--candidate-pipeline",
-            str(candidate_pipeline_path),
+            str(run_dir / "candidate_pipeline.json"),
+            "--market-data",
+            str(run_dir / "market_data.json"),
             "--research-window",
-            str(research_window_path),
+            str(run_dir / "research_window.json"),
             "--sources",
-            str(sources_path),
+            str(run_dir / "sources.json"),
+            "--source-matrix",
+            str(DEFAULT_SOURCE_MATRIX_PATH),
             "--config",
-            str(DEFAULT_CONFIG_PATH),
+            str(run_dir / "strategy_snapshot.yaml"),
             "--output",
             str(output_path),
         ]

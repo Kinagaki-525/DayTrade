@@ -232,7 +232,7 @@ Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、�
 - `ranking_status=COMPLETE` かつ `config/strategy.yaml`（対象日の`strategy_snapshot.yaml`）の `selection.enabled` がfalse（閾値未較正、Case B）の場合もSelectionを実行せず、`build-ranking-terminal-recommendation` を実行して `decision=NO_TRADE`（理由 `SELECTION_NOT_ACTIVE_PENDING_CALIBRATION`）の `recommendation.json` を生成する。
 
   ```powershell
-  py -B -m src.cli build-ranking-terminal-recommendation --ranking runs/YYYY-MM-DD/ranking.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/recommendation.json
+  py -B -m src.cli build-ranking-terminal-recommendation --ranking runs/YYYY-MM-DD/ranking.json --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/recommendation.json
   ```
 
   Case A・Case Bのいずれも `recommendation.json` を必ず生成する。手で `recommendation.json` を作成することはない。

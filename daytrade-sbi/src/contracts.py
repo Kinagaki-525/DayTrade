@@ -969,6 +969,94 @@ def validate_selection_recommendation_preconditions(
         )
 
 
+def validate_ranking_terminal_recommendation_preconditions(
+    *,
+    ranking: dict[str, Any],
+    event_gate: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Cross-artifact consistency check for build-ranking-terminal-recommendation
+    (Case A / Case B), run after the full Ranking Contract re-verification
+    (validate_ranking_preconditions / validate_ranking_output_contract) and
+    before build_ranking_terminal_recommendation() is invoked.
+
+    Mirrors validate_selection_recommendation_preconditions's style for the
+    Case C path so both trust chains carry the same rigor.
+    """
+    target_dates = {
+        "ranking": ranking.get("target_date"),
+        "event_gate": event_gate.get("target_date"),
+        "candidates": candidates.get("target_date"),
+        "candidate_pipeline": candidate_pipeline.get("target_date"),
+        "market_data": market_data.get("target_date"),
+        "research_window": research_window.get("target_date"),
+        "sources": source_payload.get("target_date"),
+    }
+    if len(set(target_dates.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_TARGET_DATE_MISMATCH: target_date does not match "
+            "across all inputs: " + ", ".join(f"{k}={v!r}" for k, v in sorted(target_dates.items()))
+        )
+
+    previous_trading_days = {
+        "ranking": ranking.get("previous_trading_day"),
+        "event_gate": event_gate.get("previous_trading_day"),
+        "research_window": research_window.get("previous_trading_day"),
+    }
+    if len(set(previous_trading_days.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_PREVIOUS_TRADING_DAY_MISMATCH: previous_trading_day does not "
+            "match across ranking/event_gate/research_window: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(previous_trading_days.items()))
+        )
+
+    strategy_versions = {
+        "ranking": ranking.get("strategy_version"),
+        "candidates": candidates.get("strategy_version"),
+        "candidate_pipeline": candidate_pipeline.get("strategy_version"),
+        "config": config.get("strategy_version"),
+        "event_gate": event_gate.get("strategy_version"),
+    }
+    if len(set(strategy_versions.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_STRATEGY_VERSION_MISMATCH: strategy_version does not "
+            "match across ranking/candidates/candidate_pipeline/config/event_gate: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(strategy_versions.items()))
+        )
+
+    expected_config_sha256 = strategy_config_sha256(config)
+    config_sha256s = {
+        "ranking": ranking.get("config_sha256"),
+        "candidates": candidates.get("config_sha256"),
+        "candidate_pipeline": candidate_pipeline.get("config_sha256"),
+        "event_gate": event_gate.get("config_sha256"),
+        "config": expected_config_sha256,
+    }
+    if len(set(config_sha256s.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_CONFIG_SHA256_MISMATCH: config_sha256 does not match "
+            "across ranking/candidates/candidate_pipeline/event_gate/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(config_sha256s.items()))
+        )
+
+    summary = candidate_pipeline.get("summary") or {}
+    if summary.get("pipeline_complete") is not True:
+        raise ValueError(
+            "RANKING_TERMINAL_PIPELINE_NOT_COMPLETE: "
+            "candidate_pipeline.summary.pipeline_complete must be true"
+        )
+    if summary.get("screening_complete") is not True:
+        raise ValueError(
+            "RANKING_TERMINAL_SCREENING_NOT_COMPLETE: "
+            "candidate_pipeline.summary.screening_complete must be true"
+        )
+
+
 def validate_recommendation_selection_link(
     *,
     recommendation: dict[str, Any],
