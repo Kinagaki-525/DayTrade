@@ -179,4 +179,4 @@ def test_structured_research_and_daily_reports_do_not_keep_intermediate_notes():
     assert "order-plan preview" not in combined
     assert "調査パイプライン完了: はい" in combined
     assert "Screening PASS: 1件" in combined
-    assert "Ranking未実装のためTRADE候補は確定しない。" in combined
+    assert "Selectionは本番設定で無効のため、TRADE候補は確定しない。" in combined

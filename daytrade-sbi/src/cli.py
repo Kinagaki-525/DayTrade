@@ -224,6 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     risk_parser.add_argument("--current-positions", type=int)
     risk_parser.add_argument("--trades-today", type=int)
+    risk_parser.add_argument("--selection", type=Path)
 
     audit_parser = subparsers.add_parser("audit-official-ohlcv")
     audit_parser.add_argument("--market-data", required=True, type=Path)
@@ -408,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             args.trades_today,
             args.source_matrix,
             args.market_research,
+            args.selection,
         )
     if args.command == "audit-official-ohlcv":
         return _audit_official_ohlcv(
@@ -665,6 +667,7 @@ def _risk_check(
     trades_today: int | None,
     source_matrix_path: Path,
     market_research_path: Path | None,
+    selection_path: Path | None = None,
 ) -> int:
     recommendation = load_json_document(
         recommendation_path,
@@ -683,6 +686,50 @@ def _risk_check(
             "current_positions and trades_today are required when "
             "recommendation decision is TRADE"
         )
+
+    config = load_strategy_config(config_path)
+    config_digest = strategy_config_sha256(config)
+    if recommendation["strategy_version"] != config["strategy_version"]:
+        raise ValueError("recommendation strategy_version does not match --config")
+    if recommendation["config_sha256"] != config_digest:
+        raise ValueError("recommendation config_sha256 does not match --config")
+
+    # Config v6 introduces Selection as the gate between Ranking and
+    # Recommendation. For a v6 TRADE recommendation, --selection is
+    # effectively required and must show SELECTED for the same ticker: Risk
+    # never re-derives a decision from Ranking on its own, and a Risk
+    # REJECTED never falls back to any other candidate (Selection already
+    # only ever considered Rank 1, and Risk cannot second-guess that).
+    if (
+        config.get("config_schema_version") == 6
+        and decision == "TRADE"
+        and selection_path is None
+    ):
+        raise ValueError(
+            "RISK_SELECTION_REQUIRED: --selection is required for a TRADE recommendation "
+            "built from a config_schema_version 6 config"
+        )
+    if selection_path is not None:
+        selection = load_json_document(selection_path, "selection.schema.json")
+        if decision == "TRADE":
+            if selection.get("selection_status") != "SELECTED":
+                raise ValueError(
+                    "RISK_SELECTION_STATUS_MISMATCH: --selection must be SELECTED for a TRADE recommendation"
+                )
+            if selection.get("selected_ticker") != recommendation.get("ticker"):
+                raise ValueError(
+                    "RISK_SELECTION_TICKER_MISMATCH: --selection selected_ticker does not match recommendation.ticker"
+                )
+            if selection.get("config_sha256") != recommendation.get("config_sha256"):
+                raise ValueError(
+                    "RISK_SELECTION_CONFIG_SHA256_MISMATCH: --selection config_sha256 does not match recommendation"
+                )
+        else:
+            if selection.get("selection_status") == "SELECTED":
+                raise ValueError(
+                    "RISK_SELECTION_STATUS_MISMATCH: --selection is SELECTED but recommendation decision is not TRADE"
+                )
+
     (
         market_target_date,
         records,
@@ -697,12 +744,6 @@ def _risk_check(
         source_payload,
     )
     validate_recommendation_sources(recommendation, source_payload)
-    config = load_strategy_config(config_path)
-    config_digest = strategy_config_sha256(config)
-    if recommendation["strategy_version"] != config["strategy_version"]:
-        raise ValueError("recommendation strategy_version does not match --config")
-    if recommendation["config_sha256"] != config_digest:
-        raise ValueError("recommendation config_sha256 does not match --config")
 
     if decision != "TRADE":
         result = not_applicable_result(None)

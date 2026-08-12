@@ -1519,3 +1519,69 @@ def test_cli_help_is_importable_and_does_not_crash(argv):
     with pytest.raises(SystemExit) as exc_info:
         cli.main(argv)
     assert exc_info.value.code == 0
+
+
+def test_risk_check_requires_selection_for_v6_trade(monkeypatch):
+    strategy_version, config_sha256 = config_metadata()
+    recommendation = {
+        "schema_version": 1,
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "decision": "TRADE",
+        "ticker": "1234",
+        "company_name": "Example Co.",
+        "strategy_type": "previous_day_high_breakout",
+        "previous_high": "400",
+        "tick_size": "1",
+        "entry_trigger": "401",
+        "entry_limit": "402",
+        "take_profit": "410",
+        "stop_loss": "397",
+        "shares": 100,
+        "selection_reasons": ["test reason"],
+        "source_urls": ["https://example.test/source"],
+        "notes": None,
+    }
+    candidates = {
+        "target_date": "2026-08-10",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "candidates": [{"ticker": "1234", "status": "ELIGIBLE"}],
+    }
+    candidate_pipeline = complete_candidate_pipeline(
+        strategy_version, config_sha256, ranking_complete=True
+    )
+    recommendation["pipeline_summary"] = candidate_pipeline["summary"]
+
+    def load_document(path, schema):
+        if schema == "recommendation.schema.json":
+            return recommendation
+        if schema == "candidate_pipeline.schema.json":
+            return candidate_pipeline
+        return candidates
+
+    monkeypatch.setattr(cli, "load_json_document", load_document)
+
+    with pytest.raises(ValueError, match="RISK_SELECTION_REQUIRED"):
+        cli.main(
+            [
+                "risk-check",
+                "--recommendation",
+                "recommendation.json",
+                "--candidates",
+                "candidates.json",
+                "--candidate-pipeline",
+                "candidate_pipeline.json",
+                "--market-data",
+                "market_data.json",
+                "--sources",
+                "sources.json",
+                "--output",
+                "risk_result.json",
+                "--current-positions",
+                "0",
+                "--trades-today",
+                "0",
+            ]
+        )
