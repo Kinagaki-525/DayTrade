@@ -63,6 +63,26 @@ def _hard_error(code: str, message: str) -> RankingHardError:
     return RankingHardError(f"{code}: {message}")
 
 
+def _as_decimal(value: Any) -> Decimal | None:
+    """Best-effort exact Decimal conversion, or ``None`` when the value is
+    not a number at all.
+
+    Several upstream schemas type a numeric field loosely (for example
+    ``candidates.schema.json``'s ``featureValue.value`` also permits a JSON
+    boolean), so ``Decimal(str(value))`` can raise ``decimal.InvalidOperation``
+    -- an error outside the ``RANKING_*`` namespace -- on input that is
+    perfectly schema-valid. Callers treat ``None`` as "does not equal the
+    canonical value" and raise their own ``RANKING_*`` hard error, so every
+    failure stays inside Ranking's error-code namespace.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def parse_raw_turnover_thousand_yen(raw_value: Any) -> Decimal:
     """Strictly parse a THOUSAND_YEN raw_value string: digits only, with
     valid 3-digit comma grouping. No naive comma stripping."""
@@ -120,9 +140,13 @@ class _CandidateInput:
     reason_codes: tuple[str, ...]
     turnover_attempt_id: str | None
     turnover_source_ref: str | None
+    # Only the turnover feature can be missing (that is what makes a
+    # candidate DATA_UNAVAILABLE). tick_size / entry_trigger are always
+    # present: a null/non-positive tick_size and an unrecomputable
+    # order_plan are both hard errors in _collect_ranking_inputs().
     turnover_value: Decimal | None
-    tick_size: Decimal | None
-    entry_trigger: Decimal | None
+    tick_size: Decimal
+    entry_trigger: Decimal
     tick_size_source_refs: tuple[str, ...]
 
 
@@ -153,6 +177,16 @@ def _collect_ranking_inputs(
             "RANKING_PREVIOUS_TRADING_DAY_MISSING",
             "event_gate.json previous_trading_day is required",
         )
+    # event_gate_as_of is the load-bearing cutoff for Canonical Attempt
+    # selection: select_canonical_attempt() returns None for a falsy
+    # boundary, which would otherwise surface as a misleading
+    # "no attempt found" per candidate (and as nothing at all when the PASS
+    # set is empty). Reject it explicitly, like the other two date fields.
+    if not event_gate_as_of:
+        raise _hard_error(
+            "RANKING_EVENT_GATE_AS_OF_MISSING",
+            "event_gate.json event_gate_as_of is required",
+        )
     # A *missing* target_date is a mismatch too: it must never be treated as
     # "nothing to compare" and waved through.
     if candidates.get("target_date") != target_date:
@@ -168,8 +202,13 @@ def _collect_ranking_inputs(
 
     candidates_by_ticker: dict[str, dict[str, Any]] = {}
     for candidate in candidates.get("candidates", []):
+        if not isinstance(candidate, dict):
+            raise _hard_error(
+                "RANKING_CANDIDATES_INVALID",
+                "every candidates.json candidate must be an object",
+            )
         ticker = candidate.get("ticker")
-        if not isinstance(ticker, str) or ticker != ticker.strip():
+        if not isinstance(ticker, str) or not ticker or ticker != ticker.strip():
             raise _hard_error(
                 "RANKING_TICKER_MALFORMED",
                 f"candidate ticker is not a canonical string: {ticker!r}",
@@ -183,6 +222,11 @@ def _collect_ranking_inputs(
 
     market_by_ticker: dict[str, dict[str, Any]] = {}
     for record in market_data.get("records", []):
+        if not isinstance(record, dict):
+            raise _hard_error(
+                "RANKING_MARKET_DATA_INVALID",
+                "every market_data.json record must be an object",
+            )
         ticker = record.get("ticker")
         if not isinstance(ticker, str) or not ticker or ticker != ticker.strip():
             raise _hard_error(
@@ -240,7 +284,12 @@ def _collect_ranking_inputs(
                 "RANKING_TICK_SIZE_INVALID",
                 f"{ticker}: market_data.json tick_size is null",
             )
-        tick_size = Decimal(str(tick_size_raw))
+        tick_size = _as_decimal(tick_size_raw)
+        if tick_size is None:
+            raise _hard_error(
+                "RANKING_TICK_SIZE_INVALID",
+                f"{ticker}: market_data.json tick_size is not numeric: {tick_size_raw!r}",
+            )
         if tick_size <= 0:
             raise _hard_error(
                 "RANKING_TICK_SIZE_INVALID",
@@ -386,10 +435,7 @@ def _recompute_order_plan(
         if isinstance(recomputed_value, Decimal):
             # Numeric fields are serialized as decimal strings: compare by
             # exact Decimal value, never by float or string identity.
-            try:
-                equal = Decimal(str(stored_value)) == recomputed_value
-            except Exception:  # noqa: BLE001
-                equal = False
+            equal = _as_decimal(stored_value) == recomputed_value
         else:
             equal = stored_value == recomputed_value
         if not equal:
@@ -485,8 +531,15 @@ def _resolve_turnover(
     if status in DATA_UNAVAILABLE_STATUS_TO_REASON_CODE:
         # Artifact contradiction guard: a failure-status Canonical Attempt
         # must never coexist with a stale FOUND-shaped turnover value left
-        # behind in market_data.json or candidates.json. That is a hard
-        # error, not a DATA_UNAVAILABLE business outcome.
+        # behind in the attempt itself, in market_data.json or in
+        # candidates.json. That is a hard error, not a DATA_UNAVAILABLE
+        # business outcome.
+        if attempt.get("values"):
+            raise _hard_error(
+                "RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION",
+                f"{ticker}: turnover source_attempt values must be empty when its "
+                f"status is {status}",
+            )
         if market_record.get("turnover") is not None:
             raise _hard_error(
                 "RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION",
@@ -626,14 +679,12 @@ def _four_way_consistency_check(
             "RANKING_TURNOVER_SOURCE_RECORD_MISMATCH",
             f"{ticker}: sources.json does not contain exactly one matching turnover record for {source_ref}",
         )
-    source_value = matches[0].get("value")
-    try:
-        source_decimal = Decimal(str(source_value))
-    except Exception as exc:  # noqa: BLE001
+    source_decimal = _as_decimal(matches[0].get("value"))
+    if source_decimal is None:
         raise _hard_error(
             "RANKING_TURNOVER_SOURCE_RECORD_MISMATCH",
             f"{ticker}: sources.json turnover value is not numeric",
-        ) from exc
+        )
     if source_decimal != canonical:
         raise _hard_error(
             "RANKING_TURNOVER_SOURCE_RECORD_MISMATCH",
@@ -646,7 +697,7 @@ def _four_way_consistency_check(
             "RANKING_TURNOVER_MARKET_DATA_MISMATCH",
             f"{ticker}: market_data.json turnover is null",
         )
-    if Decimal(str(market_turnover)) != canonical:
+    if _as_decimal(market_turnover) != canonical:
         raise _hard_error(
             "RANKING_TURNOVER_MARKET_DATA_MISMATCH",
             f"{ticker}: market_data.json turnover does not equal canonical value",
@@ -660,7 +711,7 @@ def _four_way_consistency_check(
             f"{ticker}: candidates.json features.turnover is missing",
         )
     feature_value = turnover_feature.get("value")
-    if feature_value is None or Decimal(str(feature_value)) != canonical:
+    if feature_value is None or _as_decimal(feature_value) != canonical:
         raise _hard_error(
             "RANKING_TURNOVER_CANDIDATE_MISMATCH",
             f"{ticker}: candidates.json features.turnover.value does not equal canonical value",
@@ -794,6 +845,17 @@ def build_ranking(
         source_payload=source_payload,
         config=config,
     )
+    # Event Gate's own rule is that zero PASS candidates blocks Ranking
+    # (ranking_ready=false + NO_EVENT_GATE_PASS_CANDIDATE). An event_gate.json
+    # that claims ranking_ready=true with an empty PASS set therefore
+    # contradicts itself, and an artifact contradiction is always a hard
+    # error -- never a DATA_UNAVAILABLE business outcome (which would
+    # additionally emit an unexplained, empty reason_codes list).
+    if not inputs:
+        raise _hard_error(
+            "RANKING_EVENT_GATE_NOT_READY",
+            "event_gate.ranking_ready is true but there are no PASS candidates to rank",
+        )
 
     payload_candidates: list[dict[str, Any]]
     ranking_status: str
@@ -809,19 +871,11 @@ def build_ranking(
             "tick_size_source_refs": list(item.tick_size_source_refs),
         }
 
-    if data_unavailable or not inputs:
+    if data_unavailable:
         ranking_status = "DATA_UNAVAILABLE"
         ranking_complete = False
         payload_candidates = []
         for item in inputs:
-            relative_tick_size = (
-                {
-                    "numerator_yen": str(item.tick_size),
-                    "denominator_yen": str(item.entry_trigger),
-                }
-                if item.tick_size is not None and item.entry_trigger is not None
-                else None
-            )
             payload_candidates.append(
                 {
                     "ticker": item.ticker,
@@ -829,16 +883,18 @@ def build_ranking(
                     "reason_codes": _order_reason_codes(item.reason_codes),
                     "provenance": _provenance(item),
                     "feature_values": {
+                        # Only turnover can be missing here; the remaining
+                        # feature values are always known even for a
+                        # DATA_UNAVAILABLE candidate.
                         "turnover_yen": (
                             str(item.turnover_value) if item.turnover_value is not None else None
                         ),
-                        "tick_size_yen": (
-                            str(item.tick_size) if item.tick_size is not None else None
-                        ),
-                        "entry_trigger_yen": (
-                            str(item.entry_trigger) if item.entry_trigger is not None else None
-                        ),
-                        "relative_tick_size": relative_tick_size,
+                        "tick_size_yen": str(item.tick_size),
+                        "entry_trigger_yen": str(item.entry_trigger),
+                        "relative_tick_size": {
+                            "numerator_yen": str(item.tick_size),
+                            "denominator_yen": str(item.entry_trigger),
+                        },
                     },
                     "feature_ranks": None,
                     "rank_points": None,

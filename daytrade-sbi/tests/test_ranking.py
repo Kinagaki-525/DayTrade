@@ -757,6 +757,16 @@ def test_business_failure_statuses_make_whole_run_data_unavailable(status):
     assert by_ticker["6002"]["input_status"] == "DATA_UNAVAILABLE"
     # The other, valid candidate's known feature value is still persisted.
     assert by_ticker["6001"]["feature_values"]["turnover_yen"] == "50000000"
+    # Only turnover is unknown for the failed candidate: its tick_size and
+    # entry_trigger (and therefore relative_tick_size) are still recorded.
+    unavailable_features = by_ticker["6002"]["feature_values"]
+    assert unavailable_features["turnover_yen"] is None
+    assert unavailable_features["tick_size_yen"] == "1"
+    assert unavailable_features["entry_trigger_yen"] == "401"
+    assert unavailable_features["relative_tick_size"] == {
+        "numerator_yen": "1",
+        "denominator_yen": "401",
+    }
 
 
 # --- Hard errors: workflow-incomplete / invalid statuses ------------------
@@ -1226,7 +1236,7 @@ def test_cli_build_ranking_invalid_source_ledger_no_output_written(tmp_path):
     )
     # Remove a market_data.json source from sources.json so
     # validate_source_ledger() fails (CRITICAL-1).
-    turnover_ref = f"src-EE01-turnover"
+    turnover_ref = "src-EE01-turnover"
     sources["sources"] = [s for s in sources["sources"] if s["source_ref"] != turnover_ref]
 
     output_path = tmp_path / "ranking.json"
@@ -1671,9 +1681,9 @@ def test_cli_build_ranking_missing_source_page_file_is_rejected(tmp_path):
     for attempt in sources["source_attempts"]:
         attempt["source_page_path"] = "source_pages/does-not-exist.html"
 
-    result, output_path = None, None
     with pytest.raises(ValueError, match="RANKING_SOURCE_LEDGER_INVALID"):
-        result, output_path = _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+    assert not (tmp_path / "ranking.json").exists()
 
 
 # --- Mutation coverage: turnover attempt contract fields ---------------------
@@ -2002,3 +2012,660 @@ def test_ranking_never_sets_candidate_pipeline_ranking_complete():
     pipeline_source = _Path("src/candidate_pipeline.py").read_text(encoding="utf-8")
     assert '"ranking_complete": False' in pipeline_source
     assert '"ranking_complete": True' not in pipeline_source
+
+
+# --- Round-7 hardening: contradictions must never become DATA_UNAVAILABLE ----
+
+
+def test_ranking_ready_with_zero_pass_candidates_is_hard_error():
+    """Event Gate blocks Ranking when pass_count == 0, so an event_gate.json
+    claiming ranking_ready=true with an empty PASS set contradicts itself.
+    That is a hard error -- it must never be downgraded into a
+    DATA_UNAVAILABLE artifact carrying an empty reason_codes list."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TA01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"] = []
+    with pytest.raises(RankingHardError, match="RANKING_EVENT_GATE_NOT_READY"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_only_reject_candidates_with_ranking_ready_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TA02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"] = [{"ticker": "TA02", "gate_status": "REJECT"}]
+    with pytest.raises(RankingHardError, match="RANKING_EVENT_GATE_NOT_READY"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_event_gate_as_of_is_hard_error():
+    """event_gate_as_of is the Canonical Attempt selection boundary: a falsy
+    value must be rejected explicitly, not degraded into a misleading
+    'no attempt found' error (or silently ignored)."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TA03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["event_gate_as_of"] = None
+    with pytest.raises(RankingHardError, match="RANKING_EVENT_GATE_AS_OF_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["NOT_FOUND", "NOT_YET_AVAILABLE", "ACCESS_FAILED", "PARSE_FAILED", "STALE", "CONFLICT"],
+)
+def test_failure_attempt_keeping_its_own_values_is_hard_error(status):
+    """A failure-status Canonical Attempt that still carries a FOUND-shaped
+    `values` payload is an artifact contradiction (stale value survives the
+    failure attempt), not a DATA_UNAVAILABLE business outcome."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TA04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    attempt = source_payload["source_attempts"][0]
+    attempt["status"] = status
+    attempt["result_count"] = None
+    attempt["coverage_status"] = None
+    attempt["covered_dates"] = None
+    # `values` deliberately left in place.
+    _null_turnover_residuals(candidates, market_data, "TA04")
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_status_classification_covers_every_schema_status():
+    """Every status sources.schema.json permits must be classified exactly
+    once as FOUND / DATA_UNAVAILABLE / workflow-incomplete / invalid, so a
+    newly added status can never fall through unclassified."""
+    from src.ranking import (
+        DATA_UNAVAILABLE_STATUS_TO_REASON_CODE,
+        INVALID_SOURCE_STATUSES,
+        WORKFLOW_INCOMPLETE_STATUSES,
+    )
+
+    schema = json.loads(
+        (__import__("pathlib").Path("schemas/sources.schema.json")).read_text(encoding="utf-8")
+    )
+    schema_statuses = set(schema["$defs"]["sourceStatus"]["enum"])
+    classified = (
+        {"FOUND"}
+        | set(DATA_UNAVAILABLE_STATUS_TO_REASON_CODE)
+        | set(WORKFLOW_INCOMPLETE_STATUSES)
+        | set(INVALID_SOURCE_STATUSES)
+    )
+    assert classified == schema_statuses
+    assert len(classified) == (
+        1
+        + len(DATA_UNAVAILABLE_STATUS_TO_REASON_CODE)
+        + len(WORKFLOW_INCOMPLETE_STATUSES)
+        + len(INVALID_SOURCE_STATUSES)
+    )
+
+
+# --- Round-7 hardening: every failure stays inside the RANKING_* namespace ---
+
+
+@pytest.mark.parametrize("bad_value", [True, False, "not-a-number"])
+def test_non_numeric_candidate_turnover_value_is_ranking_hard_error(bad_value):
+    """candidates.schema.json's featureValue.value also permits a JSON
+    boolean, so a schema-valid artifact can reach the Decimal comparison with
+    a non-numeric value. That must surface as a RANKING_* hard error, never
+    as a bare decimal.InvalidOperation."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"][0]["features"]["turnover"]["value"] = bad_value
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_CANDIDATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_numeric_market_data_turnover_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["turnover"] = True
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_MARKET_DATA_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_numeric_tick_size_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["tick_size"] = "not-a-number"
+    with pytest.raises(RankingHardError, match="RANKING_TICK_SIZE_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_numeric_sources_turnover_value_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["sources"][0]["value"] = True
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_SOURCE_RECORD_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_object_candidates_entry_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB05", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"].append("not-an-object")
+    with pytest.raises(RankingHardError, match="RANKING_CANDIDATES_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_object_market_data_record_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB06", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"].append("not-an-object")
+    with pytest.raises(RankingHardError, match="RANKING_MARKET_DATA_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_object_event_gate_candidate_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB07", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"].append("not-an-object")
+    with pytest.raises(RankingHardError, match="RANKING_EVENT_GATE_CANDIDATES_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_empty_candidates_ticker_is_ranking_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TB08", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    extra = copy.deepcopy(candidates["candidates"][0])
+    extra["ticker"] = ""
+    candidates["candidates"].append(extra)
+    with pytest.raises(RankingHardError, match="RANKING_TICKER_MALFORMED"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Round-7 coverage: candidate/market_data linkage hard errors --------------
+
+
+def test_missing_candidates_entry_for_pass_ticker_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"] = []
+    with pytest.raises(RankingHardError, match="RANKING_CANDIDATE_LINK_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_market_data_record_for_pass_ticker_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"] = []
+    with pytest.raises(RankingHardError, match="RANKING_MARKET_DATA_LINK_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_market_data_record_not_verified_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["data_status"] = "UNVERIFIED"
+    with pytest.raises(RankingHardError, match="RANKING_MARKET_DATA_NOT_VERIFIED"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_duplicate_market_data_record_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"].append(copy.deepcopy(market_data["records"][0]))
+    with pytest.raises(RankingHardError, match="RANKING_DUPLICATE_MARKET_RECORD"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_duplicate_candidates_entry_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC05", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"].append(copy.deepcopy(candidates["candidates"][0]))
+    with pytest.raises(RankingHardError, match="RANKING_DUPLICATE_CANDIDATE_TICKER"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_duplicate_event_gate_pass_ticker_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "TC06", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"].append({"ticker": "TC06", "gate_status": "PASS"})
+    with pytest.raises(RankingHardError, match="RANKING_DUPLICATE_CANDIDATE_TICKER"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Round-7 coverage: validate_ranking_preconditions -------------------------
+
+
+def _preconditions(event_gate, candidates, market_data, sources, *, config=None, input_hashes=None):
+    """Call validate_ranking_preconditions with hashes that are genuinely
+    derived from the supplied payload bytes, so a test only trips the check
+    it is actually targeting."""
+    import hashlib
+
+    effective_config = CONFIG if config is None else config
+    hashes = input_hashes
+    if hashes is None:
+        hashes = {
+            "event_gate_sha256": _sha256_of_json(event_gate),
+            "candidates_sha256": _sha256_of_json(candidates),
+            "market_data_sha256": _sha256_of_json(market_data),
+            "sources_sha256": _sha256_of_json(sources),
+            "source_matrix_sha256": hashlib.sha256(
+                DEFAULT_SOURCE_MATRIX_PATH.read_bytes()
+            ).hexdigest(),
+            "strategy_snapshot_sha256": hashlib.sha256(
+                DEFAULT_CONFIG_PATH.read_bytes()
+            ).hexdigest(),
+        }
+    validate_ranking_preconditions(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=sources,
+        source_matrix=load_source_matrix(),
+        config=effective_config,
+        input_hashes=hashes,
+        source_base_dir=None,
+    )
+
+
+def test_preconditions_accept_a_consistent_full_case():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_preconditions_reject_config_schema_version_4():
+    """build-ranking requires the v5 config (the one carrying the ranking
+    block); a genuine pre-ranking v4 snapshot must be rejected."""
+    from pathlib import Path as _Path
+
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    v4_config = load_strategy_config(_Path("tests/fixtures/strategy_v4.yaml"))
+    with pytest.raises(ValueError, match="RANKING_CONFIG_SCHEMA_VERSION_INVALID"):
+        _preconditions(event_gate, candidates, market_data, sources, config=v4_config)
+
+
+def test_preconditions_reject_config_without_ranking_block():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    config = copy.deepcopy(CONFIG)
+    del config["ranking"]
+    with pytest.raises(ValueError, match="RANKING_CONFIG_BLOCK_MISSING"):
+        _preconditions(event_gate, candidates, market_data, sources, config=config)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda hashes: hashes.pop("market_data_sha256"),
+        lambda hashes: hashes.update({"extra_sha256": "0" * 64}),
+    ],
+)
+def test_preconditions_reject_wrong_input_hash_key_set(mutate):
+    import hashlib
+
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    hashes = {
+        "event_gate_sha256": _sha256_of_json(event_gate),
+        "candidates_sha256": _sha256_of_json(candidates),
+        "market_data_sha256": _sha256_of_json(market_data),
+        "sources_sha256": _sha256_of_json(sources),
+        "source_matrix_sha256": hashlib.sha256(DEFAULT_SOURCE_MATRIX_PATH.read_bytes()).hexdigest(),
+        "strategy_snapshot_sha256": hashlib.sha256(DEFAULT_CONFIG_PATH.read_bytes()).hexdigest(),
+    }
+    mutate(hashes)
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_INVALID"):
+        _preconditions(event_gate, candidates, market_data, sources, input_hashes=hashes)
+
+
+@pytest.mark.parametrize(
+    "hash_key",
+    ["candidates_sha256", "sources_sha256", "strategy_snapshot_sha256"],
+)
+def test_preconditions_reject_broken_hash_chain(hash_key):
+    """Hash chain: the candidates.json / sources.json / strategy snapshot fed
+    to build-ranking must be byte-identical to what Event Gate recorded. A
+    swap between the two runs must be rejected."""
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD05", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Event Gate claims a different byte-image than the one supplied now.
+    event_gate["input_hashes"][hash_key] = "9" * 64
+    with pytest.raises(ValueError, match="RANKING_HASH_CHAIN_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+@pytest.mark.parametrize(
+    "hash_key",
+    ["candidates_sha256", "sources_sha256", "strategy_snapshot_sha256"],
+)
+def test_preconditions_reject_missing_event_gate_hash_chain_entry(hash_key):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD06", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    del event_gate["input_hashes"][hash_key]
+    with pytest.raises(ValueError, match="RANKING_HASH_CHAIN_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_cli_build_ranking_rejects_swapped_candidates_file(tmp_path):
+    """End-to-end hash chain: swapping candidates.json for a different (but
+    internally valid) file after Event Gate ran must abort build-ranking and
+    leave no ranking.json behind."""
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD07", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # A benign, schema-valid edit that changes the bytes Event Gate hashed.
+    candidates["generated_at"] = "2026-08-09T22:00:00+00:00"
+
+    output_path = tmp_path / "ranking.json"
+    event_gate_path = tmp_path / "event_gate.json"
+    candidates_path = tmp_path / "candidates.json"
+    market_data_path = tmp_path / "market_data.json"
+    sources_path = tmp_path / "sources.json"
+    _write_json_file(event_gate_path, event_gate)
+    _write_json_file(candidates_path, candidates)
+    _write_json_file(market_data_path, market_data)
+    _write_json_file(sources_path, sources)
+
+    with pytest.raises(ValueError, match="RANKING_HASH_CHAIN_MISMATCH"):
+        cli.main(
+            [
+                "build-ranking",
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(DEFAULT_CONFIG_PATH),
+                "--output",
+                str(output_path),
+            ]
+        )
+    assert not output_path.exists()
+
+
+def test_preconditions_reject_strategy_version_mismatch():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD08", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["strategy_version"] = "v2"
+    with pytest.raises(ValueError, match="RANKING_STRATEGY_VERSION_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_preconditions_reject_config_sha256_mismatch():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD09", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["config_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="RANKING_CONFIG_SHA256_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_preconditions_reject_event_gate_not_complete():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD10", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Break a rule linkage so the recomputed event_gate_complete is false and
+    # the recorded `true` is contradicted.
+    event_gate["candidates"][0]["rule_evaluations"][0]["source_attempt_ids"] = ["missing-attempt"]
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_COMPLETE_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_preconditions_reject_non_empty_ranking_block_reasons():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD11", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["ranking_block_reasons"] = ["NO_EVENT_GATE_PASS_CANDIDATE"]
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_BLOCK_REASONS_MISMATCH"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+def test_preconditions_reject_invalid_source_matrix():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD12", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    broken_matrix = copy.deepcopy(load_source_matrix())
+    broken_matrix["sources"] = [
+        source for source in broken_matrix["sources"] if source["source_id"] != "YAHOO_JP_QUOTE"
+    ]
+    import hashlib
+
+    with pytest.raises(ValueError, match="RANKING_SOURCE_MATRIX_INVALID"):
+        validate_ranking_preconditions(
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=sources,
+            source_matrix=broken_matrix,
+            config=CONFIG,
+            input_hashes={
+                "event_gate_sha256": _sha256_of_json(event_gate),
+                "candidates_sha256": _sha256_of_json(candidates),
+                "market_data_sha256": _sha256_of_json(market_data),
+                "sources_sha256": _sha256_of_json(sources),
+                "source_matrix_sha256": hashlib.sha256(
+                    DEFAULT_SOURCE_MATRIX_PATH.read_bytes()
+                ).hexdigest(),
+                "strategy_snapshot_sha256": hashlib.sha256(
+                    DEFAULT_CONFIG_PATH.read_bytes()
+                ).hexdigest(),
+            },
+            source_base_dir=None,
+        )
+
+
+def test_preconditions_reject_duplicate_market_data_ticker():
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "TD13", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"].append(copy.deepcopy(market_data["records"][0]))
+    with pytest.raises(ValueError, match="RANKING_DUPLICATE_MARKET_DATA_TICKER"):
+        _preconditions(event_gate, candidates, market_data, sources)
+
+
+# --- Round-7 coverage: validate_ranking_output_contract -----------------------
+
+
+def _data_unavailable_contract_case(ticker):
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": ticker, "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    attempt = source_payload["source_attempts"][0]
+    attempt["status"] = "ACCESS_FAILED"
+    attempt["values"] = None
+    attempt["result_count"] = None
+    attempt["coverage_status"] = None
+    attempt["covered_dates"] = None
+    _null_turnover_residuals(candidates, market_data, ticker)
+    ranking = _run(event_gate, candidates, market_data, source_payload)
+    assert ranking["ranking_status"] == "DATA_UNAVAILABLE"
+    return event_gate, candidates, market_data, source_payload, ranking
+
+
+def _expect_output_contract_error(match, event_gate, candidates, market_data, source_payload, ranking):
+    with pytest.raises(ValueError, match=match):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+def test_output_contract_rejects_candidate_set_mismatch():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["candidates"][0]["ticker"] = "TE99"
+    _expect_output_contract_error(
+        "RANKING_CANDIDATE_SET_MISMATCH", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+def test_output_contract_rejects_unknown_ranking_status():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["ranking_status"] = "PARTIAL"
+    _expect_output_contract_error(
+        "RANKING_STATUS_INVALID", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+def test_output_contract_rejects_complete_with_false_ranking_complete():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["ranking_complete"] = False
+    _expect_output_contract_error(
+        "RANKING_COMPLETE_FLAG_MISMATCH", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+def test_output_contract_rejects_complete_without_final_rank():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["candidates"][0]["final_rank"] = None
+    _expect_output_contract_error(
+        "RANKING_FINAL_RANK_MISSING", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+def test_output_contract_rejects_data_unavailable_with_true_ranking_complete():
+    event_gate, candidates, market_data, source_payload, ranking = _data_unavailable_contract_case("TE05")
+    ranking["ranking_complete"] = True
+    _expect_output_contract_error(
+        "RANKING_COMPLETE_FLAG_MISMATCH", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+@pytest.mark.parametrize("field_name", ["final_rank", "rank_points"])
+def test_output_contract_rejects_data_unavailable_with_ranked_candidate(field_name):
+    """No partial ranking: a DATA_UNAVAILABLE run must null out final_rank and
+    rank_points for every candidate, including the ones whose data was fine."""
+    event_gate, candidates, market_data, source_payload, ranking = _data_unavailable_contract_case("TE06")
+    ranking["candidates"][0][field_name] = 1
+    _expect_output_contract_error(
+        "RANKING_DATA_UNAVAILABLE_FIELDS_NOT_NULL",
+        event_gate,
+        candidates,
+        market_data,
+        source_payload,
+        ranking,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [("ranked_count", 1), ("top_ranked_ticker", "TE07")],
+)
+def test_output_contract_rejects_data_unavailable_summary_claiming_a_rank(field_name, value):
+    event_gate, candidates, market_data, source_payload, ranking = _data_unavailable_contract_case("TE07")
+    ranking["summary"][field_name] = value
+    _expect_output_contract_error(
+        "RANKING_DATA_UNAVAILABLE_SUMMARY_INVALID",
+        event_gate,
+        candidates,
+        market_data,
+        source_payload,
+        ranking,
+    )
+
+
+def test_output_contract_rejects_reordered_candidates():
+    """ranking.candidates is order-significant (final_rank order): a
+    re-ordered list must not pass the recomputation check."""
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [
+            {"ticker": "TE08", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"},
+            {"ticker": "TE09", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+        ]
+    )
+    ranking["candidates"].reverse()
+    _expect_output_contract_error(
+        "RANKING_CANDIDATES_RECOMPUTE_MISMATCH",
+        event_gate,
+        candidates,
+        market_data,
+        source_payload,
+        ranking,
+    )
+
+
+def test_output_contract_rejects_data_unavailable_relabelled_as_complete():
+    """Relabelling a fail-closed DATA_UNAVAILABLE run as COMPLETE (and
+    hand-writing a rank) must be caught by recomputation."""
+    event_gate, candidates, market_data, source_payload, ranking = _data_unavailable_contract_case("TE10")
+    ranking["ranking_status"] = "COMPLETE"
+    ranking["ranking_complete"] = True
+    ranking["candidates"][0]["final_rank"] = 1
+    _expect_output_contract_error(
+        "RANKING_CANDIDATES_RECOMPUTE_MISMATCH",
+        event_gate,
+        candidates,
+        market_data,
+        source_payload,
+        ranking,
+    )
+
+
+def test_output_contract_rejects_target_date_mismatch():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE11", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["target_date"] = "2026-08-11"
+    _expect_output_contract_error(
+        "RANKING_TARGET_DATE_MISMATCH", event_gate, candidates, market_data, source_payload, ranking
+    )
+
+
+def test_output_contract_rejects_strategy_version_mismatch():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE12", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["strategy_version"] = "v2"
+    _expect_output_contract_error(
+        "RANKING_STRATEGY_VERSION_MISMATCH",
+        event_gate,
+        candidates,
+        market_data,
+        source_payload,
+        ranking,
+    )
+
+
+def test_output_contract_rejects_config_sha256_mismatch():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "TE13", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["config_sha256"] = "0" * 64
+    _expect_output_contract_error(
+        "RANKING_CONFIG_SHA256_MISMATCH", event_gate, candidates, market_data, source_payload, ranking
+    )

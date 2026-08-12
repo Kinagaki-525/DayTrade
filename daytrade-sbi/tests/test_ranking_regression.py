@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from src.config import load_strategy_config
+from src.config import load_strategy_config, load_yaml
 from src.contracts import (
     load_json_document,
     validate_ranking_output_contract,
@@ -123,12 +123,20 @@ def test_ranking_v1_regression_fixture_source_matrix_hash_is_real():
     )
 
 
+ALLOWED_CLASSIFICATIONS = {"DIRECT INPUT", "EXPECTED OUTPUT", "HASH CHAIN REQUIRED"}
+
+
 def test_ranking_v1_regression_fixture_contains_only_documented_artifacts():
-    """Every file shipped in the fixture must be classified in metadata.yaml,
-    so an unused artifact cannot silently accumulate."""
-    metadata = (
-        Path("regression/2026-08-12-ranking-v1-complete/metadata.yaml")
-        .read_text(encoding="utf-8")
-    )
-    for path in sorted(FIXTURE_DIR.iterdir()):
-        assert f"runs/2026-08-12/{path.name}:" in metadata, f"{path.name} is not classified"
+    """Every file shipped in the fixture must carry an explicit, recognised
+    classification in metadata.yaml, so an unused artifact cannot silently
+    accumulate. Parsed as YAML rather than substring-matched, so a filename
+    that only appears inside a comment does not satisfy the check."""
+    metadata = load_yaml(Path("regression/2026-08-12-ranking-v1-complete/metadata.yaml"))
+    artifacts = metadata["artifacts"]
+
+    shipped = {f"runs/2026-08-12/{path.name}" for path in sorted(FIXTURE_DIR.iterdir())}
+    assert set(artifacts) == shipped, "metadata.yaml artifacts do not match the shipped file set"
+    for key, entry in artifacts.items():
+        assert entry["classification"] in ALLOWED_CLASSIFICATIONS, (
+            f"{key} has an unrecognised classification: {entry['classification']}"
+        )
