@@ -143,14 +143,24 @@ def _collect_ranking_inputs(
     # HIGH-1: date integrity. event_gate/candidates/market_data must all
     # agree on target_date -- a mismatch is always a hard error, never
     # folded into DATA_UNAVAILABLE.
-    candidates_target_date = candidates.get("target_date")
-    market_data_target_date = market_data.get("target_date")
-    if candidates_target_date is not None and candidates_target_date != target_date:
+    if not target_date:
+        raise _hard_error(
+            "RANKING_TARGET_DATE_MISSING",
+            "event_gate.json target_date is required",
+        )
+    if not previous_trading_day:
+        raise _hard_error(
+            "RANKING_PREVIOUS_TRADING_DAY_MISSING",
+            "event_gate.json previous_trading_day is required",
+        )
+    # A *missing* target_date is a mismatch too: it must never be treated as
+    # "nothing to compare" and waved through.
+    if candidates.get("target_date") != target_date:
         raise _hard_error(
             "RANKING_TARGET_DATE_MISMATCH",
             "candidates.json target_date does not match event_gate.json target_date",
         )
-    if market_data_target_date is not None and market_data_target_date != target_date:
+    if market_data.get("target_date") != target_date:
         raise _hard_error(
             "RANKING_TARGET_DATE_MISMATCH",
             "market_data.json target_date does not match event_gate.json target_date",
@@ -174,8 +184,11 @@ def _collect_ranking_inputs(
     market_by_ticker: dict[str, dict[str, Any]] = {}
     for record in market_data.get("records", []):
         ticker = record.get("ticker")
-        if not isinstance(ticker, str):
-            continue
+        if not isinstance(ticker, str) or not ticker or ticker != ticker.strip():
+            raise _hard_error(
+                "RANKING_TICKER_MALFORMED",
+                f"market_data record ticker is not a canonical string: {ticker!r}",
+            )
         if ticker in market_by_ticker:
             raise _hard_error(
                 "RANKING_DUPLICATE_MARKET_RECORD",
@@ -668,7 +681,15 @@ def _four_way_consistency_check(
 
 def _compare_relative_tick(left: _CandidateInput, right: _CandidateInput) -> int:
     """Cross-multiplication comparison of tick_size / entry_trigger. No
-    division is used. Returns -1/0/1 like a normal comparator."""
+    division is used. Returns -1/0/1 like a normal comparator.
+
+    ``a/b < c/d <=> a*d < c*b`` is only order-preserving for strictly
+    positive denominators. That precondition holds by construction:
+    ``entry_trigger`` always comes from ``build_order_plan()``, which
+    rejects a non-positive ``previous_high`` (and any non-positive
+    ``tick_size`` is rejected in ``_collect_ranking_inputs``), so every
+    entry_trigger reaching this comparator is > 0.
+    """
     left_value = left.tick_size * right.entry_trigger
     right_value = right.tick_size * left.entry_trigger
     if left_value < right_value:

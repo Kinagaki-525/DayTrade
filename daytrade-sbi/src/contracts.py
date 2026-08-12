@@ -231,7 +231,6 @@ def validate_ranking_preconditions(
         raise ValueError("RANKING_STRATEGY_VERSION_MISMATCH: event_gate strategy_version does not match --config")
     if event_gate.get("config_sha256") != strategy_config_sha256(config):
         raise ValueError("RANKING_CONFIG_SHA256_MISMATCH: event_gate config_sha256 does not match --config")
-    _require_equal(event_gate, candidates, "target_date", "event_gate/candidates")
     if candidates.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("RANKING_STRATEGY_VERSION_MISMATCH: candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):

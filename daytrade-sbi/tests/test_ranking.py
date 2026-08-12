@@ -1894,3 +1894,66 @@ def test_validate_event_gate_integrity_reports_summary_mismatch():
     event_gate["summary"]["pass_count"] = 5
     errors = validate_event_gate_integrity(event_gate, sources)
     assert any(error.startswith("EVENT_GATE_SUMMARY_MISMATCH") for error in errors)
+
+
+# --- Round-2 hardening: date integrity, entry_trigger, market ticker ---------
+
+
+def test_missing_candidates_target_date_is_hard_error():
+    """A *missing* target_date must be treated as a mismatch, not as
+    'nothing to compare'."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9601", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    del candidates["target_date"]
+    with pytest.raises(RankingHardError, match="RANKING_TARGET_DATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_market_data_target_date_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9602", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    del market_data["target_date"]
+    with pytest.raises(RankingHardError, match="RANKING_TARGET_DATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_event_gate_target_date_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9603", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["target_date"] = None
+    with pytest.raises(RankingHardError, match="RANKING_TARGET_DATE_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_event_gate_previous_trading_day_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9604", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["previous_trading_day"] = None
+    with pytest.raises(RankingHardError, match="RANKING_PREVIOUS_TRADING_DAY_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_non_positive_previous_high_is_hard_error():
+    """The cross-multiplication comparator requires a strictly positive
+    entry_trigger. That holds because build_order_plan() refuses to produce
+    a plan from a non-positive previous_high -- and Ranking surfaces that
+    refusal as a hard error instead of ranking on a degenerate value."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9605", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["previous_high"] = "0"
+    with pytest.raises(RankingHardError, match="RANKING_ORDER_PLAN_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_malformed_market_data_record_ticker_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9606", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["ticker"] = " 9606"
+    with pytest.raises(RankingHardError, match="RANKING_TICKER_MALFORMED"):
+        _run(event_gate, candidates, market_data, source_payload)
