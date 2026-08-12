@@ -18,6 +18,10 @@
 - `rules/versions/`に保存済みの版ファイルを変更・削除しない
 - サブエージェントに日次成果物、設定、取引CSVを変更させない
 - 人間の明示確認前に`trades/trades.csv`へ実績を追記しない
+- SelectionはRank 1だけを見る。Rank 1がSelection RejectまたはRisk REJECTEDになった場合でも、Rank 2以下へフォールバックしない
+- `config/strategy.yaml`の`selection.enabled`、`selection.rules.minimum_turnover_yen.threshold_yen`、`selection.rules.maximum_relative_tick_size.threshold_ratio`を推測で変更しない（未決定のまま`false`/`null`を維持する）
+- Calibrationツールは`config/strategy.yaml`へ書き込まない。「最適な閾値」を推奨・自動適用しない。損益最適化を行わない
+- Calibrationツールは`regression/`・`tests/`のフィクスチャを読み取らない。出力は`runs/`・`trades/`配下に書き込まない
 
 ## Codexの役割
 

@@ -86,7 +86,8 @@ Pythonが固定条件でスクリーニング
 Pythonが候補パイプラインと性能計測を保存
   ↓
 Hard Screening PASS候補と分析Featureを保存
-  ↓ Selection未実装中はRanking COMPLETEでもTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
+  ↓ PythonがEvent Gate → Ranking（Rank 1決定）→ Selection（Rank 1のみ評価、Rank2フォールバックなし）を実行
+  ↓ 本番設定はSelection無効・閾値未決定のため、Ranking COMPLETEでも常にNO_TRADE
 Python Risk Engineが注文案を再計算・検証
   ↓ PASS、REJECTED、または NOT_APPLICABLE
 MarkdownのSBI手入力候補を生成

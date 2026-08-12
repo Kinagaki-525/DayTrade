@@ -48,13 +48,11 @@
 - 適時開示・重要材料が出た銘柄の扱い
 - ストップ高・ストップ安付近の銘柄の扱い
 - 低位株をどこまで許容するか
-- 候補が複数ある場合の順位付け: `ranking-v1`として実装済み（`src/ranking.py`）。Event Gate `PASS`候補だけを対象に、実際の売買代金desc・呼値/発動価格の相対比ascの2 FeatureをCompetition RankingしてRank合計で並べる。ただしRank 1を`TRADE`へ変換する最終選定（Selection / Absolute Quality Gate）は未実装のまま。以下は引き続き未決定：
-  - 最低売買代金の閾値（Absolute Quality Gateの一部）
-  - 呼値/発動価格の相対比の上限閾値（Absolute Quality Gateの一部）
-  - Absolute Quality Gate自体の仕様
-  - Ranking Rank 1をTRADEへ変換する処理
-  - Risk EngineでRank 1がREJECTEDになった場合にRank 2へフォールバックするか
-  - 絶対的なNO_TRADE条件（Selectionの一部）
+- 候補が複数ある場合の順位付け: `ranking-v1`として実装済み（`src/ranking.py`）。Event Gate `PASS`候補だけを対象に、実際の売買代金desc・呼値/発動価格の相対比ascの2 FeatureをCompetition RankingしてRank合計で並べる。Rank 1を`TRADE`へ変換する最終選定は`selection-v1`として実装済み（`src/selection.py`、`config/strategy.yaml`の`selection`ブロック）。Selectionは常にRank 1だけを見て、`Rank2`へのフォールバックは仕様上どこにも存在しない（Selection Reject時もRisk REJECTED時も同様）。ただし本番`config/strategy.yaml`では`selection.enabled: false`のまま、閾値2件は`null`のまま据え置いている。残っているのは値そのものの決定だけ：
+  - 最低売買代金の閾値（`selection.rules.minimum_turnover_yen.threshold_yen`、円単位の正の整数）
+  - 呼値/発動価格の相対比の上限閾値（`selection.rules.maximum_relative_tick_size.threshold_ratio`、既約分数の整数比）
+
+これら2値は、`runs/`実績の分布を人間が確認したうえで決定する（過去実績への当てはめによる最適化は行わない）。値を推測・仮置きしない。
 - Yahoo Finance symbol suffix resolution（未決定）: `YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`https://finance.yahoo.co.jp/quote/{ticker}.T...`で`.T`（東証）固定だが、Discoveryの`default_discovery_market_filter`は`ALL_MARKETS`のため、東証以外・上場市場不明の候補が混ざり得る。現時点でCandidateごとに「東証上場である」ことを構造的に保証するField（enum化された市場コード等）は存在せず、`market_data.json`の`market`はSource付きだが自由文字列である。以下は未決定：
   - 非東証市場向けSuffix（`.F` / `.S` / `.N` など）のMapping。推測で追加しない
   - Candidateごとの上場市場を機械可読に保証するField/Contractを持つかどうか
