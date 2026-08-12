@@ -228,6 +228,11 @@ def validate_ranking_preconditions(
     if not event_gate.get("previous_trading_day"):
         raise ValueError("event_gate.previous_trading_day is required")
 
+    if candidates.get("target_date") != event_gate.get("target_date"):
+        raise ValueError("candidates.json target_date does not match event_gate.json target_date")
+    if market_data.get("target_date") != event_gate.get("target_date"):
+        raise ValueError("market_data.json target_date does not match event_gate.json target_date")
+
     _check_sources_uniqueness(source_payload)
     _check_market_data_uniqueness(market_data)
 
@@ -236,6 +241,42 @@ def validate_ranking_preconditions(
     result = validate_source_matrix(source_matrix)
     if not result.valid:
         raise ValueError("Source matrix validation failed: " + "; ".join(result.errors))
+
+    # CRITICAL-1: mandatory Source Ledger / Market Data provenance
+    # validation. Parse market_data.json into the project's established
+    # MarketDataRecord objects and run the same validate_source_ledger() /
+    # validate_market_data() checks used elsewhere in the pipeline -- never
+    # trust a bare data_status=="VERIFIED" string in isolation.
+    from src.market import MarketDataRecord, validate_market_data, validate_source_ledger
+
+    records = [
+        MarketDataRecord.from_dict(record) for record in market_data.get("records", [])
+    ]
+    ledger_result = validate_source_ledger(
+        market_data.get("target_date"),
+        records,
+        source_payload,
+        source_matrix=source_matrix,
+    )
+    if not ledger_result.valid:
+        raise ValueError(
+            "RANKING_SOURCE_LEDGER_INVALID: " + "; ".join(ledger_result.errors)
+        )
+
+    pass_tickers = {
+        str(c.get("ticker")).strip()
+        for c in event_gate.get("candidates", [])
+        if c.get("gate_status") == "PASS"
+    }
+    for record in records:
+        if record.ticker not in pass_tickers:
+            continue
+        validation_result = validate_market_data(record, source_matrix)
+        if not validation_result.valid_for_trade:
+            raise ValueError(
+                f"RANKING_MARKET_DATA_INVALID: {record.ticker}: "
+                + "; ".join(validation_result.errors)
+            )
 
     required_hashes = {
         "event_gate_sha256",
@@ -309,6 +350,7 @@ def validate_ranking_output_contract(
     if pass_tickers != ranking_tickers:
         raise ValueError("ranking.candidates does not match event_gate PASS candidates")
 
+    summary = ranking.get("summary") or {}
     if ranking.get("ranking_status") == "COMPLETE":
         if ranking.get("ranking_complete") is not True:
             raise ValueError("ranking_complete must be true when ranking_status is COMPLETE")
@@ -325,10 +367,19 @@ def validate_ranking_output_contract(
                 raise ValueError(
                     "DATA_UNAVAILABLE ranking must null out final_rank/rank_points for every candidate"
                 )
+        if summary.get("ranked_count") != 0 or summary.get("top_ranked_ticker") is not None:
+            raise ValueError(
+                "DATA_UNAVAILABLE ranking requires summary.ranked_count==0 and "
+                "summary.top_ranked_ticker==null"
+            )
+
+    if set(ranking.get("input_candidate_tickers", [])) != pass_tickers:
+        raise ValueError("ranking.input_candidate_tickers does not match event_gate PASS candidates")
 
     # Recomputation-based verification: the output must exactly match a
     # fresh call to build_ranking with the same inputs (no mutation, no
-    # non-determinism).
+    # non-determinism). This also re-verifies summary fields and
+    # top_ranked_ticker by recomputation rather than schema-shape alone.
     recomputed = build_ranking(
         event_gate=event_gate,
         candidates=candidates,
@@ -341,6 +392,12 @@ def validate_ranking_output_contract(
         raise ValueError("ranking.candidates does not match recomputed ranking result")
     if recomputed.get("ranking_status") != ranking.get("ranking_status"):
         raise ValueError("ranking_status does not match recomputed ranking result")
+    if recomputed.get("summary") != summary:
+        raise ValueError("ranking.summary does not match recomputed ranking result")
+    if recomputed.get("input_candidate_tickers") != ranking.get("input_candidate_tickers"):
+        raise ValueError(
+            "ranking.input_candidate_tickers does not match recomputed ranking result"
+        )
 
 
 def _check_sources_uniqueness(source_payload: dict[str, Any]) -> None:

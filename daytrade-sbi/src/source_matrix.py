@@ -121,6 +121,19 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
         if tdnet["role"] != "PRIMARY":
             errors.append("JPX_TDNET must be PRIMARY role")
 
+    yahoo_jp_quote = source_by_id.get("YAHOO_JP_QUOTE")
+    if yahoo_jp_quote is None:
+        errors.append("source_matrix is missing required source_id(s): YAHOO_JP_QUOTE")
+    else:
+        if yahoo_jp_quote["source_id"] != "YAHOO_JP_QUOTE":
+            errors.append("YAHOO_JP_QUOTE source_id must be YAHOO_JP_QUOTE")
+        if yahoo_jp_quote["role"] != "PRIMARY":
+            errors.append("YAHOO_JP_QUOTE must be PRIMARY role")
+        if yahoo_jp_quote["criticality"] != "TRADE_CRITICAL":
+            errors.append("YAHOO_JP_QUOTE must be TRADE_CRITICAL criticality")
+        if yahoo_jp_quote["information_type"] != "TURNOVER":
+            errors.append("YAHOO_JP_QUOTE must have information_type TURNOVER")
+
     ir_disclosure = source_by_id.get("COMPANY_IR_DISCLOSURE")
     if ir_disclosure is None:
         errors.append("source_matrix is missing required source_id(s): COMPANY_IR_DISCLOSURE")

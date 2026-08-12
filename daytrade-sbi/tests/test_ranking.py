@@ -8,14 +8,18 @@ import pytest
 
 from src import cli
 from src.config import DEFAULT_CONFIG_PATH, load_strategy_config, strategy_config_sha256
-from src.contracts import RUN_ARTIFACT_ALLOWLIST
+from src.contracts import (
+    RUN_ARTIFACT_ALLOWLIST,
+    validate_ranking_output_contract,
+    validate_ranking_preconditions,
+)
 from src.ranking import (
     RankingHardError,
     build_ranking,
     canonical_turnover_yen,
     parse_raw_turnover_thousand_yen,
 )
-from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
+from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH, load_source_matrix
 from src.strategy import build_order_plan
 
 
@@ -63,6 +67,8 @@ def _turnover_attempt(
         "status": status,
         "values": None,
         "result_count": None,
+        "coverage_status": None,
+        "covered_dates": None,
     }
     if status == "FOUND":
         canonical = canonical_override
@@ -80,6 +86,8 @@ def _turnover_attempt(
             }
         ]
         attempt["result_count"] = 1
+        attempt["coverage_status"] = "COMPLETE"
+        attempt["covered_dates"] = [PREVIOUS_TRADING_DAY]
     return attempt
 
 
@@ -129,7 +137,7 @@ def _candidate(
             "estimated_turnover": {"value": None, "source_refs": [], "source_urls": [], "estimated": False},
             "turnover": {
                 "value": canonical_turnover,
-                "source_refs": [f"src-{ticker}-turnover{source_ref_suffix}"],
+                "source_refs": [f"src-{ticker}-turnover{source_ref_suffix}"] if canonical_turnover is not None else [],
                 "source_urls": [],
                 "estimated": False,
             },
@@ -138,7 +146,37 @@ def _candidate(
     }
 
 
-def _market_record(*, ticker: str, previous_high: str, tick_size: str, turnover: str) -> dict:
+def _tick_size_provenance(ticker: str, tick_size: str) -> tuple[list[dict], dict]:
+    """Minimal tick_size sources + field_provenance sufficient for
+    ranking.py's own tick_size provenance contract check (not the full
+    validate_market_data() contract, which is only exercised at the CLI
+    layer -- see _full_market_sources for that)."""
+    tick_source = {
+        "source_ref": f"tick-{ticker}",
+        "source_id": "JPX_TICK_SIZE",
+        "source_role": "PRIMARY",
+        "information_type": "TICK_SIZE",
+        "source_status": "FOUND",
+        "source_name": "JPX Tick Size",
+        "source_url": "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+        "retrieved_at": "2026-08-09T20:00:00+09:00",
+        "trading_date": PREVIOUS_TRADING_DAY,
+        "ticker": ticker,
+        "field_name": "tick_size",
+        "value": tick_size,
+    }
+    provenance = {
+        "field_name": "tick_size",
+        "status": "VERIFIED",
+        "verified_value": tick_size,
+        "verified_at": "2026-08-09T20:01:00+09:00",
+        "source_refs": [tick_source["source_ref"]],
+    }
+    return [tick_source], provenance
+
+
+def _market_record(*, ticker: str, previous_high: str, tick_size: str, turnover: str | None) -> dict:
+    sources, tick_provenance = _tick_size_provenance(ticker, tick_size)
     return {
         "ticker": ticker,
         "company_name": "Example",
@@ -155,7 +193,8 @@ def _market_record(*, ticker: str, previous_high: str, tick_size: str, turnover:
         "previous_high": previous_high,
         "tick_size": tick_size,
         "turnover": turnover,
-        "sources": [],
+        "sources": sources,
+        "field_provenance": [tick_provenance],
     }
 
 
@@ -244,8 +283,8 @@ def _build_case(
         source_records.append(_source_record(ticker=ticker, canonical_value=canonical))
 
     event_gate = _event_gate(tickers)
-    candidates = {"candidates": candidates_list}
-    market_data = {"records": market_records}
+    candidates = {"target_date": TARGET_DATE, "candidates": candidates_list}
+    market_data = {"target_date": TARGET_DATE, "records": market_records}
     source_payload = {"sources": source_records, "source_attempts": attempts}
     return event_gate, candidates, market_data, source_payload
 
@@ -257,6 +296,146 @@ def _sha256_of_json(payload: dict) -> str:
 
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_OHLCV_VALUES = {
+    "open": "390",
+    "high": "400",
+    "low": "385",
+    "close": "395",
+    "volume": "1000000",
+}
+
+
+def _full_source(
+    *,
+    ticker: str,
+    field_name: str,
+    value: str,
+    source_id: str,
+    source_role: str,
+    information_type: str,
+    url: str,
+    ref_suffix: str = "",
+) -> dict:
+    return {
+        "source_ref": f"{source_id}-{ticker}-{field_name}{ref_suffix}",
+        "source_id": source_id,
+        "source_role": source_role,
+        "information_type": information_type,
+        "source_status": "FOUND",
+        "source_name": source_id.replace("_", " ").title(),
+        "source_url": url,
+        "retrieved_at": "2026-08-09T20:00:00+09:00",
+        "trading_date": PREVIOUS_TRADING_DAY,
+        "ticker": ticker,
+        "field_name": field_name,
+        "value": value,
+    }
+
+
+def _full_market_sources(
+    *, ticker: str, previous_high: str, tick_size: str, turnover_canonical: str
+) -> tuple[list[dict], dict]:
+    """Build a market_data.json 'sources' array + tick_size field_provenance
+    that satisfies the full validate_market_data()/validate_source_ledger()
+    contract exercised at the CLI layer by validate_ranking_preconditions
+    (CRITICAL-1)."""
+    sources: list[dict] = [
+        _full_source(
+            ticker=ticker,
+            field_name="company_name",
+            value="Example",
+            source_id="JPX_LISTED_COMPANY",
+            source_role="PRIMARY",
+            information_type="LISTED_COMPANY",
+            url="https://www.jpx.co.jp/listing/co-search/",
+        ),
+        _full_source(
+            ticker=ticker,
+            field_name="market",
+            value="TSE Prime",
+            source_id="JPX_LISTED_COMPANY",
+            source_role="PRIMARY",
+            information_type="LISTED_COMPANY",
+            url="https://www.jpx.co.jp/listing/co-search/",
+        ),
+        _full_source(
+            ticker=ticker,
+            field_name="share_unit",
+            value="100",
+            source_id="JPX_TRADING_UNIT",
+            source_role="PRIMARY",
+            information_type="TRADING_UNIT",
+            url="https://www.jpx.co.jp/equities/trading/domestic/03.html",
+        ),
+    ]
+    values = dict(_OHLCV_VALUES)
+    values["previous_close"] = "390"
+    values["previous_high"] = previous_high
+    for field_name, value in values.items():
+        sources.append(
+            _full_source(
+                ticker=ticker,
+                field_name=field_name,
+                value=value,
+                source_id="YAHOO_JP_HISTORY",
+                source_role="PRIMARY",
+                information_type="OHLCV",
+                url=f"https://finance.yahoo.co.jp/quote/{ticker}.T/history",
+            )
+        )
+        sources.append(
+            _full_source(
+                ticker=ticker,
+                field_name=field_name,
+                value=value,
+                source_id="KABUTAN_HISTORY",
+                source_role="SECONDARY",
+                information_type="OHLCV",
+                url=f"https://kabutan.jp/stock/kabuka?code={ticker}",
+            )
+        )
+    tick_source = _full_source(
+        ticker=ticker,
+        field_name="tick_size",
+        value=tick_size,
+        source_id="JPX_TICK_SIZE",
+        source_role="PRIMARY",
+        information_type="TICK_SIZE",
+        url="https://www.jpx.co.jp/equities/trading/domestic/07.html",
+    )
+    sources.append(tick_source)
+    topix_source = _full_source(
+        ticker=ticker,
+        field_name="topix500_membership",
+        value="true",
+        source_id="JPX_TOPIX500",
+        source_role="PRIMARY",
+        information_type="TOPIX500_MEMBERSHIP",
+        url="https://www.jpx.co.jp/markets/indices/topix/",
+    )
+    sources.append(topix_source)
+    price_source = next(s for s in sources if s["field_name"] == "previous_high")
+    # Reuse _source_record exactly (byte-for-byte) so this turnover source
+    # canonically matches the sources.json ledger entry produced by
+    # _build_case's _source_record for the same ticker/value.
+    turnover_source = _source_record(ticker=ticker, canonical_value=turnover_canonical)
+    sources.append(turnover_source)
+    tick_provenance = {
+        "field_name": "tick_size",
+        "status": "VERIFIED",
+        "verified_value": tick_size,
+        "verified_at": "2026-08-09T20:01:00+09:00",
+        "primary_source_ref": tick_source["source_ref"],
+        "secondary_source_ref": topix_source["source_ref"],
+        "source_refs": [
+            tick_source["source_ref"],
+            topix_source["source_ref"],
+            price_source["source_ref"],
+        ],
+    }
+    return sources, tick_provenance
 
 
 def _build_full_case(specs: list[dict]) -> tuple[dict, dict, dict, dict]:
@@ -271,15 +450,40 @@ def _build_full_case(specs: list[dict]) -> tuple[dict, dict, dict, dict]:
         "config_sha256": CONFIG_SHA,
         "candidates": candidates["candidates"],
     }
+
+    # Replace each market record's minimal tick_size-only sources with the
+    # full CRITICAL-1 source ledger contract (OHLCV primary+secondary,
+    # tick_size/topix500 provenance, and a matching turnover source), and
+    # extend sources.json with the same records so validate_source_ledger()
+    # finds every market_data.json source in the ledger.
+    full_market_records = []
+    full_ledger_sources = list(source_payload["sources"])
+    for record, spec in zip(market_data["records"], specs):
+        ticker = spec["ticker"]
+        canonical = str(canonical_turnover_yen(spec["raw_value"]))
+        full_sources, tick_provenance = _full_market_sources(
+            ticker=ticker,
+            previous_high=spec["previous_high"],
+            tick_size=spec["tick_size"],
+            turnover_canonical=canonical,
+        )
+        new_record = dict(record)
+        new_record["sources"] = full_sources
+        new_record["field_provenance"] = [tick_provenance]
+        full_market_records.append(new_record)
+        full_ledger_sources.extend(
+            source for source in full_sources if source["field_name"] != "turnover"
+        )
+
     market_data_full = {
         "schema_version": 1,
         "target_date": TARGET_DATE,
-        "records": market_data["records"],
+        "records": full_market_records,
     }
     sources_full = {
         "schema_version": 1,
         "target_date": TARGET_DATE,
-        "sources": source_payload["sources"],
+        "sources": full_ledger_sources,
         "source_attempts": source_payload["source_attempts"],
     }
     # The hash-chain check requires event_gate.input_hashes to be the real
@@ -306,20 +510,37 @@ def _run(event_gate, candidates, market_data, source_payload):
     )
 
 
+def _null_turnover_residuals(candidates: dict, market_data: dict, ticker: str) -> None:
+    """Helper for failure-status fixtures: null out the stale turnover
+    residuals that CRITICAL-2 forbids from surviving alongside a
+    failure-status canonical attempt."""
+    for record in market_data["records"]:
+        if record["ticker"] == ticker:
+            record["turnover"] = None
+    for candidate in candidates["candidates"]:
+        if candidate["ticker"] == ticker:
+            candidate["features"]["turnover"]["value"] = None
+            candidate["features"]["turnover"]["source_refs"] = []
+
+
 # --- Raw value parsing --------------------------------------------------
 
 
 def test_parse_raw_turnover_valid_examples():
     assert parse_raw_turnover_thousand_yen("0") == Decimal(0)
     assert parse_raw_turnover_thousand_yen("123") == Decimal(123)
+    assert parse_raw_turnover_thousand_yen("1234") == Decimal(1234)
+    assert parse_raw_turnover_thousand_yen("123456789") == Decimal(123456789)
+    assert parse_raw_turnover_thousand_yen("1,234") == Decimal(1234)
     assert parse_raw_turnover_thousand_yen("12,345") == Decimal(12345)
     assert parse_raw_turnover_thousand_yen("1,234,567") == Decimal(1234567)
+    assert parse_raw_turnover_thousand_yen("121,401,288") == Decimal(121401288)
     assert canonical_turnover_yen("12,345") == Decimal(12345000)
 
 
 @pytest.mark.parametrize(
     "raw_value",
-    ["1234", "12,3456", "12,34", "abc", "1,234,56", "-1", "", "12,345 "],
+    ["1,23", "1,,000", "1,000,", "100千円", "-1", "1.5", "", "12,3456", "12,34", "abc", "1,234,56", "12,345 "],
 )
 def test_parse_raw_turnover_rejects_malformed(raw_value):
     with pytest.raises(RankingHardError, match="RANKING_TURNOVER_RAW_VALUE_MALFORMED"):
@@ -339,12 +560,19 @@ def test_multiple_candidates_ranked_by_turnover_and_relative_tick():
     result = _run(event_gate, candidates, market_data, source_payload)
     assert result["ranking_status"] == "COMPLETE"
     assert result["ranking_complete"] is True
-    assert result["ranked_count"] == 2
+    assert result["summary"]["ranked_count"] == 2
+    assert result["summary"]["input_count"] == 2
+    assert result["summary"]["valid_input_count"] == 2
+    assert result["summary"]["data_unavailable_count"] == 0
     by_ticker = {c["ticker"]: c for c in result["candidates"]}
+    assert result["summary"]["top_ranked_ticker"] == "1001"
     assert by_ticker["1001"]["final_rank"] == 1
     assert by_ticker["1002"]["final_rank"] == 2
     assert by_ticker["1001"]["feature_ranks"]["turnover_rank"] == 1
     assert by_ticker["1002"]["feature_ranks"]["turnover_rank"] == 2
+    assert result["previous_trading_day"] == PREVIOUS_TRADING_DAY
+    assert result["event_gate_as_of"] == EVENT_GATE_AS_OF
+    assert result["input_candidate_tickers"] == ["1001", "1002"]
 
 
 def test_permutation_invariance():
@@ -439,6 +667,7 @@ def test_forbidden_fields_never_present():
         "'atr'",
         "'volume_ratio'",
         "'estimated_turnover'",
+        "'OK'",
     ):
         assert forbidden not in payload_str
 
@@ -463,10 +692,17 @@ def test_business_failure_statuses_make_whole_run_data_unavailable(status):
             attempt["status"] = status
             attempt["values"] = None
             attempt["result_count"] = None
+            attempt["coverage_status"] = None
+            attempt["covered_dates"] = None
+    # CRITICAL-2: a failure-status canonical attempt must not coexist with a
+    # stale turnover value left behind in market_data.json/candidates.json.
+    _null_turnover_residuals(candidates, market_data, "6002")
 
     result = _run(event_gate, candidates, market_data, source_payload)
     assert result["ranking_status"] == "DATA_UNAVAILABLE"
     assert result["ranking_complete"] is False
+    assert result["summary"]["ranked_count"] == 0
+    assert result["summary"]["top_ranked_ticker"] is None
     for candidate in result["candidates"]:
         assert candidate["final_rank"] is None
         assert candidate["rank_points"] is None
@@ -474,7 +710,7 @@ def test_business_failure_statuses_make_whole_run_data_unavailable(status):
     by_ticker = {c["ticker"]: c for c in result["candidates"]}
     assert by_ticker["6002"]["input_status"] == "DATA_UNAVAILABLE"
     # The other, valid candidate's known feature value is still persisted.
-    assert by_ticker["6001"]["feature_values"]["turnover"] == "50000000"
+    assert by_ticker["6001"]["feature_values"]["turnover_yen"] == "50000000"
 
 
 # --- Hard errors: workflow-incomplete / invalid statuses ------------------
@@ -510,6 +746,60 @@ def test_missing_canonical_attempt_is_hard_error():
     )
     source_payload["source_attempts"] = []
     with pytest.raises(RankingHardError, match="RANKING_TURNOVER_ATTEMPT_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_attempt_wrong_role_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7004", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["source_attempts"][0]["source_role"] = "SECONDARY"
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_attempt_wrong_criticality_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7005", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["source_attempts"][0]["criticality"] = "CONTEXT"
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_attempt_wrong_information_type_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7006", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["source_attempts"][0]["information_type"] = "OHLCV"
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_source_record_wrong_role_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7007", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["sources"][0]["source_role"] = "SECONDARY"
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_SOURCE_RECORD_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_missing_tick_size_provenance_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7008", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["field_provenance"] = []
+    with pytest.raises(RankingHardError, match="RANKING_TICK_SIZE_PROVENANCE_MISSING"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_invalid_tick_size_provenance_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "7009", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["field_provenance"][0]["status"] = "CONFLICT"
+    with pytest.raises(RankingHardError, match="RANKING_TICK_SIZE_PROVENANCE_INVALID"):
         _run(event_gate, candidates, market_data, source_payload)
 
 
@@ -558,6 +848,50 @@ def test_candidate_turnover_estimated_true_is_hard_error():
     )
     candidates["candidates"][0]["features"]["turnover"]["estimated"] = True
     with pytest.raises(RankingHardError, match="RANKING_TURNOVER_CANDIDATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Hard errors: CRITICAL-2 residual-value contradiction ------------------
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["NOT_FOUND", "NOT_YET_AVAILABLE", "ACCESS_FAILED", "PARSE_FAILED", "STALE", "CONFLICT"],
+)
+def test_failure_attempt_with_stale_market_data_turnover_is_hard_error(status):
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "8101", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    for attempt in source_payload["source_attempts"]:
+        attempt["status"] = status
+        attempt["values"] = None
+        attempt["result_count"] = None
+        attempt["coverage_status"] = None
+        attempt["covered_dates"] = None
+    # market_data.turnover is deliberately left stale (not nulled).
+    candidates["candidates"][0]["features"]["turnover"]["value"] = None
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["NOT_FOUND", "NOT_YET_AVAILABLE", "ACCESS_FAILED", "PARSE_FAILED", "STALE", "CONFLICT"],
+)
+def test_failure_attempt_with_stale_candidate_turnover_is_hard_error(status):
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "8102", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    for attempt in source_payload["source_attempts"]:
+        attempt["status"] = status
+        attempt["values"] = None
+        attempt["result_count"] = None
+        attempt["coverage_status"] = None
+        attempt["covered_dates"] = None
+    # market_data.turnover is nulled but candidates.json turnover feature is
+    # deliberately left stale.
+    market_data["records"][0]["turnover"] = None
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION"):
         _run(event_gate, candidates, market_data, source_payload)
 
 
@@ -611,6 +945,36 @@ def test_reject_candidate_is_excluded_from_ranking_universe():
     result = _run(event_gate, candidates, market_data, source_payload)
     tickers = {c["ticker"] for c in result["candidates"]}
     assert tickers == {"9101"}
+
+
+# --- Hard errors: HIGH-1 date integrity ------------------------------------
+
+
+def test_candidates_target_date_mismatch_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9201", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["target_date"] = "2026-08-11"
+    with pytest.raises(RankingHardError, match="RANKING_TARGET_DATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_market_data_target_date_mismatch_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9202", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["target_date"] = "2026-08-11"
+    with pytest.raises(RankingHardError, match="RANKING_TARGET_DATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_stale_market_record_trading_date_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9203", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["trading_date"] = "2026-08-06"
+    with pytest.raises(RankingHardError, match="RANKING_TRADING_DATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
 
 
 # --- CLI: build-ranking ----------------------------------------------------
@@ -685,6 +1049,7 @@ def test_cli_build_ranking_complete(tmp_path):
     ranked = {c["ticker"]: c["final_rank"] for c in payload["candidates"]}
     assert ranked["AA01"] == 1
     assert ranked["AA02"] == 2
+    assert payload["summary"]["top_ranked_ticker"] == "AA01"
 
 
 def test_cli_build_ranking_data_unavailable(tmp_path):
@@ -696,6 +1061,13 @@ def test_cli_build_ranking_data_unavailable(tmp_path):
     sources["source_attempts"][0]["status"] = "ACCESS_FAILED"
     sources["source_attempts"][0]["values"] = None
     sources["source_attempts"][0]["result_count"] = None
+    sources["source_attempts"][0]["coverage_status"] = None
+    sources["source_attempts"][0]["covered_dates"] = None
+    for record in market_data["records"]:
+        record["turnover"] = None
+    for candidate in candidates["candidates"]:
+        candidate["features"]["turnover"]["value"] = None
+        candidate["features"]["turnover"]["source_refs"] = []
 
     output_path = tmp_path / "ranking.json"
     event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
@@ -802,5 +1174,168 @@ def test_cli_build_ranking_never_overwrites_existing_output_on_hard_error(tmp_pa
     assert json.loads(output_path.read_text(encoding="utf-8")) == {"pre_existing": True}
 
 
+def test_cli_build_ranking_invalid_source_ledger_no_output_written(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "EE01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Remove a market_data.json source from sources.json so
+    # validate_source_ledger() fails (CRITICAL-1).
+    turnover_ref = f"src-EE01-turnover"
+    sources["sources"] = [s for s in sources["sources"] if s["source_ref"] != turnover_ref]
+
+    output_path = tmp_path / "ranking.json"
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
+
+    with pytest.raises(ValueError, match="RANKING_SOURCE_LEDGER_INVALID"):
+        cli.main(
+            [
+                "build-ranking",
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(DEFAULT_CONFIG_PATH),
+                "--output",
+                str(output_path),
+            ]
+        )
+    assert not output_path.exists()
+
+
+def test_cli_build_ranking_empty_market_data_sources_is_invalid(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "FF01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # A PASS candidate's market_data.json record with an empty sources array
+    # must be rejected -- CRITICAL-1 fixture bug: this must not be treated
+    # as a valid fixture for a PASS candidate.
+    market_data["records"][0]["sources"] = []
+
+    output_path = tmp_path / "ranking.json"
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
+
+    with pytest.raises(ValueError, match="RANKING_MARKET_DATA_INVALID"):
+        cli.main(
+            [
+                "build-ranking",
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(DEFAULT_CONFIG_PATH),
+                "--output",
+                str(output_path),
+            ]
+        )
+    assert not output_path.exists()
+
+
 def test_ranking_json_in_run_artifact_allowlist():
     assert "ranking.json" in RUN_ARTIFACT_ALLOWLIST
+
+
+# --- Output contract: schema and recomputation checks ----------------------
+
+
+def _build_output_contract_case(specs):
+    event_gate, candidates, market_data, source_payload = _build_case(specs)
+    ranking = build_ranking(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        config=CONFIG,
+        input_hashes=INPUT_HASHES,
+    )
+    return event_gate, candidates, market_data, source_payload, ranking
+
+
+def test_ranking_schema_missing_required_field_is_rejected():
+    from src.contracts import validate_json_document
+
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "GG01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    del ranking["summary"]
+    with pytest.raises(ValueError, match="ranking.schema.json validation failed"):
+        validate_json_document(ranking, "ranking.schema.json")
+
+
+def test_ranking_schema_rejects_input_status_ok():
+    from src.contracts import validate_json_document
+
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "GG02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["candidates"][0]["input_status"] = "OK"
+    with pytest.raises(ValueError, match="ranking.schema.json validation failed"):
+        validate_json_document(ranking, "ranking.schema.json")
+
+
+def test_output_contract_summary_recomputation_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "GG03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["summary"]["valid_input_count"] = 999
+    with pytest.raises(ValueError, match="ranking.summary does not match recomputed"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+def test_output_contract_top_ranked_ticker_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [
+            {"ticker": "GG04", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"},
+            {"ticker": "GG05", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+        ]
+    )
+    ranking["summary"]["top_ranked_ticker"] = "GG05"
+    with pytest.raises(ValueError, match="ranking.summary does not match recomputed"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+def test_output_contract_input_candidate_tickers_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "GG06", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["input_candidate_tickers"] = ["GG06", "GG07"]
+    with pytest.raises(ValueError, match="input_candidate_tickers"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )

@@ -8,13 +8,17 @@
     "ranking_version",
     "ranking_method",
     "target_date",
+    "previous_trading_day",
+    "event_gate_as_of",
     "generated_at",
     "strategy_version",
     "config_sha256",
-    "input_hashes",
     "ranking_status",
     "ranking_complete",
-    "ranked_count",
+    "reason_codes",
+    "input_hashes",
+    "input_candidate_tickers",
+    "summary",
     "candidates"
   ],
   "properties": {
@@ -22,6 +26,8 @@
     "ranking_version": {"const": "ranking-v1"},
     "ranking_method": {"const": "ordinal_rank_sum"},
     "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "event_gate_as_of": {"type": "string", "format": "date-time"},
     "generated_at": {"type": "string", "format": "date-time"},
     "strategy_version": {"type": "string", "minLength": 1},
     "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -47,7 +53,46 @@
     },
     "ranking_status": {"enum": ["COMPLETE", "DATA_UNAVAILABLE"]},
     "ranking_complete": {"type": "boolean"},
-    "ranked_count": {"type": "integer", "minimum": 0},
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "TURNOVER_SOURCE_NOT_FOUND",
+          "TURNOVER_SOURCE_NOT_YET_AVAILABLE",
+          "TURNOVER_SOURCE_ACCESS_FAILED",
+          "TURNOVER_SOURCE_PARSE_FAILED",
+          "TURNOVER_SOURCE_STALE",
+          "TURNOVER_SOURCE_CONFLICT"
+        ]
+      }
+    },
+    "input_candidate_tickers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "input_count",
+        "valid_input_count",
+        "data_unavailable_count",
+        "ranked_count",
+        "top_ranked_ticker"
+      ],
+      "properties": {
+        "input_count": {"type": "integer", "minimum": 0},
+        "valid_input_count": {"type": "integer", "minimum": 0},
+        "data_unavailable_count": {"type": "integer", "minimum": 0},
+        "ranked_count": {"type": "integer", "minimum": 0},
+        "top_ranked_ticker": {
+          "oneOf": [
+            {"type": "string", "minLength": 1},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "candidates": {
       "type": "array",
       "items": {"$ref": "#/$defs/rankingCandidate"}
@@ -73,7 +118,7 @@
       ],
       "properties": {
         "ticker": {"type": "string", "minLength": 1},
-        "input_status": {"enum": ["OK", "DATA_UNAVAILABLE"]},
+        "input_status": {"enum": ["VALID", "DATA_UNAVAILABLE"]},
         "reason_codes": {
           "type": "array",
           "items": {
@@ -90,22 +135,37 @@
         "provenance": {
           "type": "object",
           "required": [
-            "turnover_source_id",
             "turnover_attempt_id",
-            "turnover_source_ref"
+            "turnover_source_ref",
+            "tick_size_source_refs"
           ],
           "properties": {
-            "turnover_source_id": {"type": ["string", "null"]},
             "turnover_attempt_id": {"type": ["string", "null"]},
-            "turnover_source_ref": {"type": ["string", "null"]}
+            "turnover_source_ref": {"type": ["string", "null"]},
+            "tick_size_source_refs": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1}
+            }
           },
           "additionalProperties": false
         },
         "feature_values": {
           "type": "object",
-          "required": ["turnover", "relative_tick_size"],
+          "required": ["turnover_yen", "tick_size_yen", "entry_trigger_yen", "relative_tick_size"],
           "properties": {
-            "turnover": {
+            "turnover_yen": {
+              "oneOf": [
+                {"$ref": "#/$defs/decimal"},
+                {"type": "null"}
+              ]
+            },
+            "tick_size_yen": {
+              "oneOf": [
+                {"$ref": "#/$defs/decimal"},
+                {"type": "null"}
+              ]
+            },
+            "entry_trigger_yen": {
               "oneOf": [
                 {"$ref": "#/$defs/decimal"},
                 {"type": "null"}

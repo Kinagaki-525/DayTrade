@@ -36,7 +36,7 @@ INVALID_SOURCE_STATUSES = frozenset(
     {"SOURCE_POLICY_UNDEFINED", "NOT_REQUIRED", "SINGLE_SOURCE_ONLY"}
 )
 
-_RAW_VALUE_PATTERN = re.compile(r"^\d{1,3}(,\d{3})*$")
+_RAW_VALUE_PATTERN = re.compile(r"^(?:\d+|\d{1,3}(?:,\d{3})+)$")
 
 
 class RankingHardError(ValueError):
@@ -76,6 +76,7 @@ class _CandidateInput:
     turnover_value: Decimal | None
     tick_size: Decimal | None
     entry_trigger: Decimal | None
+    tick_size_source_refs: tuple[str, ...]
 
 
 def _collect_ranking_inputs(
@@ -91,6 +92,22 @@ def _collect_ranking_inputs(
     event_gate_as_of = event_gate.get("event_gate_as_of")
     attempts = source_payload.get("source_attempts", [])
     sources = source_payload.get("sources", [])
+
+    # HIGH-1: date integrity. event_gate/candidates/market_data must all
+    # agree on target_date -- a mismatch is always a hard error, never
+    # folded into DATA_UNAVAILABLE.
+    candidates_target_date = candidates.get("target_date")
+    market_data_target_date = market_data.get("target_date")
+    if candidates_target_date is not None and candidates_target_date != target_date:
+        raise _hard_error(
+            "RANKING_TARGET_DATE_MISMATCH",
+            "candidates.json target_date does not match event_gate.json target_date",
+        )
+    if market_data_target_date is not None and market_data_target_date != target_date:
+        raise _hard_error(
+            "RANKING_TARGET_DATE_MISMATCH",
+            "market_data.json target_date does not match event_gate.json target_date",
+        )
 
     candidates_by_ticker: dict[str, dict[str, Any]] = {}
     for candidate in candidates.get("candidates", []):
@@ -159,6 +176,12 @@ def _collect_ranking_inputs(
                 "RANKING_MARKET_DATA_NOT_VERIFIED",
                 f"{ticker}: market_data.json record is not VERIFIED",
             )
+        if market_record.get("trading_date") != previous_trading_day:
+            raise _hard_error(
+                "RANKING_TRADING_DATE_MISMATCH",
+                f"{ticker}: market_data.json trading_date does not match "
+                "event_gate.previous_trading_day",
+            )
 
         tick_size_raw = market_record.get("tick_size")
         if tick_size_raw is None:
@@ -172,6 +195,8 @@ def _collect_ranking_inputs(
                 "RANKING_TICK_SIZE_INVALID",
                 f"{ticker}: market_data.json tick_size must be > 0",
             )
+
+        tick_size_source_refs = _tick_size_source_refs(ticker, market_record)
 
         order_plan = _recompute_order_plan(
             ticker=ticker,
@@ -204,13 +229,14 @@ def _collect_ranking_inputs(
                     turnover_value=None,
                     tick_size=tick_size,
                     entry_trigger=entry_trigger,
+                    tick_size_source_refs=tick_size_source_refs,
                 )
             )
         else:
             inputs.append(
                 _CandidateInput(
                     ticker=ticker,
-                    input_status="OK",
+                    input_status="VALID",
                     reason_codes=(),
                     turnover_source_id=turnover_result.source_id,
                     turnover_attempt_id=turnover_result.attempt_id,
@@ -218,10 +244,54 @@ def _collect_ranking_inputs(
                     turnover_value=turnover_result.value,
                     tick_size=tick_size,
                     entry_trigger=entry_trigger,
+                    tick_size_source_refs=tick_size_source_refs,
                 )
             )
 
     return inputs
+
+
+def _tick_size_source_refs(ticker: str, market_record: dict[str, Any]) -> tuple[str, ...]:
+    """Extract and validate the tick_size field_provenance source_refs used
+    as a Ranking feature. Reuses the market_data.json field_provenance
+    contract established elsewhere in the codebase (see
+    src/market.py::_validate_tick_size_provenance) rather than trusting the
+    tick_size value in isolation."""
+    provenances = [
+        item
+        for item in market_record.get("field_provenance") or []
+        if isinstance(item, dict) and item.get("field_name") == "tick_size"
+    ]
+    if not provenances:
+        raise _hard_error(
+            "RANKING_TICK_SIZE_PROVENANCE_MISSING",
+            f"{ticker}: market_data.json field_provenance for tick_size is missing",
+        )
+    provenance = provenances[0]
+    if provenance.get("status") != "VERIFIED":
+        raise _hard_error(
+            "RANKING_TICK_SIZE_PROVENANCE_INVALID",
+            f"{ticker}: market_data.json tick_size field_provenance status must be VERIFIED",
+        )
+    source_refs = provenance.get("source_refs")
+    if not isinstance(source_refs, list) or not source_refs:
+        raise _hard_error(
+            "RANKING_TICK_SIZE_PROVENANCE_INVALID",
+            f"{ticker}: market_data.json tick_size field_provenance source_refs is empty",
+        )
+    known_refs = {
+        source.get("source_ref")
+        for source in market_record.get("sources") or []
+        if isinstance(source, dict)
+    }
+    missing = [ref for ref in source_refs if ref not in known_refs]
+    if missing:
+        raise _hard_error(
+            "RANKING_TICK_SIZE_PROVENANCE_INVALID",
+            f"{ticker}: market_data.json tick_size field_provenance source_refs "
+            f"reference unknown sources: {missing}",
+        )
+    return tuple(str(ref) for ref in source_refs)
 
 
 def _recompute_order_plan(
@@ -311,6 +381,41 @@ def _resolve_turnover(
     attempt_id = attempt.get("attempt_id")
     status = attempt.get("status")
 
+    # The Canonical Turnover Attempt's own identity fields must match the
+    # TRADE_CRITICAL YAHOO_JP_QUOTE/TURNOVER contract for every status, not
+    # only FOUND -- otherwise a mis-attributed attempt could silently drive
+    # a DATA_UNAVAILABLE (or hard-error) outcome for the wrong reason.
+    if attempt.get("source_id") != TURNOVER_SOURCE_ID:
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt source_id must be {TURNOVER_SOURCE_ID}",
+        )
+    if attempt.get("source_role") != "PRIMARY":
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt source_role must be PRIMARY",
+        )
+    if attempt.get("criticality") != "TRADE_CRITICAL":
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt criticality must be TRADE_CRITICAL",
+        )
+    if attempt.get("information_type") != "TURNOVER":
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt information_type must be TURNOVER",
+        )
+    if attempt.get("candidate_code") != ticker:
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt candidate_code does not match ticker",
+        )
+    if attempt.get("target_date") != target_date:
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: turnover source_attempt target_date does not match target_date",
+        )
+
     if status in WORKFLOW_INCOMPLETE_STATUSES:
         raise _hard_error(
             "RANKING_TURNOVER_SOURCE_WORKFLOW_INCOMPLETE",
@@ -322,6 +427,23 @@ def _resolve_turnover(
             f"{ticker}: turnover source_attempt status {status} is invalid for a TRADE_CRITICAL source",
         )
     if status in DATA_UNAVAILABLE_STATUS_TO_REASON_CODE:
+        # Artifact contradiction guard: a failure-status Canonical Attempt
+        # must never coexist with a stale FOUND-shaped turnover value left
+        # behind in market_data.json or candidates.json. That is a hard
+        # error, not a DATA_UNAVAILABLE business outcome.
+        if market_record.get("turnover") is not None:
+            raise _hard_error(
+                "RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION",
+                f"{ticker}: market_data.json turnover must be null when the canonical "
+                f"turnover attempt status is {status}",
+            )
+        candidate_turnover_feature = (candidate.get("features") or {}).get("turnover") or {}
+        if candidate_turnover_feature.get("value") is not None:
+            raise _hard_error(
+                "RANKING_TURNOVER_RESIDUAL_VALUE_CONTRADICTION",
+                f"{ticker}: candidates.json features.turnover.value must be null when the "
+                f"canonical turnover attempt status is {status}",
+            )
         return _TurnoverResult(
             input_status="DATA_UNAVAILABLE",
             reason_codes=(DATA_UNAVAILABLE_STATUS_TO_REASON_CODE[status],),
@@ -334,6 +456,17 @@ def _resolve_turnover(
         raise _hard_error(
             "RANKING_TURNOVER_SOURCE_INVALID_STATUS",
             f"{ticker}: unrecognized turnover source_attempt status {status}",
+        )
+
+    if attempt.get("coverage_status") != "COMPLETE":
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: FOUND turnover source_attempt coverage_status must be COMPLETE",
+        )
+    if attempt.get("covered_dates") != [previous_trading_day]:
+        raise _hard_error(
+            "RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION",
+            f"{ticker}: FOUND turnover source_attempt covered_dates must be [previous_trading_day]",
         )
 
     values = attempt.get("values")
@@ -405,7 +538,7 @@ def _resolve_turnover(
     )
 
     return _TurnoverResult(
-        input_status="OK",
+        input_status="VALID",
         reason_codes=(),
         source_id=TURNOVER_SOURCE_ID,
         attempt_id=str(attempt_id) if attempt_id else None,
@@ -430,6 +563,7 @@ def _four_way_consistency_check(
         if isinstance(source, dict)
         and source.get("source_ref") == source_ref
         and source.get("source_id") == TURNOVER_SOURCE_ID
+        and source.get("source_role") == "PRIMARY"
         and source.get("information_type") == "TURNOVER"
         and source.get("source_status") == "FOUND"
         and source.get("ticker") == ticker
@@ -609,15 +743,19 @@ def build_ranking(
 
     data_unavailable = any(item.input_status == "DATA_UNAVAILABLE" for item in inputs)
 
+    def _provenance(item: _CandidateInput) -> dict[str, Any]:
+        return {
+            "turnover_attempt_id": item.turnover_attempt_id,
+            "turnover_source_ref": item.turnover_source_ref,
+            "tick_size_source_refs": list(item.tick_size_source_refs),
+        }
+
     if data_unavailable or not inputs:
         ranking_status = "DATA_UNAVAILABLE"
         ranking_complete = False
         payload_candidates = []
         for item in inputs:
-            feature_turnover = (
-                str(item.turnover_value) if item.turnover_value is not None else None
-            )
-            feature_relative_tick = (
+            relative_tick_size = (
                 {
                     "numerator_yen": str(item.tick_size),
                     "denominator_yen": str(item.entry_trigger),
@@ -630,14 +768,18 @@ def build_ranking(
                     "ticker": item.ticker,
                     "input_status": item.input_status,
                     "reason_codes": list(item.reason_codes),
-                    "provenance": {
-                        "turnover_source_id": item.turnover_source_id,
-                        "turnover_attempt_id": item.turnover_attempt_id,
-                        "turnover_source_ref": item.turnover_source_ref,
-                    },
+                    "provenance": _provenance(item),
                     "feature_values": {
-                        "turnover": feature_turnover,
-                        "relative_tick_size": feature_relative_tick,
+                        "turnover_yen": (
+                            str(item.turnover_value) if item.turnover_value is not None else None
+                        ),
+                        "tick_size_yen": (
+                            str(item.tick_size) if item.tick_size is not None else None
+                        ),
+                        "entry_trigger_yen": (
+                            str(item.entry_trigger) if item.entry_trigger is not None else None
+                        ),
+                        "relative_tick_size": relative_tick_size,
                     },
                     "feature_ranks": None,
                     "rank_points": None,
@@ -660,15 +802,13 @@ def build_ranking(
             interim.append(
                 {
                     "ticker": item.ticker,
-                    "input_status": "OK",
+                    "input_status": "VALID",
                     "reason_codes": [],
-                    "provenance": {
-                        "turnover_source_id": item.turnover_source_id,
-                        "turnover_attempt_id": item.turnover_attempt_id,
-                        "turnover_source_ref": item.turnover_source_ref,
-                    },
+                    "provenance": _provenance(item),
                     "feature_values": {
-                        "turnover": str(item.turnover_value),
+                        "turnover_yen": str(item.turnover_value),
+                        "tick_size_yen": str(item.tick_size),
+                        "entry_trigger_yen": str(item.entry_trigger),
                         "relative_tick_size": {
                             "numerator_yen": str(item.tick_size),
                             "denominator_yen": str(item.entry_trigger),
@@ -694,17 +834,39 @@ def build_ranking(
         payload_candidates = interim
         ranked_count = len(payload_candidates)
 
+    input_candidate_tickers = sorted(item.ticker for item in inputs)
+    valid_input_count = sum(1 for item in inputs if item.input_status == "VALID")
+    data_unavailable_count = sum(1 for item in inputs if item.input_status == "DATA_UNAVAILABLE")
+    top_ranked_ticker = None
+    if ranking_status == "COMPLETE":
+        top_ranked_ticker = next(
+            c["ticker"] for c in payload_candidates if c["final_rank"] == 1
+        )
+    aggregate_reason_codes = sorted(
+        {code for item in inputs for code in item.reason_codes}
+    )
+
     return {
         "schema_version": RANKING_SCHEMA_VERSION,
         "ranking_version": RANKING_VERSION,
         "ranking_method": RANKING_METHOD,
         "target_date": target_date,
+        "previous_trading_day": event_gate.get("previous_trading_day"),
+        "event_gate_as_of": event_gate.get("event_gate_as_of"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "strategy_version": strategy_version,
         "config_sha256": config_sha256,
-        "input_hashes": dict(input_hashes),
         "ranking_status": ranking_status,
         "ranking_complete": ranking_complete,
-        "ranked_count": ranked_count,
+        "reason_codes": aggregate_reason_codes,
+        "input_hashes": dict(input_hashes),
+        "input_candidate_tickers": input_candidate_tickers,
+        "summary": {
+            "input_count": len(inputs),
+            "valid_input_count": valid_input_count,
+            "data_unavailable_count": data_unavailable_count,
+            "ranked_count": ranked_count,
+            "top_ranked_ticker": top_ranked_ticker,
+        },
         "candidates": payload_candidates,
     }

@@ -87,3 +87,69 @@ def test_source_matrix_rejects_changed_market_research_version():
     assert result.valid is False
     assert "market_research_version" in result.errors[0]
     assert "'market-research-v2' was expected" in result.errors[0]
+
+
+def test_yahoo_jp_quote_is_primary_trade_critical_turnover_source():
+    payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
+    yahoo_jp_quote = next(
+        source for source in payload["sources"] if source["source_id"] == "YAHOO_JP_QUOTE"
+    )
+
+    assert yahoo_jp_quote["role"] == "PRIMARY"
+    assert yahoo_jp_quote["criticality"] == "TRADE_CRITICAL"
+    assert yahoo_jp_quote["information_type"] == "TURNOVER"
+
+
+def test_source_matrix_rejects_missing_yahoo_jp_quote():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    payload["sources"] = [
+        source for source in payload["sources"] if source["source_id"] != "YAHOO_JP_QUOTE"
+    ]
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any("YAHOO_JP_QUOTE" in error for error in result.errors)
+
+
+def test_source_matrix_rejects_yahoo_jp_quote_wrong_role():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    yahoo_jp_quote = next(
+        source for source in payload["sources"] if source["source_id"] == "YAHOO_JP_QUOTE"
+    )
+    yahoo_jp_quote["role"] = "SECONDARY"
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any("YAHOO_JP_QUOTE must be PRIMARY role" in error for error in result.errors)
+
+
+def test_source_matrix_rejects_yahoo_jp_quote_wrong_criticality():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    yahoo_jp_quote = next(
+        source for source in payload["sources"] if source["source_id"] == "YAHOO_JP_QUOTE"
+    )
+    yahoo_jp_quote["criticality"] = "CONTEXT"
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any(
+        "YAHOO_JP_QUOTE must be TRADE_CRITICAL criticality" in error for error in result.errors
+    )
+
+
+def test_source_matrix_rejects_yahoo_jp_quote_wrong_information_type():
+    payload = deepcopy(load_yaml(DEFAULT_SOURCE_MATRIX_PATH))
+    yahoo_jp_quote = next(
+        source for source in payload["sources"] if source["source_id"] == "YAHOO_JP_QUOTE"
+    )
+    yahoo_jp_quote["information_type"] = "OHLCV"
+
+    result = validate_source_matrix(payload)
+
+    assert result.valid is False
+    assert any(
+        "YAHOO_JP_QUOTE must have information_type TURNOVER" in error for error in result.errors
+    )
