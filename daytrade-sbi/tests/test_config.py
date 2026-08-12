@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def test_current_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
-    assert config["config_schema_version"] == 5
+    assert config["config_schema_version"] == 6
     assert config["strategy_version"] == "v1"
     rules = normalize_screening_rules(config["screening"])
     assert set(rules) == set(SCREENING_KEYS)
@@ -26,6 +26,24 @@ def test_current_config_keeps_screening_rules_disabled_without_thresholds():
     assert rules["maximum_gap_percent"]["phase"] == "entry_gate"
     assert rules["maximum_spread"]["phase"] == "execution_gate"
     assert rules["exclude_earnings"]["phase"] == "event_gate"
+
+
+def test_production_config_guard_selection_disabled_and_thresholds_null():
+    """Non-negotiable: production selection stays disabled with undecided thresholds.
+
+    This test intentionally hard-codes the expectation, not a value read back
+    from the config file, so a well-intentioned edit to config/strategy.yaml
+    cannot silently flip production selection on or invent a threshold.
+    """
+    config = load_strategy_config()
+    selection = config["selection"]
+    assert selection["enabled"] is False
+    assert (
+        selection["rules"]["minimum_turnover_yen"]["threshold_yen"] is None
+    )
+    assert (
+        selection["rules"]["maximum_relative_tick_size"]["threshold_ratio"] is None
+    )
 
 
 def test_v3_config_preserves_v1_fixed_rule_values():

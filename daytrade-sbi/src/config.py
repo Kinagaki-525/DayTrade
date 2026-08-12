@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -156,8 +157,8 @@ def snapshot_strategy_config(
 def validate_strategy_config(config: dict[str, Any]) -> None:
     """Validate the strategy configuration and its non-negotiable safety rules."""
     schema_version = config.get("config_schema_version")
-    if schema_version not in {2, 3, 4, 5}:
-        raise ValueError("config_schema_version must be 2, 3, 4, or 5")
+    if schema_version not in {2, 3, 4, 5, 6}:
+        raise ValueError("config_schema_version must be 2, 3, 4, 5, or 6")
     _non_empty_string(config.get("strategy_version"), "strategy_version")
     if config.get("validation_status") != "unvalidated":
         raise ValueError("validation_status must be 'unvalidated'")
@@ -221,7 +222,16 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
 
     screening = _required_mapping(config, "screening")
     normalize_screening_rules(screening)
-    if schema_version == 5:
+    if schema_version == 6:
+        _validate_event_gate_config_v4(config)
+        _validate_ranking_config(config)
+        _validate_selection_config(config)
+        if screening["minimum_turnover"]["enabled"] and _selection_enabled(config):
+            raise ValueError(
+                "screening.minimum_turnover and selection.rules.minimum_turnover_yen "
+                "must not both be enabled"
+            )
+    elif schema_version == 5:
         _validate_event_gate_config_v4(config)
         _validate_ranking_config(config)
     elif schema_version == 4:
@@ -408,6 +418,165 @@ def _validate_ranking_config(config: dict[str, Any]) -> None:
     )
     if aggregation.get("method") != "rank_sum":
         raise ValueError("ranking.aggregation.method must be 'rank_sum'")
+
+
+SELECTION_ALLOWED_TOP_KEYS = frozenset(
+    {
+        "enabled",
+        "version",
+        "candidate_policy",
+        "fallback_policy",
+        "rule_logic",
+        "missing_data_policy",
+        "rules",
+    }
+)
+SELECTION_ALLOWED_RULES_KEYS = frozenset(
+    {"minimum_turnover_yen", "maximum_relative_tick_size"}
+)
+SELECTION_ALLOWED_TURNOVER_RULE_KEYS = frozenset({"operator", "threshold_yen"})
+SELECTION_ALLOWED_TICK_RULE_KEYS = frozenset({"operator", "threshold_ratio"})
+SELECTION_ALLOWED_TICK_RATIO_KEYS = frozenset({"numerator", "denominator"})
+SELECTION_FORBIDDEN_FIELDS = frozenset(
+    {
+        "score",
+        "weight",
+        "weights",
+        "confidence",
+        "expected_return",
+        "expected_profit",
+        "probability",
+        "normalization",
+        "recommended_threshold",
+        "optimal_threshold",
+        "rank2_fallback",
+    }
+)
+
+
+def _reject_selection_block_fields(
+    block: dict[str, Any], allowed: frozenset[str], path: str
+) -> None:
+    forbidden = set(block) & SELECTION_FORBIDDEN_FIELDS
+    if forbidden:
+        raise ValueError(f"{path} must not define: {', '.join(sorted(forbidden))}")
+    unknown = set(block) - allowed
+    if unknown:
+        raise ValueError(f"{path} contains unknown field(s): {', '.join(sorted(unknown))}")
+
+
+def _selection_enabled(config: dict[str, Any]) -> bool:
+    selection = config.get("selection")
+    return isinstance(selection, dict) and selection.get("enabled") is True
+
+
+def _validate_selection_config(config: dict[str, Any]) -> None:
+    selection = _required_mapping(config, "selection")
+    _reject_selection_block_fields(selection, SELECTION_ALLOWED_TOP_KEYS, "selection")
+
+    enabled = _required_bool(selection, "enabled", "selection")
+    if selection.get("version") != "selection-v1":
+        raise ValueError("selection.version must be 'selection-v1'")
+    if selection.get("candidate_policy") != "rank1_only":
+        raise ValueError("selection.candidate_policy must be 'rank1_only'")
+    if selection.get("fallback_policy") != "none":
+        raise ValueError("selection.fallback_policy must be 'none'")
+    if selection.get("rule_logic") != "all":
+        raise ValueError("selection.rule_logic must be 'all'")
+    if selection.get("missing_data_policy") != "fail_closed":
+        raise ValueError("selection.missing_data_policy must be 'fail_closed'")
+
+    rules = _required_mapping(selection, "rules", "selection")
+    _reject_selection_block_fields(rules, SELECTION_ALLOWED_RULES_KEYS, "selection.rules")
+
+    turnover_rule = _required_mapping(
+        rules, "minimum_turnover_yen", "selection.rules"
+    )
+    _reject_selection_block_fields(
+        turnover_rule,
+        SELECTION_ALLOWED_TURNOVER_RULE_KEYS,
+        "selection.rules.minimum_turnover_yen",
+    )
+    if turnover_rule.get("operator") != ">=":
+        raise ValueError("selection.rules.minimum_turnover_yen.operator must be '>='")
+    threshold_yen = _required(
+        turnover_rule, "threshold_yen", "selection.rules.minimum_turnover_yen"
+    )
+    if enabled:
+        if isinstance(threshold_yen, bool) or not isinstance(threshold_yen, int):
+            raise ValueError(
+                "selection.rules.minimum_turnover_yen.threshold_yen must be a "
+                "positive plain integer when selection.enabled is true"
+            )
+        if threshold_yen <= 0:
+            raise ValueError(
+                "selection.rules.minimum_turnover_yen.threshold_yen must be > 0"
+            )
+    else:
+        if threshold_yen is not None:
+            raise ValueError(
+                "selection.rules.minimum_turnover_yen.threshold_yen must be null "
+                "while selection.enabled is false"
+            )
+
+    tick_rule = _required_mapping(
+        rules, "maximum_relative_tick_size", "selection.rules"
+    )
+    _reject_selection_block_fields(
+        tick_rule,
+        SELECTION_ALLOWED_TICK_RULE_KEYS,
+        "selection.rules.maximum_relative_tick_size",
+    )
+    if tick_rule.get("operator") != "<=":
+        raise ValueError(
+            "selection.rules.maximum_relative_tick_size.operator must be '<='"
+        )
+    threshold_ratio = _required(
+        tick_rule, "threshold_ratio", "selection.rules.maximum_relative_tick_size"
+    )
+    if enabled:
+        if not isinstance(threshold_ratio, dict):
+            raise ValueError(
+                "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
+                "a mapping when selection.enabled is true"
+            )
+        _reject_selection_block_fields(
+            threshold_ratio,
+            SELECTION_ALLOWED_TICK_RATIO_KEYS,
+            "selection.rules.maximum_relative_tick_size.threshold_ratio",
+        )
+        numerator = _required(
+            threshold_ratio,
+            "numerator",
+            "selection.rules.maximum_relative_tick_size.threshold_ratio",
+        )
+        denominator = _required(
+            threshold_ratio,
+            "denominator",
+            "selection.rules.maximum_relative_tick_size.threshold_ratio",
+        )
+        for name, value in (("numerator", numerator), ("denominator", denominator)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    "selection.rules.maximum_relative_tick_size.threshold_ratio."
+                    f"{name} must be a positive plain integer"
+                )
+            if value <= 0:
+                raise ValueError(
+                    "selection.rules.maximum_relative_tick_size.threshold_ratio."
+                    f"{name} must be > 0"
+                )
+        if math.gcd(int(numerator), int(denominator)) != 1:
+            raise ValueError(
+                "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
+                "expressed in lowest terms (gcd == 1)"
+            )
+    else:
+        if threshold_ratio is not None:
+            raise ValueError(
+                "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
+                "null while selection.enabled is false"
+            )
 
 
 def _validate_v2_legacy_event_rules(screening: dict[str, Any]) -> None:

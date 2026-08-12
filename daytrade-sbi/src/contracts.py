@@ -80,8 +80,8 @@ def validate_event_research_inputs(
     candidates: dict[str, Any],
     config: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") not in (4, 5):
-        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5, 6):
+        raise ValueError("config_schema_version must be 4, 5, or 6 for event research/gate")
     if candidates.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
@@ -117,8 +117,8 @@ def validate_event_gate_inputs(
     config: dict[str, Any],
     input_hashes: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") not in (4, 5):
-        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5, 6):
+        raise ValueError("config_schema_version must be 4, 5, or 6 for event research/gate")
     _require_equal(event_research, candidate_pipeline, "target_date", "event_research/candidate_pipeline")
     _require_equal(event_research, candidates, "target_date", "event_research/candidates")
     if candidates.get("strategy_version") != config.get("strategy_version"):
@@ -203,8 +203,8 @@ def validate_ranking_preconditions(
     input_hashes: dict[str, Any],
     source_base_dir: Path | None = None,
 ) -> None:
-    if config.get("config_schema_version") != 5:
-        raise ValueError("RANKING_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 5 for build-ranking")
+    if config.get("config_schema_version") not in (5, 6):
+        raise ValueError("RANKING_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 5 or 6 for build-ranking")
     if "ranking" not in config:
         raise ValueError(
             "RANKING_CONFIG_BLOCK_MISSING: config is missing the ranking block required for build-ranking"

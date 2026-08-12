@@ -1,4 +1,4 @@
-config_schema_version: 5
+config_schema_version: 6
 strategy_version: "v1"
 validation_status: unvalidated
 
@@ -77,6 +77,21 @@ ranking:
     - relative_tick_size_asc
     - ticker_asc
   missing_data_policy: fail_closed
+
+selection:
+  enabled: false
+  version: "selection-v1"
+  candidate_policy: rank1_only
+  fallback_policy: none
+  rule_logic: all
+  missing_data_policy: fail_closed
+  rules:
+    minimum_turnover_yen:
+      operator: ">="
+      threshold_yen: null
+    maximum_relative_tick_size:
+      operator: "<="
+      threshold_ratio: null
 
 screening:
   minimum_volume:
