@@ -846,14 +846,26 @@ def validate_event_gate_integrity(
                 "rule_evaluations must be a list of objects"
             )
             continue
-        recomputed_status = _candidate_gate_status(
-            [_RuleResultView(rule.get("result")) for rule in rule_evaluations]
-        )
+        rule_views = [
+            _RuleResultView(rule.get("result"), rule.get("reason_codes"))
+            for rule in rule_evaluations
+        ]
+        recomputed_status = _candidate_gate_status(rule_views)
         if recomputed_status != candidate.get("gate_status"):
             errors.append(
                 f"EVENT_GATE_STATUS_MISMATCH: {candidate.get('ticker')}: recorded gate_status="
                 f"{candidate.get('gate_status')!r} does not match recomputed gate_status "
                 f"{recomputed_status!r} from rule_evaluations"
+            )
+        # The per-candidate reason_codes are a derivation of the rule-level
+        # reason_codes, exactly like gate_status is. Re-aggregate them with
+        # the same helper build_event_gate() uses, so a tampered or stale
+        # candidate.reason_codes cannot survive into Ranking.
+        recomputed_reason_codes = list(_candidate_reason_codes(rule_views))
+        if recomputed_reason_codes != candidate.get("reason_codes"):
+            errors.append(
+                f"EVENT_GATE_REASON_CODES_MISMATCH: {candidate.get('ticker')}: recorded "
+                "candidate.reason_codes does not match recomputed rule reason_codes"
             )
     if errors:
         return errors
@@ -889,12 +901,22 @@ def validate_event_gate_integrity(
 
 
 class _RuleResultView:
-    """Minimal attribute-carrying adapter so ``_candidate_gate_status()``
-    (which expects :class:`EventRuleEvaluation` instances) can be reused
-    against the plain ``rule_evaluations`` dicts loaded back from
-    event_gate.json, without reimplementing its aggregation logic."""
+    """Minimal attribute-carrying adapter so ``_candidate_gate_status()`` and
+    ``_candidate_reason_codes()`` (which expect :class:`EventRuleEvaluation`
+    instances) can be reused against the plain ``rule_evaluations`` dicts
+    loaded back from event_gate.json, without reimplementing their
+    aggregation logic.
 
-    __slots__ = ("result",)
+    ``reason_codes`` is normalized to a tuple only when the recorded value is
+    actually a list; any other shape becomes an empty tuple, so a malformed
+    rule entry degrades into a reason-codes *mismatch* rather than a
+    TypeError outside the EVENT_GATE_* error namespace.
+    """
 
-    def __init__(self, result: Any) -> None:
+    __slots__ = ("result", "reason_codes")
+
+    def __init__(self, result: Any, reason_codes: Any = None) -> None:
         self.result = result
+        self.reason_codes = (
+            tuple(reason_codes) if isinstance(reason_codes, list) else ()
+        )

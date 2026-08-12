@@ -56,7 +56,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "open",
-      "value": "2500"
+      "value": "880"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-open",
@@ -70,7 +70,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "open",
-      "value": "2500"
+      "value": "880"
     },
     {
       "source_ref": "YAHOO_JP_HISTORY-7203-high",
@@ -84,7 +84,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "high",
-      "value": "2600"
+      "value": "900"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-high",
@@ -98,7 +98,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "high",
-      "value": "2600"
+      "value": "900"
     },
     {
       "source_ref": "YAHOO_JP_HISTORY-7203-low",
@@ -112,7 +112,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "low",
-      "value": "2480"
+      "value": "870"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-low",
@@ -126,7 +126,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "low",
-      "value": "2480"
+      "value": "870"
     },
     {
       "source_ref": "YAHOO_JP_HISTORY-7203-close",
@@ -140,7 +140,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "close",
-      "value": "2550"
+      "value": "890"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-close",
@@ -154,7 +154,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "close",
-      "value": "2550"
+      "value": "890"
     },
     {
       "source_ref": "YAHOO_JP_HISTORY-7203-volume",
@@ -196,7 +196,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "previous_close",
-      "value": "2500"
+      "value": "875"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-previous_close",
@@ -210,7 +210,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "previous_close",
-      "value": "2500"
+      "value": "875"
     },
     {
       "source_ref": "YAHOO_JP_HISTORY-7203-previous_high",
@@ -224,7 +224,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "previous_high",
-      "value": "2600"
+      "value": "900"
     },
     {
       "source_ref": "KABUTAN_HISTORY-7203-previous_high",
@@ -238,7 +238,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "previous_high",
-      "value": "2600"
+      "value": "900"
     },
     {
       "source_ref": "JPX_TICK_SIZE-7203-tick_size",
@@ -266,7 +266,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "topix500_membership",
-      "value": "true"
+      "value": "false"
     },
     {
       "source_ref": "src-7203-turnover",
@@ -280,7 +280,7 @@
       "trading_date": "2026-08-10",
       "ticker": "7203",
       "field_name": "turnover",
-      "value": "50000000"
+      "value": "2655000000"
     }
   ],
   "source_attempts": [
@@ -433,9 +433,9 @@
         {
           "field_name": "turnover",
           "trading_date": "2026-08-10",
-          "raw_value": "50,000",
+          "raw_value": "2,655,000",
           "raw_unit": "THOUSAND_YEN",
-          "canonical_value_yen": "50000000",
+          "canonical_value_yen": "2655000000",
           "source_ref": "src-7203-turnover",
           "evidence_id": "ev-7203-turnover"
         }

@@ -11,8 +11,8 @@
   "input_hashes": {
     "event_research_sha256": "4520cded794e7905cdd645180698f7af3dd6ecec6301a82517e16cdb720ab358",
     "candidate_pipeline_sha256": "3ab4d7a0cb14e949a1f191f36980670dfd2d050cee4a07745cd0a256cd2962a8",
-    "candidates_sha256": "10c1425de7c8e5f559593589ecb52a3bc19a51326b1aab5d581c7f950444d5d6",
-    "sources_sha256": "6ca1ab10c42cf01394ee8b62bef123b29e2afcb93108ecc63d9b283249309870",
+    "candidates_sha256": "609ee66c76031270fda28dda2dec7666118b429ab8ddc9fad89793e789c2e262",
+    "sources_sha256": "82829899a37a2cde55bbae215416ab170fb8821e4af8ea9af409131a15d1af5b",
     "strategy_snapshot_sha256": "f81751ed61f6b1843fb5b3722cb2cfb0cc06c0580bdd73026bba099d96686236"
   },
   "upstream_candidate_tickers": [

@@ -10,30 +10,243 @@
       "status": "ELIGIBLE",
       "screening_status": "PASS",
       "reasons": [],
-      "unresolved_screening": [],
+      "unresolved_screening": [
+        "minimum_volume",
+        "minimum_turnover",
+        "minimum_price",
+        "maximum_price",
+        "maximum_spread",
+        "minimum_daily_range",
+        "maximum_gap_percent",
+        "exclude_earnings",
+        "exclude_special_disclosures"
+      ],
       "passed_rules": [],
       "failed_rules": [],
       "unavailable_rules": [],
       "reason_codes": [],
-      "source_refs": [
-        "src-7203-turnover"
+      "source_refs": [],
+      "rule_evaluations": [
+        {
+          "rule_id": "minimum_volume",
+          "enabled": false,
+          "phase": "hard_screening",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "volume"
+          ],
+          "operator": ">=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "minimum_turnover",
+          "enabled": false,
+          "phase": "hard_screening",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "turnover"
+          ],
+          "operator": ">=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "minimum_price",
+          "enabled": false,
+          "phase": "hard_screening",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "close"
+          ],
+          "operator": ">=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "maximum_price",
+          "enabled": false,
+          "phase": "hard_screening",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "close"
+          ],
+          "operator": "<=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "maximum_spread",
+          "enabled": false,
+          "phase": "execution_gate",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "spread"
+          ],
+          "operator": "<=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "minimum_daily_range",
+          "enabled": false,
+          "phase": "hard_screening",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "daily_range_yen"
+          ],
+          "operator": ">=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "maximum_gap_percent",
+          "enabled": false,
+          "phase": "entry_gate",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "opening_gap_pct"
+          ],
+          "operator": "<=",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "exclude_earnings",
+          "enabled": false,
+          "phase": "event_gate",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "earnings_scheduled"
+          ],
+          "operator": "is_not",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        },
+        {
+          "rule_id": "exclude_special_disclosures",
+          "enabled": false,
+          "phase": "event_gate",
+          "criticality": "TRADE_CRITICAL",
+          "input_fields": [
+            "special_disclosures"
+          ],
+          "operator": "is_not",
+          "threshold": null,
+          "result": "DISABLED",
+          "reason_code": null,
+          "input_values": {},
+          "source_refs": [],
+          "source_urls": []
+        }
       ],
-      "rule_evaluations": [],
-      "order_plan": {
-        "strategy_version": "v1",
-        "validation_status": "unvalidated",
-        "entry_trigger": "2601",
-        "entry_limit": "2602",
-        "affordable": false,
-        "estimated_purchase_amount": "260200",
-        "expected_loss_yen": "500",
-        "shares": 100,
-        "take_profit_price": "2610",
-        "stop_loss_price": "2597"
-      },
       "features": {
+        "previous_day_volume": {
+          "value": 3000000,
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-volume",
+            "KABUTAN_HISTORY-7203-volume"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203"
+          ],
+          "estimated": false
+        },
+        "required_capital_yen": {
+          "value": "90200",
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-previous_high",
+            "KABUTAN_HISTORY-7203-previous_high",
+            "JPX_TICK_SIZE-7203-tick_size",
+            "JPX_TOPIX500-7203-topix500_membership"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203",
+            "https://www.jpx.co.jp/equities/trading/domestic/07.html",
+            "https://www.jpx.co.jp/markets/indices/topix/"
+          ],
+          "estimated": false
+        },
+        "daily_range_yen": {
+          "value": "30",
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-high",
+            "KABUTAN_HISTORY-7203-high",
+            "YAHOO_JP_HISTORY-7203-low",
+            "KABUTAN_HISTORY-7203-low"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203"
+          ],
+          "estimated": false
+        },
+        "daily_range_pct": {
+          "value": "3.370786516853932584269662921",
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-high",
+            "KABUTAN_HISTORY-7203-high",
+            "YAHOO_JP_HISTORY-7203-low",
+            "KABUTAN_HISTORY-7203-low",
+            "YAHOO_JP_HISTORY-7203-close",
+            "KABUTAN_HISTORY-7203-close"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203"
+          ],
+          "estimated": false
+        },
+        "previous_day_change_pct": {
+          "value": "1.714285714285714285714285714",
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-close",
+            "KABUTAN_HISTORY-7203-close",
+            "YAHOO_JP_HISTORY-7203-previous_close",
+            "KABUTAN_HISTORY-7203-previous_close"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203"
+          ],
+          "estimated": false
+        },
         "turnover": {
-          "value": "50000000",
+          "value": "2655000000",
           "source_refs": [
             "src-7203-turnover"
           ],
@@ -42,42 +255,32 @@
           ],
           "estimated": false
         },
-        "previous_day_volume": {
-          "value": "3000000",
-          "source_refs": [],
-          "source_urls": [],
-          "estimated": false
-        },
-        "required_capital_yen": {
-          "value": "260200",
-          "source_refs": [],
-          "source_urls": [],
-          "estimated": false
-        },
-        "daily_range_yen": {
-          "value": "120",
-          "source_refs": [],
-          "source_urls": [],
-          "estimated": false
-        },
-        "daily_range_pct": {
-          "value": "2.5",
-          "source_refs": [],
-          "source_urls": [],
-          "estimated": false
-        },
-        "previous_day_change_pct": {
-          "value": "2.0",
-          "source_refs": [],
-          "source_urls": [],
-          "estimated": false
-        },
         "estimated_turnover": {
-          "value": null,
-          "source_refs": [],
-          "source_urls": [],
+          "value": "2670000000",
+          "source_refs": [
+            "YAHOO_JP_HISTORY-7203-close",
+            "KABUTAN_HISTORY-7203-close",
+            "YAHOO_JP_HISTORY-7203-volume",
+            "KABUTAN_HISTORY-7203-volume"
+          ],
+          "source_urls": [
+            "https://finance.yahoo.co.jp/quote/7203.T/history",
+            "https://kabutan.jp/stock/kabuka?code=7203"
+          ],
           "estimated": true
         }
+      },
+      "order_plan": {
+        "strategy_version": "v1",
+        "validation_status": "unvalidated",
+        "entry_trigger": "901",
+        "entry_limit": "902",
+        "affordable": true,
+        "estimated_purchase_amount": "90200",
+        "expected_loss_yen": "500",
+        "shares": 100,
+        "take_profit_price": "910",
+        "stop_loss_price": "897"
       }
     }
   ]

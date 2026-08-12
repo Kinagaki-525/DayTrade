@@ -981,6 +981,37 @@ def test_candidate_not_eligible_is_hard_error():
         _run(event_gate, candidates, market_data, source_payload)
 
 
+def test_unaffordable_candidate_is_hard_error():
+    """HIGH-1: production Hard Screening turns an unaffordable order plan into
+    REJECTED/REJECT, so an ELIGIBLE/PASS candidate whose recomputed plan does
+    not fit inside capital.total_yen is an artifact contradiction and must be
+    a hard error rather than something Ranking silently ranks."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        # 20000 yen * 100 shares is far beyond capital.total_yen.
+        [{"ticker": "9005", "previous_high": "20000", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Sanity: the fixture really is the unaffordable case (and everything
+    # else about the candidate is well-formed).
+    plan = build_order_plan("20000", "1", config=CONFIG)
+    assert plan.affordable is False
+    assert candidates["candidates"][0]["order_plan"]["affordable"] is False
+
+    with pytest.raises(RankingHardError, match="RANKING_CANDIDATE_NOT_ELIGIBLE"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_affordable_candidate_is_ranked():
+    """The mirror of the guard above: an affordable ELIGIBLE/PASS candidate
+    still ranks normally."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9006", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    assert candidates["candidates"][0]["order_plan"]["affordable"] is True
+    ranking = _run(event_gate, candidates, market_data, source_payload)
+    assert ranking["ranking_status"] == "COMPLETE"
+    assert ranking["summary"]["top_ranked_ticker"] == "9006"
+
+
 @pytest.mark.parametrize(
     ("field_name", "value", "expected_code"),
     [
@@ -1464,6 +1495,53 @@ def test_event_gate_reverify_rejects_false_ranking_ready_with_data_unavailable(t
         _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
 
 
+def test_event_gate_reverify_rejects_tampered_candidate_reason_codes(tmp_path):
+    """MEDIUM-2 (CLI): a DATA_UNAVAILABLE candidate whose candidate-level
+    reason_codes were rewritten to a different reason must be rejected by
+    build-ranking *before* any ranking is produced, so no ranking.json is
+    written. The reason-codes mismatch is detected ahead of the
+    ranking_ready check, so the operator sees the real cause."""
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "HH11", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    du_rules = _pass_rule_evaluations()
+    du_rules[0]["result"] = "DATA_UNAVAILABLE"
+    du_rules[0]["reason_codes"] = ["EARNINGS_SCHEDULE_UNAVAILABLE"]
+    event_gate["candidates"].append(
+        {
+            "ticker": "HH12",
+            "gate_status": "DATA_UNAVAILABLE",
+            # Tampered: a different (wrong) reason than the rule recorded.
+            "reason_codes": ["NEWS_SOURCE_UNAVAILABLE"],
+            "rule_evaluations": du_rules,
+        }
+    )
+    event_gate["event_gate_input_tickers"].append("HH12")
+    event_gate["upstream_candidate_tickers"].append("HH12")
+    # Everything else is left internally consistent (summary counts, block
+    # reasons and ranking_ready all recompute to exactly these values), so
+    # candidate.reason_codes is the only contradiction in the artifact.
+    summary = _event_gate_summary(pass_count=1, data_unavailable_count=1)
+    for entry in summary["rule_counts"]:
+        if entry["rule_id"] == du_rules[0]["rule_id"]:
+            entry["pass_count"] = 1
+            entry["data_unavailable_count"] = 1
+    event_gate["summary"] = summary
+    event_gate["ranking_ready"] = False
+    event_gate["ranking_block_reasons"] = ["DATA_UNAVAILABLE_PRESENT"]
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_REASON_CODES_MISMATCH"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+    assert not (tmp_path / "ranking.json").exists()
+
+    # Proof that reason_codes really was the only contradiction: restoring it
+    # leaves the integrity validator with nothing to report.
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate["candidates"][-1]["reason_codes"] = ["EARNINGS_SCHEDULE_UNAVAILABLE"]
+    assert validate_event_gate_integrity(event_gate, sources) == []
+
+
 def test_event_gate_reverify_rejects_zero_pass_with_false_ranking_ready(tmp_path):
     event_gate, candidates, market_data, sources = _build_full_case([])
     event_gate["candidates"] = [
@@ -1919,6 +1997,65 @@ def test_validate_event_gate_integrity_reports_summary_mismatch():
     event_gate["summary"]["pass_count"] = 5
     errors = validate_event_gate_integrity(event_gate, sources)
     assert any(error.startswith("EVENT_GATE_SUMMARY_MISMATCH") for error in errors)
+
+
+def test_validate_event_gate_integrity_reports_reason_codes_mismatch():
+    """MEDIUM-2: candidate.reason_codes is a derivation of the rule-level
+    reason_codes and must be re-aggregated, not trusted. A REJECT candidate
+    whose recorded reason_codes were emptied must be reported."""
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate, _candidates, _market_data, sources = _build_full_case(
+        [{"ticker": "9504", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    reject_rules = _pass_rule_evaluations()
+    reject_rules[0]["result"] = "REJECT"
+    reject_rules[0]["reason_codes"] = ["EARNINGS_ON_TARGET_DATE"]
+    reject_rules[0]["evidence_ids"] = ["ev-9505"]
+    event_gate["candidates"].append(
+        {
+            "ticker": "9505",
+            "gate_status": "REJECT",
+            # Tampered: the rule above recorded a REJECT reason, but the
+            # candidate-level aggregate claims there is none.
+            "reason_codes": [],
+            "rule_evaluations": reject_rules,
+        }
+    )
+    event_gate["event_gate_input_tickers"].append("9505")
+    event_gate["upstream_candidate_tickers"].append("9505")
+
+    errors = validate_event_gate_integrity(event_gate, sources)
+    assert any(
+        error.startswith("EVENT_GATE_REASON_CODES_MISMATCH: 9505:") for error in errors
+    )
+
+
+def test_validate_event_gate_integrity_accepts_matching_reject_reason_codes():
+    """The mirror of the test above: when the recorded aggregate matches the
+    rule-level reason codes, no reason-codes finding is produced."""
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate, _candidates, _market_data, sources = _build_full_case(
+        [{"ticker": "9506", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    reject_rules = _pass_rule_evaluations()
+    reject_rules[0]["result"] = "REJECT"
+    reject_rules[0]["reason_codes"] = ["EARNINGS_ON_TARGET_DATE"]
+    reject_rules[0]["evidence_ids"] = ["ev-9507"]
+    event_gate["candidates"].append(
+        {
+            "ticker": "9507",
+            "gate_status": "REJECT",
+            "reason_codes": ["EARNINGS_ON_TARGET_DATE"],
+            "rule_evaluations": reject_rules,
+        }
+    )
+    event_gate["event_gate_input_tickers"].append("9507")
+    event_gate["upstream_candidate_tickers"].append("9507")
+
+    errors = validate_event_gate_integrity(event_gate, sources)
+    assert not any(error.startswith("EVENT_GATE_REASON_CODES_MISMATCH") for error in errors)
 
 
 # --- Round-2 hardening: date integrity, entry_trigger, market ticker ---------

@@ -304,6 +304,19 @@ def _collect_ranking_inputs(
             market_record=market_record,
             config=config,
         )
+        # HIGH-1 affordability guard. Production Hard Screening
+        # (screening.screen_market_record()) turns an unaffordable order plan
+        # into REJECTED/REJECT, so an ELIGIBLE/PASS candidate whose
+        # *recomputed* plan cannot be bought with capital.total_yen is an
+        # artifact contradiction that could never have come out of the real
+        # pipeline. Reuse the existing not-eligible error code rather than
+        # introducing a new one: the candidate is, in fact, not eligible.
+        if order_plan.affordable is not True:
+            raise _hard_error(
+                "RANKING_CANDIDATE_NOT_ELIGIBLE",
+                f"{ticker}: candidate is ELIGIBLE/PASS but the recomputed order_plan is "
+                "not affordable within capital.total_yen",
+            )
         entry_trigger = order_plan.entry_trigger
 
         turnover_result = _resolve_turnover(

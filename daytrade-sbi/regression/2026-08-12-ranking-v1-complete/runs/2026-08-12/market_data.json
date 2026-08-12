@@ -9,15 +9,15 @@
       "share_unit": 100,
       "data_status": "VERIFIED",
       "trading_date": "2026-08-10",
-      "open": "2500",
-      "high": "2600",
-      "low": "2480",
-      "close": "2550",
+      "open": "880",
+      "high": "900",
+      "low": "870",
+      "close": "890",
       "volume": "3000000",
-      "previous_close": "2500",
-      "previous_high": "2600",
+      "previous_close": "875",
+      "previous_high": "900",
       "tick_size": "1",
-      "turnover": "50000000",
+      "turnover": "2655000000",
       "sources": [
         {
           "source_ref": "JPX_LISTED_COMPANY-7203-company_name",
@@ -73,7 +73,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "open",
-          "value": "2500"
+          "value": "880"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-open",
@@ -87,7 +87,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "open",
-          "value": "2500"
+          "value": "880"
         },
         {
           "source_ref": "YAHOO_JP_HISTORY-7203-high",
@@ -101,7 +101,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "high",
-          "value": "2600"
+          "value": "900"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-high",
@@ -115,7 +115,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "high",
-          "value": "2600"
+          "value": "900"
         },
         {
           "source_ref": "YAHOO_JP_HISTORY-7203-low",
@@ -129,7 +129,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "low",
-          "value": "2480"
+          "value": "870"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-low",
@@ -143,7 +143,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "low",
-          "value": "2480"
+          "value": "870"
         },
         {
           "source_ref": "YAHOO_JP_HISTORY-7203-close",
@@ -157,7 +157,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "close",
-          "value": "2550"
+          "value": "890"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-close",
@@ -171,7 +171,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "close",
-          "value": "2550"
+          "value": "890"
         },
         {
           "source_ref": "YAHOO_JP_HISTORY-7203-volume",
@@ -213,7 +213,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "previous_close",
-          "value": "2500"
+          "value": "875"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-previous_close",
@@ -227,7 +227,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "previous_close",
-          "value": "2500"
+          "value": "875"
         },
         {
           "source_ref": "YAHOO_JP_HISTORY-7203-previous_high",
@@ -241,7 +241,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "previous_high",
-          "value": "2600"
+          "value": "900"
         },
         {
           "source_ref": "KABUTAN_HISTORY-7203-previous_high",
@@ -255,7 +255,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "previous_high",
-          "value": "2600"
+          "value": "900"
         },
         {
           "source_ref": "JPX_TICK_SIZE-7203-tick_size",
@@ -283,7 +283,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "topix500_membership",
-          "value": "true"
+          "value": "false"
         },
         {
           "source_ref": "src-7203-turnover",
@@ -297,7 +297,7 @@
           "trading_date": "2026-08-10",
           "ticker": "7203",
           "field_name": "turnover",
-          "value": "50000000"
+          "value": "2655000000"
         }
       ],
       "field_provenance": [
