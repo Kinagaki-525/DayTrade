@@ -30,6 +30,8 @@ runs/YYYY-MM-DD/
   market_validation.json
   candidates.json
   candidate_pipeline.json
+  event_research.json
+  event_gate.json
   performance.json
   research.md
   recommendation.json
@@ -118,6 +120,23 @@ py -B -m src.cli render-research --market-research runs/YYYY-MM-DD/market_resear
 ```
 
 `candidate_pipeline.summary.pipeline_complete=false`、`research_incomplete > 0`、または `screening_complete=false` の場合、recommendationをRisk Engineへ進めない。未実施、欠落、未merge、Source記録不足、Screening未完了を修正してから再実行する。
+
+## Event Research と Event Gate
+
+Hard Screening PASS銘柄（`candidates.json` で `status=ELIGIBLE` かつ `screening_status=PASS`）についてだけ、企業固有イベント（決算、TDnet開示、危険ニュース）を確認する。`pipeline_complete` と `screening_complete` が両方 `true` の場合だけ開始する。
+
+```powershell
+py -B -m src.cli init-event-research --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --previous-trading-day YYYY-MM-DD --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_research.json
+```
+
+`init-event-research` はTicker skeletonだけを作る。Web調査（JPX決算予定、TDnet、Issuer開示、Yahoo!ニュース、Kabutanニュース）はCodexが行い、`sources.json` へSource Attemptを追加し、`event_research.json` の `selected_attempt_ids`・`news_classifications`・`event_gate_as_of` を埋める。日付推測、材料強度判断、PASS/REJECT判定はEvent Researchでは行わない。
+
+```powershell
+py -B -m src.cli validate-event-research --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml
+py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_gate.json
+```
+
+`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（Ranking自体は未実装のため、`recommendation.json` は常に `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
 
 ## Codex比較とRecommendation
 

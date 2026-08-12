@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event_research.schema.json",
+  "title": "Event Research",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_research_version",
+    "target_date",
+    "previous_trading_day",
+    "event_research_started_at",
+    "event_gate_as_of",
+    "strategy_version",
+    "config_sha256",
+    "input_hashes",
+    "event_gate_input_tickers",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_research_version": {"const": "event-research-v1"},
+    "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "event_research_started_at": {"type": "string", "format": "date-time"},
+    "event_gate_as_of": {"type": ["string", "null"], "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input_hashes": {
+      "type": "object",
+      "required": ["candidate_pipeline_sha256", "candidates_sha256", "strategy_snapshot_sha256"],
+      "properties": {
+        "candidate_pipeline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidates_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "event_gate_input_tickers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/candidate"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": ["ticker", "selected_attempt_ids", "news_classifications"],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "selected_attempt_ids": {
+          "type": "object",
+          "required": [
+            "earnings_schedule_jpx",
+            "earnings_schedule_issuer",
+            "tdnet",
+            "issuer_disclosure",
+            "yahoo_news",
+            "kabutan_news"
+          ],
+          "properties": {
+            "earnings_schedule_jpx": {"type": ["string", "null"]},
+            "earnings_schedule_issuer": {"type": ["string", "null"]},
+            "tdnet": {"type": ["string", "null"]},
+            "issuer_disclosure": {"type": ["string", "null"]},
+            "yahoo_news": {"type": ["string", "null"]},
+            "kabutan_news": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        },
+        "news_classifications": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/newsClassification"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "newsClassification": {
+      "type": "object",
+      "required": [
+        "news_evidence_id",
+        "source_id",
+        "source_attempt_id",
+        "published_at",
+        "signal_type",
+        "subject_status",
+        "confirmation_evidence_ids",
+        "confirmation_source_attempt_ids"
+      ],
+      "properties": {
+        "news_evidence_id": {"type": "string", "minLength": 1},
+        "source_id": {"enum": ["YAHOO_JP_NEWS", "KABUTAN_NEWS"]},
+        "source_attempt_id": {"type": "string", "minLength": 1},
+        "published_at": {"type": "string", "format": "date-time"},
+        "signal_type": {
+          "enum": [
+            "EARNINGS",
+            "GUIDANCE_REVISION",
+            "DIVIDEND",
+            "CAPITAL_ACTION",
+            "M_AND_A",
+            "MAJOR_CONTRACT",
+            "LEGAL_REGULATORY",
+            "OPERATING_INCIDENT",
+            "MANAGEMENT_CONTROL",
+            "LISTING_STATUS",
+            "OTHER_CORPORATE_EVENT",
+            "NON_EVENT",
+            "UNKNOWN"
+          ]
+        },
+        "subject_status": {"enum": ["CONFIRMED", "NOT_SUBJECT", "AMBIGUOUS"]},
+        "confirmation_evidence_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "confirmation_source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -8,7 +8,6 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 
 from src.config import strategy_config_sha256
-from src.event_gate import EVENT_RULE_IDS
 from src.stage1 import (
     source_attempt_ids_from_payload,
     source_ids_by_evidence_id_from_payload,
@@ -23,6 +22,7 @@ SCHEMAS_DIR = PROJECT_ROOT / "schemas"
 RUN_ARTIFACT_ALLOWLIST = {
     "strategy_snapshot.yaml",
     "event_gate.json",
+    "event_research.json",
     "research_window.json",
     "market_research.json",
     "market_research_validation.json",
@@ -73,53 +73,146 @@ def validate_json_document(payload: dict[str, Any], schema_name: str) -> None:
     raise ValueError(f"{schema_name} validation failed: {'; '.join(details)}")
 
 
-def validate_event_gate_inputs(
+def validate_event_research_inputs(
     *,
-    market_research: dict[str, Any],
     candidate_pipeline: dict[str, Any],
     candidates: dict[str, Any],
-    source_payload: dict[str, Any],
-    research_window: dict[str, Any],
     config: dict[str, Any],
-    input_hashes: dict[str, Any],
 ) -> None:
-    _require_equal(market_research, candidate_pipeline, "target_date", "market_research/candidate_pipeline")
-    _require_equal(market_research, candidates, "target_date", "market_research/candidates")
-    _require_equal(market_research, source_payload, "target_date", "market_research/sources")
-    _require_equal(market_research, research_window, "target_date", "market_research/research_window")
+    if config.get("config_schema_version") != 4:
+        raise ValueError("config_schema_version must be 4 for event research/gate")
     if candidates.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
         raise ValueError("candidates config_sha256 does not match --config")
+    if candidate_pipeline.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("candidate_pipeline strategy_version does not match --config")
+    _require_equal(candidate_pipeline, candidates, "target_date", "candidate_pipeline/candidates")
     if candidate_pipeline.get("summary", {}).get("pipeline_complete") is not True:
         raise ValueError("candidate_pipeline is not complete")
     if candidate_pipeline.get("summary", {}).get("screening_complete") is not True:
         raise ValueError("candidate_pipeline screening_complete is not true")
-    input_tickers = [str(candidate.get("ticker")).strip() for candidate in candidates.get("candidates", []) if str(candidate.get("ticker", "")).strip()]
-    if len(input_tickers) != len(set(input_tickers)):
-        raise ValueError("candidate ticker uniqueness failed")
 
-    pass_tickers = sorted({
-        str(candidate.get("ticker")).strip()
-        for candidate in candidates.get("candidates", [])
-        if candidate.get("status") == "ELIGIBLE" and str(candidate.get("screening_status") or "").strip() == "PASS"
-    })
-    if not set(pass_tickers).issubset({str(research.get("ticker")).strip() for research in market_research.get("candidate_research", []) if isinstance(research, dict)}):
-        raise ValueError("market_research candidate presence mismatch")
-    for ticker in pass_tickers:
-        research = next((item for item in market_research.get("candidate_research", []) if isinstance(item, dict) and str(item.get("ticker")) == ticker), None)
-        if research is None:
-            raise ValueError("market_research candidate missing")
-        context = research.get("event_context")
-        if not isinstance(context, dict):
-            continue
-        if not isinstance(context.get("selected_attempt_ids"), dict):
-            continue
-        if not isinstance(context.get("news_classifications"), list):
-            continue
-    required_hashes = {"market_research_sha256", "candidate_pipeline_sha256", "candidates_sha256", "sources_sha256", "research_window_sha256", "strategy_snapshot_sha256"}
+
+def validate_event_research_contract(
+    *,
+    event_research: dict[str, Any],
+    source_payload: dict[str, Any],
+) -> None:
+    from src.event_research import event_research_contract_errors
+
+    _check_sources_uniqueness(source_payload)
+    errors = event_research_contract_errors(event_research, source_payload=source_payload)
+    if errors:
+        raise ValueError("event_research contract violation: " + "; ".join(errors))
+
+
+def validate_event_gate_inputs(
+    *,
+    event_research: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    candidates: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    if config.get("config_schema_version") != 4:
+        raise ValueError("config_schema_version must be 4 for event research/gate")
+    _require_equal(event_research, candidate_pipeline, "target_date", "event_research/candidate_pipeline")
+    _require_equal(event_research, candidates, "target_date", "event_research/candidates")
+    if candidates.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("candidates strategy_version does not match --config")
+    if candidates.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("candidates config_sha256 does not match --config")
+    if event_research.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("event_research strategy_version does not match --config")
+    if event_research.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("event_research config_sha256 does not match --config")
+    if candidate_pipeline.get("summary", {}).get("pipeline_complete") is not True:
+        raise ValueError("candidate_pipeline is not complete")
+    if candidate_pipeline.get("summary", {}).get("screening_complete") is not True:
+        raise ValueError("candidate_pipeline screening_complete is not true")
+
+    from src.event_research import hard_screening_pass_tickers
+
+    pass_tickers = set(hard_screening_pass_tickers(candidates))
+    event_gate_input_tickers = set(event_research.get("event_gate_input_tickers", []))
+    if pass_tickers != event_gate_input_tickers:
+        raise ValueError("event_gate_input_tickers does not match Hard Screening PASS candidates")
+
+    candidate_tickers = [str(c.get("ticker")) for c in event_research.get("candidates", [])]
+    if set(candidate_tickers) != event_gate_input_tickers:
+        raise ValueError("event_research candidates do not match event_gate_input_tickers")
+    if len(candidate_tickers) != len(set(candidate_tickers)):
+        raise ValueError("event_research candidate ticker uniqueness failed")
+
+    if not event_research.get("event_gate_as_of"):
+        raise ValueError("event_research event_gate_as_of must be set before building event_gate")
+
+    _check_sources_uniqueness(source_payload)
+
+    from src.event_research import event_research_contract_errors
+
+    errors = event_research_contract_errors(event_research, source_payload=source_payload)
+    if errors:
+        raise ValueError("event_research contract violation: " + "; ".join(errors))
+
+    required_hashes = {
+        "event_research_sha256",
+        "candidate_pipeline_sha256",
+        "candidates_sha256",
+        "sources_sha256",
+        "strategy_snapshot_sha256",
+    }
     if set(input_hashes.keys()) != required_hashes:
         raise ValueError("input_hashes mismatch")
+
+
+def validate_event_gate_output_contract(
+    *,
+    event_gate: dict[str, Any],
+    event_research: dict[str, Any],
+) -> None:
+    if event_gate.get("event_gate_as_of") != event_research.get("event_gate_as_of"):
+        raise ValueError("event_gate event_gate_as_of does not match event_research")
+    if set(event_gate.get("event_gate_input_tickers", [])) != set(
+        event_research.get("event_gate_input_tickers", [])
+    ):
+        raise ValueError("event_gate event_gate_input_tickers does not match event_research")
+    for candidate in event_gate.get("candidates", []):
+        for rule in candidate.get("rule_evaluations", []):
+            if rule.get("result") == "REJECT" and not rule.get("evidence_ids"):
+                raise ValueError(
+                    f"{candidate.get('ticker')}: REJECT rule {rule.get('rule_id')} requires evidence_ids"
+                )
+            if rule.get("result") == "DATA_UNAVAILABLE" and not rule.get("reason_codes"):
+                raise ValueError(
+                    f"{candidate.get('ticker')}: DATA_UNAVAILABLE rule {rule.get('rule_id')} requires reason_codes"
+                )
+
+
+def _check_sources_uniqueness(source_payload: dict[str, Any]) -> None:
+    attempt_ids: set[str] = set()
+    evidence_ids: set[str] = set()
+    for attempt in source_payload.get("source_attempts", []):
+        if not isinstance(attempt, dict):
+            continue
+        attempt_id = attempt.get("attempt_id")
+        if isinstance(attempt_id, str):
+            if attempt_id in attempt_ids:
+                raise ValueError(f"duplicate source_attempt attempt_id: {attempt_id}")
+            attempt_ids.add(attempt_id)
+        values = attempt.get("values")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            evidence_id = item.get("evidence_id")
+            if isinstance(evidence_id, str):
+                if evidence_id in evidence_ids:
+                    raise ValueError(f"duplicate evidence_id: {evidence_id}")
+                evidence_ids.add(evidence_id)
 
 
 def validate_recommendation_candidate_link(

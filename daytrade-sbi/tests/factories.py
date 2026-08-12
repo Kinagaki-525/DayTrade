@@ -213,6 +213,151 @@ def make_candidate_research(ticker: str = "1234", **overrides) -> dict[str, obje
     return research
 
 
+EVENT_RESEARCH_INPUT_HASHES = {
+    "candidate_pipeline_sha256": "1" * 64,
+    "candidates_sha256": "2" * 64,
+    "strategy_snapshot_sha256": "3" * 64,
+}
+
+EVENT_GATE_INPUT_HASHES = {
+    "event_research_sha256": "4" * 64,
+    "candidate_pipeline_sha256": "1" * 64,
+    "candidates_sha256": "2" * 64,
+    "sources_sha256": "5" * 64,
+    "strategy_snapshot_sha256": "3" * 64,
+}
+
+
+def make_event_evidence(
+    *,
+    evidence_id: str,
+    event_type: str,
+    event_date: str | None,
+    published_at: str = "2026-08-09T18:00:00+09:00",
+    ticker: str = "1234",
+    title: str = "Disclosure",
+    source_url: str = "https://issuer.example.test/ir/notice",
+) -> dict[str, object]:
+    return {
+        "evidence_id": evidence_id,
+        "event_type": event_type,
+        "event_date": event_date,
+        "published_at": published_at,
+        "title": title,
+        "ticker": ticker,
+        "source_url": source_url,
+    }
+
+
+def make_event_source_attempt(
+    *,
+    attempt_id: str,
+    source_id: str,
+    ticker: str = "1234",
+    target_date: str = "2026-08-10",
+    requested_at: str = "2026-08-09T20:00:00+09:00",
+    status: str = "FOUND",
+    coverage_status: str | None = "COMPLETE",
+    values: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    values = values if values is not None else []
+    return {
+        "attempt_id": attempt_id,
+        "source_id": source_id,
+        "source_role": "PRIMARY",
+        "criticality": "TRADE_CRITICAL",
+        "information_type": "EVENT",
+        "candidate_code": ticker,
+        "target_date": target_date,
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "requested_at": requested_at,
+        "retrieved_at": requested_at,
+        "url": _source_url(source_id, "event"),
+        "status": status,
+        "values": values,
+        "coverage_status": coverage_status,
+        "coverage_start": "2026-08-07T00:00:00+09:00",
+        "coverage_end": requested_at,
+        "covered_dates": None,
+        "result_count": len(values) if status == "FOUND" else None,
+        "notes": [],
+    }
+
+
+def make_news_classification(
+    *,
+    news_evidence_id: str,
+    source_id: str = "YAHOO_JP_NEWS",
+    source_attempt_id: str = "yahoo_jp_news-1234",
+    published_at: str = "2026-08-09T18:00:00+09:00",
+    signal_type: str = "NON_EVENT",
+    subject_status: str = "NOT_SUBJECT",
+    confirmation_evidence_ids: list[str] | None = None,
+    confirmation_source_attempt_ids: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "news_evidence_id": news_evidence_id,
+        "source_id": source_id,
+        "source_attempt_id": source_attempt_id,
+        "published_at": published_at,
+        "signal_type": signal_type,
+        "subject_status": subject_status,
+        "confirmation_evidence_ids": confirmation_evidence_ids or [],
+        "confirmation_source_attempt_ids": confirmation_source_attempt_ids or [],
+    }
+
+
+def make_event_gate_candidate(
+    *,
+    ticker: str = "1234",
+    selected_attempt_ids: dict[str, str | None] | None = None,
+    news_classifications: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    default_selected = {
+        "earnings_schedule_jpx": None,
+        "earnings_schedule_issuer": None,
+        "tdnet": None,
+        "issuer_disclosure": None,
+        "yahoo_news": None,
+        "kabutan_news": None,
+    }
+    if selected_attempt_ids:
+        default_selected.update(selected_attempt_ids)
+    return {
+        "ticker": ticker,
+        "selected_attempt_ids": default_selected,
+        "news_classifications": news_classifications or [],
+    }
+
+
+def make_event_research(
+    *,
+    target_date: str = "2026-08-10",
+    previous_trading_day: str = "2026-08-07",
+    event_gate_as_of: str | None = "2026-08-09T21:00:00+09:00",
+    strategy_version: str = "v1",
+    config_sha256: str = "0" * 64,
+    tickers: list[str] | None = None,
+    candidates: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    tickers = tickers if tickers is not None else ["1234"]
+    return {
+        "schema_version": 1,
+        "event_research_version": "event-research-v1",
+        "target_date": target_date,
+        "previous_trading_day": previous_trading_day,
+        "event_research_started_at": "2026-08-09T09:00:00+09:00",
+        "event_gate_as_of": event_gate_as_of,
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "input_hashes": dict(EVENT_RESEARCH_INPUT_HASHES),
+        "event_gate_input_tickers": list(tickers),
+        "candidates": candidates if candidates is not None else [
+            make_event_gate_candidate(ticker=ticker) for ticker in tickers
+        ],
+    }
+
+
 def _source_url(source_id: str, field_name: str) -> str:
     urls = {
         "JPX_LISTED_COMPANY": "https://www.jpx.co.jp/listing/co-search/",

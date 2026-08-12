@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,12 @@ from src.contracts import validate_json_document
 from src.market import SourceLedgerValidationResult
 from src.research import merge_discovery_candidates
 from src.source_matrix import load_source_matrix
-from tests.factories import make_candidate_research, make_market_record
+from tests.factories import (
+    make_candidate_research,
+    make_event_research,
+    make_market_record,
+    make_source_attempt,
+)
 from tests.test_market_research import complete_candidate_research, market_research_payload
 
 
@@ -1258,3 +1264,258 @@ def test_calculate_metrics_command_preserves_unknown_values(
     output = capsys.readouterr().out
     assert '"total_trades": 1' in output
     assert '"win_rate": null' in output
+
+
+def _write_json_file(path: Path, payload) -> None:
+    import json
+
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _event_gate_fixture_paths(tmp_path: Path):
+    strategy_version, config_sha = config_metadata()
+    candidate_pipeline_path = tmp_path / "candidate_pipeline.json"
+    candidates_path = tmp_path / "candidates.json"
+    sources_path = tmp_path / "sources.json"
+    _write_json_file(
+        candidate_pipeline_path,
+        complete_candidate_pipeline(strategy_version, config_sha),
+    )
+    _write_json_file(
+        candidates_path,
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "generated_at": "2026-08-09T00:00:00+00:00",
+            "strategy_version": strategy_version,
+            "config_sha256": config_sha,
+            "candidates": [
+                {
+                    "ticker": "1234",
+                    "status": "ELIGIBLE",
+                    "screening_status": "PASS",
+                    "reasons": [],
+                    "unresolved_screening": [],
+                    "passed_rules": [],
+                    "failed_rules": [],
+                    "unavailable_rules": [],
+                    "reason_codes": [],
+                    "source_refs": [],
+                    "rule_evaluations": [],
+                    "features": {
+                        feature_name: {
+                            "value": None,
+                            "source_refs": [],
+                            "source_urls": [],
+                            "estimated": False,
+                        }
+                        for feature_name in (
+                            "previous_day_volume",
+                            "required_capital_yen",
+                            "daily_range_yen",
+                            "daily_range_pct",
+                            "previous_day_change_pct",
+                            "estimated_turnover",
+                        )
+                    },
+                    "order_plan": {
+                        "strategy_version": strategy_version,
+                        "validation_status": "unvalidated",
+                        "entry_trigger": "401",
+                        "entry_limit": "402",
+                        "affordable": True,
+                        "estimated_purchase_amount": "40200",
+                        "expected_loss_yen": "400",
+                        "shares": 100,
+                        "take_profit_price": "409",
+                        "stop_loss_price": "398",
+                    },
+                }
+            ],
+        },
+    )
+    _write_json_file(
+        sources_path,
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "sources": [],
+            "source_attempts": [
+                make_source_attempt(
+                    source_id=source_id,
+                    source_role="PRIMARY",
+                    criticality="TRADE_CRITICAL",
+                    information_type="EVENT",
+                    candidate_code="1234",
+                    target_date="2026-08-10",
+                )
+                | {
+                    "values": [],
+                    "coverage_status": "COMPLETE",
+                    "coverage_start": "2026-08-07T00:00:00+09:00",
+                    "coverage_end": "2026-08-09T21:00:00+09:00",
+                    "requested_at": "2026-08-09T20:00:00+09:00",
+                    "result_count": 0,
+                }
+                for source_id in (
+                    "JPX_EARNINGS_SCHEDULE",
+                    "COMPANY_IR",
+                    "JPX_TDNET",
+                    "COMPANY_IR_DISCLOSURE",
+                    "YAHOO_JP_NEWS",
+                    "KABUTAN_NEWS",
+                )
+            ],
+        },
+    )
+    return candidate_pipeline_path, candidates_path, sources_path
+
+
+def test_init_event_research_command_writes_skeleton(tmp_path):
+    candidate_pipeline_path, candidates_path, _ = _event_gate_fixture_paths(tmp_path)
+    output_path = tmp_path / "event_research.json"
+
+    result = cli.main(
+        [
+            "init-event-research",
+            "--candidate-pipeline",
+            str(candidate_pipeline_path),
+            "--candidates",
+            str(candidates_path),
+            "--previous-trading-day",
+            "2026-08-07",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["event_gate_input_tickers"] == ["1234"]
+    assert payload["event_gate_as_of"] is None
+
+
+def test_build_event_gate_command_produces_ranking_ready_payload(tmp_path):
+    candidate_pipeline_path, candidates_path, sources_path = _event_gate_fixture_paths(tmp_path)
+    event_research_path = tmp_path / "event_research.json"
+    output_path = tmp_path / "event_gate.json"
+    strategy_version, config_sha = config_metadata()
+    _write_json_file(
+        event_research_path,
+        make_event_research(
+            target_date="2026-08-10",
+            previous_trading_day="2026-08-07",
+            event_gate_as_of="2026-08-09T21:00:00+09:00",
+            strategy_version=strategy_version,
+            config_sha256=config_sha,
+            tickers=["1234"],
+        ),
+    )
+
+    result = cli.main(
+        [
+            "build-event-gate",
+            "--event-research",
+            str(event_research_path),
+            "--candidate-pipeline",
+            str(candidate_pipeline_path),
+            "--candidates",
+            str(candidates_path),
+            "--sources",
+            str(sources_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["candidates"][0]["gate_status"] == "PASS"
+    assert payload["ranking_ready"] is True
+
+
+def test_validate_event_research_command_reports_valid(tmp_path):
+    candidate_pipeline_path, candidates_path, sources_path = _event_gate_fixture_paths(tmp_path)
+    event_research_path = tmp_path / "event_research.json"
+    strategy_version, config_sha = config_metadata()
+    _write_json_file(
+        event_research_path,
+        make_event_research(
+            target_date="2026-08-10",
+            previous_trading_day="2026-08-07",
+            event_gate_as_of="2026-08-09T21:00:00+09:00",
+            strategy_version=strategy_version,
+            config_sha256=config_sha,
+            tickers=["1234"],
+        ),
+    )
+
+    result = cli.main(
+        [
+            "validate-event-research",
+            "--event-research",
+            str(event_research_path),
+            "--candidate-pipeline",
+            str(candidate_pipeline_path),
+            "--candidates",
+            str(candidates_path),
+            "--sources",
+            str(sources_path),
+        ]
+    )
+
+    assert result == 0
+
+
+def test_build_event_gate_command_rejects_pipeline_incomplete(tmp_path):
+    candidate_pipeline_path, candidates_path, sources_path = _event_gate_fixture_paths(tmp_path)
+    strategy_version, config_sha = config_metadata()
+    _write_json_file(
+        candidate_pipeline_path,
+        complete_candidate_pipeline(strategy_version, config_sha, pipeline_complete=False),
+    )
+    event_research_path = tmp_path / "event_research.json"
+    _write_json_file(
+        event_research_path,
+        make_event_research(
+            target_date="2026-08-10",
+            previous_trading_day="2026-08-07",
+            event_gate_as_of="2026-08-09T21:00:00+09:00",
+            strategy_version=strategy_version,
+            config_sha256=config_sha,
+            tickers=["1234"],
+        ),
+    )
+    output_path = tmp_path / "event_gate.json"
+
+    with pytest.raises(ValueError, match="not complete"):
+        cli.main(
+            [
+                "build-event-gate",
+                "--event-research",
+                str(event_research_path),
+                "--candidate-pipeline",
+                str(candidate_pipeline_path),
+                "--candidates",
+                str(candidates_path),
+                "--sources",
+                str(sources_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--help"],
+        ["build-event-gate", "--help"],
+        ["init-event-research", "--help"],
+        ["validate-event-research", "--help"],
+    ],
+)
+def test_cli_help_is_importable_and_does_not_crash(argv):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(argv)
+    assert exc_info.value.code == 0

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -10,10 +8,39 @@ EVENT_GATE_VERSION = "event-gate-v1"
 EVENT_RULE_IDS = (
     "earnings_on_target_date",
     "earnings_on_previous_trading_day",
-    "tdnet_any_disclosure",
+    "tdnet_disclosure_in_event_window",
     "dangerous_news_with_primary_confirmation",
 )
 GATE_TERMINAL_STATUSES = ("PASS", "REJECT", "DATA_UNAVAILABLE")
+
+RANKING_BLOCK_REASON_ORDER = (
+    "EVENT_GATE_INCOMPLETE",
+    "DATA_UNAVAILABLE_PRESENT",
+    "NO_EVENT_GATE_PASS_CANDIDATE",
+)
+
+REASON_CODES = frozenset(
+    {
+        "EVENT_RESEARCH_INVALID",
+        "EVENT_RESEARCH_INPUT_MISMATCH",
+        "SOURCE_REFERENCE_INVALID",
+        "SOURCE_CONFLICT",
+        "CANONICAL_ATTEMPT_MISMATCH",
+        "EARNINGS_ON_TARGET_DATE",
+        "EARNINGS_SCHEDULE_UNAVAILABLE",
+        "EARNINGS_DATE_CONFLICT",
+        "EARNINGS_ON_PREVIOUS_TRADING_DAY",
+        "PREVIOUS_DAY_DISCLOSURE_UNAVAILABLE",
+        "TDNET_DISCLOSURE_FOUND",
+        "TDNET_SOURCE_UNAVAILABLE",
+        "TDNET_COVERAGE_INCOMPLETE",
+        "DANGEROUS_NEWS_CONFIRMED",
+        "DANGEROUS_NEWS_UNCONFIRMED",
+        "NEWS_CLASSIFICATION_UNKNOWN",
+        "NEWS_SUBJECT_AMBIGUOUS",
+        "NEWS_SOURCE_UNAVAILABLE",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -21,16 +48,18 @@ class EventRuleEvaluation:
     rule_id: str
     result: str
     reason_codes: tuple[str, ...]
-    evidence_ids: tuple[str, ...]
+    source_ids: tuple[str, ...]
     source_attempt_ids: tuple[str, ...]
+    evidence_ids: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "result": self.result,
             "reason_codes": list(self.reason_codes),
-            "evidence_ids": list(self.evidence_ids),
+            "source_ids": list(self.source_ids),
             "source_attempt_ids": list(self.source_attempt_ids),
+            "evidence_ids": list(self.evidence_ids),
         }
 
 
@@ -52,122 +81,80 @@ class EventGateCandidateResult:
 
 def build_event_gate(
     *,
-    market_research: dict[str, Any],
+    event_research: dict[str, Any],
     candidate_pipeline: dict[str, Any],
     candidates: dict[str, Any],
     source_payload: dict[str, Any],
-    research_window: dict[str, Any],
     config: dict[str, Any],
     input_hashes: dict[str, str],
 ) -> dict[str, Any]:
-    payload = {
-        "schema_version": 1,
+    from src.config import strategy_config_sha256
+
+    target_date = event_research.get("target_date")
+    previous_trading_day = event_research.get("previous_trading_day")
+    event_gate_as_of = event_research.get("event_gate_as_of")
+    event_window_start = _event_window_start(previous_trading_day)
+    event_gate_config = config.get("event_gate", {})
+    attempts = source_payload.get("source_attempts", [])
+
+    payload: dict[str, Any] = {
+        "schema_version": 2,
         "event_gate_version": EVENT_GATE_VERSION,
-        "target_date": market_research.get("target_date"),
-        "previous_trading_day": market_research.get("previous_trading_day"),
+        "target_date": target_date,
+        "previous_trading_day": previous_trading_day,
+        "event_window_start": event_window_start,
+        "event_gate_as_of": event_gate_as_of,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "strategy_version": config.get("strategy_version"),
-        "config_sha256": _config_sha256(config),
-        "research_window_start": research_window.get("window_start"),
-        "research_cutoff": market_research.get("research_cutoff"),
+        "config_sha256": strategy_config_sha256(config),
         "input_hashes": input_hashes,
-        "input_candidate_tickers": _input_candidate_tickers(candidates),
+        "upstream_candidate_tickers": _upstream_candidate_tickers(candidates),
+        "event_gate_input_tickers": list(event_research.get("event_gate_input_tickers", [])),
         "event_gate_complete": False,
         "ranking_ready": False,
-        "summary": {
-            "input_count": 0,
-            "pass_count": 0,
-            "reject_count": 0,
-            "data_unavailable_count": 0,
-            "rule_counts": [
-                {
-                    "rule_id": rule_id,
-                    "pass_count": 0,
-                    "reject_count": 0,
-                    "data_unavailable_count": 0,
-                }
-                for rule_id in EVENT_RULE_IDS
-            ],
-        },
+        "ranking_block_reasons": [],
+        "summary": _empty_summary(),
         "candidates": [],
     }
 
-    hard_pass_tickers = _hard_screening_pass_tickers(candidates)
-    research_by_ticker = _research_by_ticker(market_research)
-    attempts_by_id = _attempts_by_id(source_payload)
-    evidence_by_id = _evidence_by_id(source_payload)
-    target_date = market_research.get("target_date")
-    previous_trading_day = market_research.get("previous_trading_day")
-    research_cutoff = market_research.get("research_cutoff")
-
-    for ticker in sorted(hard_pass_tickers):
-        research = research_by_ticker.get(ticker)
-        context = research.get("event_context") if isinstance(research, dict) else None
-        if not _validate_event_context_data(research, ticker):
-            rule_evaluations = [
-                EventRuleEvaluation(
-                    rule_id=rule_id,
-                    result="DATA_UNAVAILABLE",
-                    reason_codes=("EVENT_CONTEXT_UNAVAILABLE",),
-                    evidence_ids=tuple(),
-                    source_attempt_ids=tuple(),
-                )
-                for rule_id in EVENT_RULE_IDS
-            ]
-            gate_status = _candidate_gate_status(rule_evaluations)
-            reason_codes = _candidate_reason_codes(rule_evaluations)
-            payload["candidates"].append(
-                EventGateCandidateResult(
-                    ticker=ticker,
-                    gate_status=gate_status,
-                    reason_codes=reason_codes,
-                    rule_evaluations=tuple(rule_evaluations),
-                ).as_dict()
-            )
-            continue
-        rule_evaluations: list[EventRuleEvaluation] = []
-        rule_evaluations.append(
+    for event_research_candidate in sorted(
+        event_research.get("candidates", []),
+        key=lambda item: str(item.get("ticker", "")),
+    ):
+        ticker = str(event_research_candidate.get("ticker", "")).strip()
+        rule_evaluations = [
             _evaluate_earnings_target_date(
                 ticker=ticker,
-                research=research,
                 target_date=target_date,
-                previous_trading_day=previous_trading_day,
-                attempts_by_id=attempts_by_id,
-                evidence_by_id=evidence_by_id,
-                context=context,
-            )
-        )
-        rule_evaluations.append(
+                attempts=attempts,
+                event_gate_as_of=event_gate_as_of,
+                event_gate_config=event_gate_config,
+            ),
             _evaluate_earnings_previous_day(
                 ticker=ticker,
-                research=research,
                 target_date=target_date,
                 previous_trading_day=previous_trading_day,
-                attempts_by_id=attempts_by_id,
-                evidence_by_id=evidence_by_id,
-                context=context,
-            )
-        )
-        rule_evaluations.append(
+                attempts=attempts,
+                event_gate_as_of=event_gate_as_of,
+                event_gate_config=event_gate_config,
+            ),
             _evaluate_tdnet(
                 ticker=ticker,
-                research=research,
-                research_cutoff=research_cutoff,
-                attempts_by_id=attempts_by_id,
-                evidence_by_id=evidence_by_id,
-                context=context,
-            )
-        )
-        rule_evaluations.append(
+                target_date=target_date,
+                attempts=attempts,
+                event_gate_as_of=event_gate_as_of,
+                event_window_start=event_window_start,
+                event_gate_config=event_gate_config,
+            ),
             _evaluate_news(
                 ticker=ticker,
-                research=research,
-                research_cutoff=research_cutoff,
-                attempts_by_id=attempts_by_id,
-                evidence_by_id=evidence_by_id,
-                context=context,
-            )
-        )
+                target_date=target_date,
+                attempts=attempts,
+                event_gate_as_of=event_gate_as_of,
+                event_gate_config=event_gate_config,
+                event_research_candidate=event_research_candidate,
+            ),
+        ]
         gate_status = _candidate_gate_status(rule_evaluations)
         reason_codes = _candidate_reason_codes(rule_evaluations)
         payload["candidates"].append(
@@ -179,442 +166,499 @@ def build_event_gate(
             ).as_dict()
         )
 
-    payload["summary"] = _build_summary(payload["candidates"], payload["summary"])
-    payload["event_gate_complete"] = _event_gate_complete(payload)
+    payload["summary"] = _build_summary(payload["candidates"])
+    payload["event_gate_complete"] = _event_gate_complete(payload, source_payload)
+    payload["ranking_block_reasons"] = _ranking_block_reasons(payload)
     payload["ranking_ready"] = (
-        payload["event_gate_complete"] is True
-        and payload["summary"]["data_unavailable_count"] == 0
+        payload["event_gate_complete"] is True and not payload["ranking_block_reasons"]
     )
     return payload
 
 
-def _hard_screening_pass_tickers(candidates: dict[str, Any]) -> list[str]:
+def _event_window_start(previous_trading_day: str | None) -> str | None:
+    if not previous_trading_day:
+        return None
+    return f"{previous_trading_day}T00:00:00+09:00"
+
+
+def _upstream_candidate_tickers(candidates: dict[str, Any]) -> list[str]:
     return sorted(
         {
             str(candidate.get("ticker")).strip()
             for candidate in candidates.get("candidates", [])
-            if candidate.get("status") == "ELIGIBLE"
-            and str(candidate.get("screening_status") or "").strip() == "PASS"
+            if str(candidate.get("ticker", "")).strip()
         }
     )
 
 
-def _input_candidate_tickers(candidates: dict[str, Any]) -> list[str]:
-    return sorted({str(candidate.get("ticker")).strip() for candidate in candidates.get("candidates", []) if str(candidate.get("ticker", "")).strip()})
-
-
-def _research_by_ticker(market_research: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _empty_summary() -> dict[str, Any]:
     return {
-        str(research.get("ticker")).strip(): research
-        for research in market_research.get("candidate_research", [])
-        if isinstance(research, dict) and str(research.get("ticker", "")).strip()
+        "input_count": 0,
+        "pass_count": 0,
+        "reject_count": 0,
+        "data_unavailable_count": 0,
+        "rule_counts": [
+            {
+                "rule_id": rule_id,
+                "pass_count": 0,
+                "reject_count": 0,
+                "data_unavailable_count": 0,
+            }
+            for rule_id in EVENT_RULE_IDS
+        ],
     }
-
-
-def _attempts_by_id(source_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(attempt.get("attempt_id", "")): attempt
-        for attempt in source_payload.get("source_attempts", [])
-        if isinstance(attempt, dict) and str(attempt.get("attempt_id", "")).strip()
-    }
-
-
-def _evidence_by_id(source_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    evidence: dict[str, dict[str, Any]] = {}
-    for attempt in source_payload.get("source_attempts", []):
-        if not isinstance(attempt, dict):
-            continue
-        values = attempt.get("values")
-        if not isinstance(values, list):
-            continue
-        for index, item in enumerate(values):
-            if not isinstance(item, dict):
-                continue
-            evidence_id = item.get("evidence_id")
-            if isinstance(evidence_id, str):
-                evidence[evidence_id] = item
-    return evidence
-
-
-def _config_sha256(config: dict[str, Any]) -> str:
-    canonical = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
-def _select_canonical_attempt(
-    attempts: list[dict[str, Any]],
-    *,
-    ticker: str,
-    source_id: str,
-    target_date: str,
-) -> dict[str, Any] | None:
-    matching = [
-        attempt
-        for attempt in attempts
-        if isinstance(attempt, dict)
-        and str(attempt.get("candidate_code") or "") == str(ticker)
-        and str(attempt.get("source_id") or "") == str(source_id)
-        and str(attempt.get("target_date") or "") == str(target_date)
-    ]
-    if not matching:
-        return None
-    found = [attempt for attempt in matching if str(attempt.get("status") or "") == "FOUND"]
-    if found:
-        matching = found
-    matching.sort(
-        key=lambda attempt: (
-            _parse_dt(attempt.get("requested_at")),
-            str(attempt.get("attempt_id") or ""),
-        ),
-        reverse=True,
-    )
-    return matching[0]
 
 
 def _parse_dt(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    return parsed
 
 
-def _validate_event_context_data(research: dict[str, Any] | None, ticker: str) -> bool:
-    if not isinstance(research, dict):
-        return False
-    context = research.get("event_context")
-    if not isinstance(context, dict):
-        return False
-    selected = context.get("selected_attempt_ids")
-    if not isinstance(selected, dict):
-        return False
-    if set(selected.keys()) != {
-        "earnings_schedule",
-        "tdnet",
-        "yahoo_news",
-        "kabutan_news",
-        "issuer_disclosure",
-    }:
-        return False
-    return isinstance(context.get("news_classifications"), list)
+def _parse_dt_strict(value: Any, context: str) -> datetime:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        raise ValueError(f"{context}: invalid or missing datetime {value!r}")
+    if parsed.tzinfo is None:
+        raise ValueError(f"{context}: datetime {value!r} must be timezone-aware")
+    return parsed
 
 
-def _validate_news_classifications(research: dict[str, Any]) -> bool:
-    if not isinstance(research, dict):
-        return False
-    context = research.get("event_context")
-    if not isinstance(context, dict):
-        return False
-    classifications = context.get("news_classifications")
-    if not isinstance(classifications, list):
-        return False
-    return True
+def select_canonical_attempt(
+    attempts: list[dict[str, Any]],
+    *,
+    ticker: str,
+    source_id: str,
+    target_date: str,
+    event_gate_as_of: str | None,
+) -> dict[str, Any] | None:
+    if not event_gate_as_of:
+        return None
+    as_of_dt = _parse_dt_strict(event_gate_as_of, "event_gate_as_of")
+    matching = []
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            continue
+        if str(attempt.get("candidate_code") or "") != str(ticker):
+            continue
+        if str(attempt.get("source_id") or "") != str(source_id):
+            continue
+        if str(attempt.get("target_date") or "") != str(target_date):
+            continue
+        requested_dt = _parse_dt_strict(
+            attempt.get("requested_at"),
+            f"source_attempt {attempt.get('attempt_id')} requested_at",
+        )
+        if requested_dt > as_of_dt:
+            continue
+        matching.append((requested_dt, attempt))
+    if not matching:
+        return None
+    matching.sort(key=lambda pair: (pair[0], str(pair[1].get("attempt_id") or "")), reverse=True)
+    return matching[0][1]
 
 
-def _validate_confirmation_evidence(research: dict[str, Any]) -> bool:
-    return _validate_news_classifications(research)
+def _attempt_events(attempt: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(attempt, dict):
+        return []
+    values = attempt.get("values")
+    if not isinstance(values, list):
+        return []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def _source_clean(attempt: dict[str, Any] | None, matches: list[dict[str, Any]]) -> bool:
+    if not isinstance(attempt, dict):
+        return False
+    if attempt.get("status") != "FOUND":
+        return False
+    if matches:
+        return False
+    return attempt.get("coverage_status") == "COMPLETE"
+
+
+def _evaluate_earnings_rule(
+    *,
+    rule_id: str,
+    ticker: str,
+    attempt_target_date: str,
+    match_date: str,
+    source_ids: tuple[str, ...],
+    attempts: list[dict[str, Any]],
+    event_gate_as_of: str | None,
+    match_reason: str,
+    unavailable_reason: str,
+    conflict_reason: str,
+) -> EventRuleEvaluation:
+    canonical_by_source: dict[str, dict[str, Any] | None] = {}
+    for source_id in source_ids:
+        canonical_by_source[source_id] = select_canonical_attempt(
+            attempts,
+            ticker=ticker,
+            source_id=source_id,
+            target_date=attempt_target_date,
+            event_gate_as_of=event_gate_as_of,
+        )
+
+    source_attempt_ids = tuple(
+        sorted(
+            {
+                str(attempt.get("attempt_id"))
+                for attempt in canonical_by_source.values()
+                if isinstance(attempt, dict) and attempt.get("attempt_id")
+            }
+        )
+    )
+
+    matches_by_source: dict[str, list[dict[str, Any]]] = {}
+    clean_sources: set[str] = set()
+    earnings_dates_by_source: dict[str, set[str]] = {}
+    for source_id, attempt in canonical_by_source.items():
+        events = _attempt_events(attempt)
+        matches = [
+            item
+            for item in events
+            if item.get("event_type") == "EARNINGS" and item.get("event_date") == match_date
+        ]
+        matches_by_source[source_id] = matches
+        earnings_dates_by_source[source_id] = {
+            str(item.get("event_date"))
+            for item in events
+            if item.get("event_type") == "EARNINGS" and item.get("event_date")
+        }
+        if _source_clean(attempt, matches):
+            clean_sources.add(source_id)
+
+    all_matches = [match for matches in matches_by_source.values() for match in matches]
+    if all_matches:
+        evidence_ids = tuple(
+            sorted({str(item.get("evidence_id")) for item in all_matches if item.get("evidence_id")})
+        )
+        return EventRuleEvaluation(
+            rule_id=rule_id,
+            result="REJECT",
+            reason_codes=(match_reason,),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=evidence_ids,
+        )
+
+    if len(clean_sources) == len(source_ids):
+        return EventRuleEvaluation(
+            rule_id=rule_id,
+            result="PASS",
+            reason_codes=(),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=(),
+        )
+
+    non_empty_date_sets = [dates for dates in earnings_dates_by_source.values() if dates]
+    if len(non_empty_date_sets) >= 2:
+        combined = set()
+        conflict = False
+        for dates in non_empty_date_sets:
+            if combined and combined != dates:
+                conflict = True
+            combined |= dates
+        if conflict:
+            return EventRuleEvaluation(
+                rule_id=rule_id,
+                result="DATA_UNAVAILABLE",
+                reason_codes=(conflict_reason,),
+                source_ids=source_ids,
+                source_attempt_ids=source_attempt_ids,
+                evidence_ids=(),
+            )
+
+    return EventRuleEvaluation(
+        rule_id=rule_id,
+        result="DATA_UNAVAILABLE",
+        reason_codes=(unavailable_reason,),
+        source_ids=source_ids,
+        source_attempt_ids=source_attempt_ids,
+        evidence_ids=(),
+    )
 
 
 def _evaluate_earnings_target_date(
     *,
     ticker: str,
-    research: dict[str, Any] | None,
     target_date: str,
-    previous_trading_day: str,
-    attempts_by_id: dict[str, dict[str, Any]],
-    evidence_by_id: dict[str, dict[str, Any]],
-    context: dict[str, Any] | None,
+    attempts: list[dict[str, Any]],
+    event_gate_as_of: str | None,
+    event_gate_config: dict[str, Any],
 ) -> EventRuleEvaluation:
-    evidence_ids: list[str] = []
-    source_attempt_ids: list[str] = []
-    if research is None:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(evidence_ids),
-            source_attempt_ids=tuple(source_attempt_ids),
-        )
-
-    attempt = _select_canonical_attempt(
-        [attempts_by_id.get(attempt_id) for attempt_id in research.get("source_attempt_ids", []) if attempt_id in attempts_by_id],
-        ticker=ticker,
-        source_id="JPX_EARNINGS_SCHEDULE",
-        target_date=target_date,
-    )
-    if attempt is None:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(evidence_ids),
-            source_attempt_ids=tuple(source_attempt_ids),
-        )
-    if attempt.get("status") != "FOUND":
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    values = attempt.get("values")
-    if not isinstance(values, list):
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    for item in values:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("scheduled_date") or "") == str(target_date):
-            evidence_ids.append(str(item.get("evidence_id") or ""))
-    if evidence_ids:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="REJECT",
-            reason_codes=("EARNINGS_ON_TARGET_DATE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    if len(values) == 0:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_target_date",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    return EventRuleEvaluation(
+    earnings_config = event_gate_config.get("earnings", {})
+    source_ids = tuple(earnings_config.get("target_date_source_ids", ()))
+    return _evaluate_earnings_rule(
         rule_id="earnings_on_target_date",
-        result="PASS",
-        reason_codes=(),
-        evidence_ids=tuple(sorted(evidence_ids)),
-        source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
+        ticker=ticker,
+        attempt_target_date=target_date,
+        match_date=target_date,
+        source_ids=source_ids,
+        attempts=attempts,
+        event_gate_as_of=event_gate_as_of,
+        match_reason="EARNINGS_ON_TARGET_DATE",
+        unavailable_reason="EARNINGS_SCHEDULE_UNAVAILABLE",
+        conflict_reason="EARNINGS_DATE_CONFLICT",
     )
 
 
 def _evaluate_earnings_previous_day(
     *,
     ticker: str,
-    research: dict[str, Any] | None,
     target_date: str,
     previous_trading_day: str,
-    attempts_by_id: dict[str, dict[str, Any]],
-    evidence_by_id: dict[str, dict[str, Any]],
-    context: dict[str, Any] | None,
+    attempts: list[dict[str, Any]],
+    event_gate_as_of: str | None,
+    event_gate_config: dict[str, Any],
 ) -> EventRuleEvaluation:
-    evidence_ids: list[str] = []
-    if research is None:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(evidence_ids),
-            source_attempt_ids=tuple(),
-        )
-
-    attempt = _select_canonical_attempt(
-        [attempts_by_id.get(attempt_id) for attempt_id in research.get("source_attempt_ids", []) if attempt_id in attempts_by_id],
-        ticker=ticker,
-        source_id="JPX_EARNINGS_SCHEDULE",
-        target_date=target_date,
-    )
-    if attempt is None:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(evidence_ids),
-            source_attempt_ids=tuple(),
-        )
-    if attempt.get("status") != "FOUND":
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    values = attempt.get("values")
-    if not isinstance(values, list):
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    for item in values:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("scheduled_date") or "") == str(previous_trading_day):
-            evidence_ids.append(str(item.get("evidence_id") or ""))
-    if evidence_ids:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="REJECT",
-            reason_codes=("EARNINGS_ON_PREVIOUS_TRADING_DAY",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    if len(values) == 0:
-        return EventRuleEvaluation(
-            rule_id="earnings_on_previous_trading_day",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("EARNINGS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
-        )
-    return EventRuleEvaluation(
+    earnings_config = event_gate_config.get("earnings", {})
+    source_ids = tuple(earnings_config.get("previous_day_source_ids", ()))
+    return _evaluate_earnings_rule(
         rule_id="earnings_on_previous_trading_day",
-        result="PASS",
-        reason_codes=(),
-        evidence_ids=tuple(sorted(evidence_ids)),
-        source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
+        ticker=ticker,
+        attempt_target_date=target_date,
+        match_date=previous_trading_day,
+        source_ids=source_ids,
+        attempts=attempts,
+        event_gate_as_of=event_gate_as_of,
+        match_reason="EARNINGS_ON_PREVIOUS_TRADING_DAY",
+        unavailable_reason="PREVIOUS_DAY_DISCLOSURE_UNAVAILABLE",
+        conflict_reason="PREVIOUS_DAY_DISCLOSURE_UNAVAILABLE",
     )
 
 
 def _evaluate_tdnet(
     *,
     ticker: str,
-    research: dict[str, Any] | None,
-    research_cutoff: str | None,
-    attempts_by_id: dict[str, dict[str, Any]],
-    evidence_by_id: dict[str, dict[str, Any]],
-    context: dict[str, Any] | None,
+    target_date: str,
+    attempts: list[dict[str, Any]],
+    event_gate_as_of: str | None,
+    event_window_start: str | None,
+    event_gate_config: dict[str, Any],
 ) -> EventRuleEvaluation:
-    if research is None:
-        return EventRuleEvaluation(
-            rule_id="tdnet_any_disclosure",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("TDNET_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(),
-            source_attempt_ids=tuple(),
-        )
-    attempt = _select_canonical_attempt(
-        [attempts_by_id.get(attempt_id) for attempt_id in research.get("source_attempt_ids", []) if attempt_id in attempts_by_id],
+    tdnet_config = event_gate_config.get("tdnet", {})
+    source_id = str(tdnet_config.get("source_id") or "JPX_TDNET")
+    canonical = select_canonical_attempt(
+        attempts,
         ticker=ticker,
-        source_id="JPX_TDNET",
-        target_date=research.get("target_date") or "",
+        source_id=source_id,
+        target_date=target_date,
+        event_gate_as_of=event_gate_as_of,
     )
-    if attempt is None:
+    source_attempt_ids = (
+        (str(canonical.get("attempt_id")),) if isinstance(canonical, dict) and canonical.get("attempt_id") else ()
+    )
+    if canonical is None or canonical.get("status") != "FOUND":
         return EventRuleEvaluation(
-            rule_id="tdnet_any_disclosure",
+            rule_id="tdnet_disclosure_in_event_window",
             result="DATA_UNAVAILABLE",
             reason_codes=("TDNET_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(),
-            source_attempt_ids=tuple(),
+            source_ids=(source_id,),
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=(),
         )
-    if attempt.get("status") != "FOUND":
-        return EventRuleEvaluation(
-            rule_id="tdnet_any_disclosure",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("TDNET_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
+
+    window_start_dt = _parse_dt_strict(event_window_start, "event_window_start") if event_window_start else None
+    as_of_dt = _parse_dt_strict(event_gate_as_of, "event_gate_as_of") if event_gate_as_of else None
+
+    in_window: list[dict[str, Any]] = []
+    for item in _attempt_events(canonical):
+        published_at = item.get("published_at")
+        if published_at is None:
+            continue
+        published_dt = _parse_dt_strict(
+            published_at,
+            f"evidence {item.get('evidence_id')} published_at",
         )
-    evidence_ids: list[str] = []
-    for item in attempt.get("values", []) or []:
-        if not isinstance(item, dict):
+        if window_start_dt is not None and published_dt < window_start_dt:
             continue
-        if str(item.get("ticker") or "") != str(ticker):
+        if as_of_dt is not None and published_dt > as_of_dt:
             continue
-        published_at = str(item.get("published_at") or "")
-        if published_at and research_cutoff and published_at <= research_cutoff:
-            evidence_ids.append(str(item.get("evidence_id") or ""))
-    if evidence_ids:
+        in_window.append(item)
+
+    if in_window:
+        evidence_ids = tuple(
+            sorted({str(item.get("evidence_id")) for item in in_window if item.get("evidence_id")})
+        )
         return EventRuleEvaluation(
-            rule_id="tdnet_any_disclosure",
+            rule_id="tdnet_disclosure_in_event_window",
             result="REJECT",
             reason_codes=("TDNET_DISCLOSURE_FOUND",),
-            evidence_ids=tuple(sorted(evidence_ids)),
-            source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
+            source_ids=(source_id,),
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=evidence_ids,
         )
+
+    if canonical.get("coverage_status") != "COMPLETE":
+        return EventRuleEvaluation(
+            rule_id="tdnet_disclosure_in_event_window",
+            result="DATA_UNAVAILABLE",
+            reason_codes=("TDNET_COVERAGE_INCOMPLETE",),
+            source_ids=(source_id,),
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=(),
+        )
+
     return EventRuleEvaluation(
-        rule_id="tdnet_any_disclosure",
+        rule_id="tdnet_disclosure_in_event_window",
         result="PASS",
         reason_codes=(),
-        evidence_ids=tuple(sorted(evidence_ids)),
-        source_attempt_ids=(str(attempt.get("attempt_id") or ""),),
+        source_ids=(source_id,),
+        source_attempt_ids=source_attempt_ids,
+        evidence_ids=(),
     )
 
 
 def _evaluate_news(
     *,
     ticker: str,
-    research: dict[str, Any] | None,
-    research_cutoff: str | None,
-    attempts_by_id: dict[str, dict[str, Any]],
-    evidence_by_id: dict[str, dict[str, Any]],
-    context: dict[str, Any] | None,
+    target_date: str,
+    attempts: list[dict[str, Any]],
+    event_gate_as_of: str | None,
+    event_gate_config: dict[str, Any],
+    event_research_candidate: dict[str, Any],
 ) -> EventRuleEvaluation:
-    evidence_ids: list[str] = []
-    if not isinstance(context, dict):
-        return EventRuleEvaluation(
-            rule_id="dangerous_news_with_primary_confirmation",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("NEWS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(),
-            source_attempt_ids=tuple(),
+    news_config = event_gate_config.get("news", {})
+    source_ids = tuple(news_config.get("required_source_ids", ()))
+
+    canonical_ids: list[str] = []
+    source_unavailable = False
+    for source_id in source_ids:
+        canonical = select_canonical_attempt(
+            attempts,
+            ticker=ticker,
+            source_id=source_id,
+            target_date=target_date,
+            event_gate_as_of=event_gate_as_of,
         )
-    classifications = context.get("news_classifications")
-    if not isinstance(classifications, list):
-        return EventRuleEvaluation(
-            rule_id="dangerous_news_with_primary_confirmation",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("NEWS_SOURCE_UNAVAILABLE",),
-            evidence_ids=tuple(),
-            source_attempt_ids=tuple(),
-        )
-    blocking = [item for item in classifications if str(item.get("signal_type") or "") not in {"NON_EVENT", "UNKNOWN"}]
-    if blocking:
-        if any(
-            str(item.get("subject_status") or "") == "CONFIRMED"
-            and isinstance(item.get("confirmation_evidence_ids"), list)
-            and item.get("confirmation_evidence_ids")
-            for item in blocking
+        if isinstance(canonical, dict) and canonical.get("attempt_id"):
+            canonical_ids.append(str(canonical.get("attempt_id")))
+        if (
+            not isinstance(canonical, dict)
+            or canonical.get("status") != "FOUND"
+            or canonical.get("coverage_status") != "COMPLETE"
         ):
-            return EventRuleEvaluation(
-                rule_id="dangerous_news_with_primary_confirmation",
-                result="REJECT",
-                reason_codes=("DANGEROUS_NEWS_CONFIRMED",),
-                evidence_ids=tuple(sorted({str(item.get("evidence_id") or "") for item in blocking if isinstance(item, dict)})),
-                source_attempt_ids=tuple(),
+            source_unavailable = True
+
+    classifications = event_research_candidate.get("news_classifications", [])
+    if not isinstance(classifications, list):
+        classifications = []
+
+    source_attempt_ids = tuple(sorted(set(canonical_ids)))
+
+    if any(item.get("signal_type") == "UNKNOWN" for item in classifications):
+        evidence_ids = tuple(
+            sorted(
+                {
+                    str(item.get("news_evidence_id"))
+                    for item in classifications
+                    if item.get("signal_type") == "UNKNOWN" and item.get("news_evidence_id")
+                }
             )
-        return EventRuleEvaluation(
-            rule_id="dangerous_news_with_primary_confirmation",
-            result="DATA_UNAVAILABLE",
-            reason_codes=("DANGEROUS_NEWS_UNCONFIRMED",),
-            evidence_ids=tuple(sorted({str(item.get("evidence_id") or "") for item in blocking if isinstance(item, dict)})),
-            source_attempt_ids=tuple(),
         )
-    if any(str(item.get("signal_type") or "") == "UNKNOWN" for item in classifications):
         return EventRuleEvaluation(
             rule_id="dangerous_news_with_primary_confirmation",
             result="DATA_UNAVAILABLE",
             reason_codes=("NEWS_CLASSIFICATION_UNKNOWN",),
-            evidence_ids=tuple(sorted({str(item.get("evidence_id") or "") for item in classifications if isinstance(item, dict)})),
-            source_attempt_ids=tuple(),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=evidence_ids,
         )
-    if any(str(item.get("subject_status") or "") == "AMBIGUOUS" for item in classifications):
+
+    if any(item.get("subject_status") == "AMBIGUOUS" for item in classifications):
+        evidence_ids = tuple(
+            sorted(
+                {
+                    str(item.get("news_evidence_id"))
+                    for item in classifications
+                    if item.get("subject_status") == "AMBIGUOUS" and item.get("news_evidence_id")
+                }
+            )
+        )
         return EventRuleEvaluation(
             rule_id="dangerous_news_with_primary_confirmation",
             result="DATA_UNAVAILABLE",
             reason_codes=("NEWS_SUBJECT_AMBIGUOUS",),
-            evidence_ids=tuple(sorted({str(item.get("evidence_id") or "") for item in classifications if isinstance(item, dict)})),
-            source_attempt_ids=tuple(),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=evidence_ids,
         )
+
+    confirmation_source_ids = frozenset(news_config.get("confirmation_source_ids", ()))
+    attempts_by_id = {
+        str(attempt.get("attempt_id")): attempt
+        for attempt in attempts
+        if isinstance(attempt, dict) and attempt.get("attempt_id")
+    }
+
+    blocking = [
+        item
+        for item in classifications
+        if item.get("signal_type") not in {"NON_EVENT", "UNKNOWN"} and item.get("subject_status") == "CONFIRMED"
+    ]
+    if blocking:
+        confirmed_evidence: set[str] = set()
+        confirmed_attempt_ids: set[str] = set()
+        for item in blocking:
+            item_evidence_ids = set(item.get("confirmation_evidence_ids") or [])
+            for attempt_id in item.get("confirmation_source_attempt_ids") or []:
+                attempt = attempts_by_id.get(str(attempt_id))
+                if not isinstance(attempt, dict):
+                    continue
+                if str(attempt.get("source_id") or "") not in confirmation_source_ids:
+                    continue
+                attempt_evidence_ids = {
+                    str(evt.get("evidence_id")) for evt in _attempt_events(attempt) if evt.get("evidence_id")
+                }
+                matched = item_evidence_ids & attempt_evidence_ids
+                if matched:
+                    confirmed_evidence |= matched
+                    confirmed_attempt_ids.add(str(attempt_id))
+        if confirmed_evidence:
+            return EventRuleEvaluation(
+                rule_id="dangerous_news_with_primary_confirmation",
+                result="REJECT",
+                reason_codes=("DANGEROUS_NEWS_CONFIRMED",),
+                source_ids=source_ids,
+                source_attempt_ids=tuple(sorted(set(source_attempt_ids) | confirmed_attempt_ids)),
+                evidence_ids=tuple(sorted(confirmed_evidence)),
+            )
+        evidence_ids = tuple(
+            sorted({str(item.get("news_evidence_id")) for item in blocking if item.get("news_evidence_id")})
+        )
+        return EventRuleEvaluation(
+            rule_id="dangerous_news_with_primary_confirmation",
+            result="DATA_UNAVAILABLE",
+            reason_codes=("DANGEROUS_NEWS_UNCONFIRMED",),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=evidence_ids,
+        )
+
+    if source_unavailable:
+        return EventRuleEvaluation(
+            rule_id="dangerous_news_with_primary_confirmation",
+            result="DATA_UNAVAILABLE",
+            reason_codes=("NEWS_SOURCE_UNAVAILABLE",),
+            source_ids=source_ids,
+            source_attempt_ids=source_attempt_ids,
+            evidence_ids=(),
+        )
+
     return EventRuleEvaluation(
         rule_id="dangerous_news_with_primary_confirmation",
         result="PASS",
         reason_codes=(),
-        evidence_ids=tuple(sorted({str(item.get("evidence_id") or "") for item in classifications if isinstance(item, dict)})),
-        source_attempt_ids=tuple(),
+        source_ids=source_ids,
+        source_attempt_ids=source_attempt_ids,
+        evidence_ids=(),
     )
 
 
@@ -635,22 +679,9 @@ def _candidate_reason_codes(rule_evaluations: list[EventRuleEvaluation]) -> tupl
     return tuple(reason_codes)
 
 
-def _build_summary(candidates: list[dict[str, Any]], previous_summary: dict[str, Any]) -> dict[str, Any]:
-    summary = {
-        "input_count": len(candidates),
-        "pass_count": 0,
-        "reject_count": 0,
-        "data_unavailable_count": 0,
-        "rule_counts": [
-            {
-                "rule_id": rule_id,
-                "pass_count": 0,
-                "reject_count": 0,
-                "data_unavailable_count": 0,
-            }
-            for rule_id in EVENT_RULE_IDS
-        ],
-    }
+def _build_summary(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = _empty_summary()
+    summary["input_count"] = len(candidates)
     for candidate in candidates:
         if candidate["gate_status"] == "PASS":
             summary["pass_count"] += 1
@@ -671,22 +702,69 @@ def _build_summary(candidates: list[dict[str, Any]], previous_summary: dict[str,
     return summary
 
 
-def _event_gate_complete(payload: dict[str, Any]) -> bool:
+def _event_gate_complete(payload: dict[str, Any], source_payload: dict[str, Any]) -> bool:
     candidates = payload.get("candidates", [])
+    input_tickers = set(payload.get("event_gate_input_tickers", []))
+    candidate_tickers = [candidate.get("ticker") for candidate in candidates]
+    if set(candidate_tickers) != input_tickers:
+        return False
+    if len(candidate_tickers) != len(set(candidate_tickers)):
+        return False
     if len(candidates) != payload.get("summary", {}).get("input_count", 0):
         return False
-    tickers = [candidate.get("ticker") for candidate in candidates]
-    if len(tickers) != len(set(tickers)):
-        return False
+
+    attempt_ids = {
+        str(attempt.get("attempt_id"))
+        for attempt in source_payload.get("source_attempts", [])
+        if isinstance(attempt, dict) and attempt.get("attempt_id")
+    }
+    evidence_ids = _all_evidence_ids(source_payload)
+
     for candidate in candidates:
-        if len(candidate.get("rule_evaluations", [])) != len(EVENT_RULE_IDS):
+        rules = candidate.get("rule_evaluations", [])
+        if len(rules) != len(EVENT_RULE_IDS):
             return False
-        seen = set()
-        for rule in candidate.get("rule_evaluations", []):
-            rule_id = rule.get("rule_id")
-            if rule_id in seen or rule_id not in EVENT_RULE_IDS:
-                return False
-            seen.add(rule_id)
+        if tuple(rule.get("rule_id") for rule in rules) != EVENT_RULE_IDS:
+            return False
+        for rule in rules:
             if rule.get("result") not in GATE_TERMINAL_STATUSES:
                 return False
+            if any(code not in REASON_CODES for code in rule.get("reason_codes", [])):
+                return False
+            if rule.get("result") == "REJECT" and not rule.get("evidence_ids"):
+                return False
+            if rule.get("result") == "DATA_UNAVAILABLE" and not rule.get("reason_codes"):
+                return False
+            for attempt_id in rule.get("source_attempt_ids", []):
+                if attempt_id not in attempt_ids:
+                    return False
+            for evidence_id in rule.get("evidence_ids", []):
+                if evidence_id not in evidence_ids:
+                    return False
     return True
+
+
+def _all_evidence_ids(source_payload: dict[str, Any]) -> set[str]:
+    evidence_ids: set[str] = set()
+    for attempt in source_payload.get("source_attempts", []):
+        if not isinstance(attempt, dict):
+            continue
+        values = attempt.get("values")
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict) and item.get("evidence_id"):
+                evidence_ids.add(str(item.get("evidence_id")))
+    return evidence_ids
+
+
+def _ranking_block_reasons(payload: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if payload.get("event_gate_complete") is not True:
+        reasons.append("EVENT_GATE_INCOMPLETE")
+    summary = payload.get("summary", {})
+    if summary.get("data_unavailable_count", 0) > 0:
+        reasons.append("DATA_UNAVAILABLE_PRESENT")
+    if summary.get("pass_count", 0) == 0:
+        reasons.append("NO_EVENT_GATE_PASS_CANDIDATE")
+    return [reason for reason in RANKING_BLOCK_REASON_ORDER if reason in reasons]

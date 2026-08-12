@@ -14,10 +14,10 @@ from src.config import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v3_config_keeps_screening_rules_disabled_without_thresholds():
+def test_v4_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
-    assert config["config_schema_version"] == 3
+    assert config["config_schema_version"] == 4
     assert config["strategy_version"] == "v1"
     rules = normalize_screening_rules(config["screening"])
     assert set(rules) == set(SCREENING_KEYS)
@@ -61,19 +61,32 @@ def test_enabled_screening_rule_requires_threshold():
         validate_strategy_config(config)
 
 
-def test_v2_config_is_still_loadable_and_v3_event_gate_requires_fixed_values():
+def test_v2_config_is_still_loadable_and_v4_event_gate_requires_fixed_values():
     v2_config = load_yaml(PROJECT_ROOT / "tests" / "fixtures" / "strategy_v2.yaml")
     loaded = load_strategy_config(PROJECT_ROOT / "tests" / "fixtures" / "strategy_v2.yaml")
     assert loaded["config_schema_version"] == 2
     assert v2_config["config_schema_version"] == 2
 
-    v3_config = load_strategy_config()
-    v3_config["event_gate"]["news"]["required_source_ids"][0] = "OTHER"
+    v4_config = load_strategy_config()
+    v4_config["event_gate"]["news"]["required_source_ids"][0] = "OTHER"
     with pytest.raises(ValueError, match="event_gate"):
-        validate_strategy_config(v3_config)
+        validate_strategy_config(v4_config)
 
 
-def test_legacy_event_screening_rules_are_rejected_in_v3():
+def test_v3_config_is_still_loadable_with_legacy_event_gate_shape():
+    v3_config = load_strategy_config(PROJECT_ROOT / "tests" / "fixtures" / "strategy_v3.yaml")
+    assert v3_config["config_schema_version"] == 3
+    assert v3_config["event_gate"]["earnings"]["primary_source_id"] == "JPX_EARNINGS_SCHEDULE"
+
+
+def test_v4_config_requires_new_earnings_source_id_lists():
+    config = load_strategy_config()
+    config["event_gate"]["earnings"]["target_date_source_ids"] = ["OTHER"]
+    with pytest.raises(ValueError, match="target_date_source_ids"):
+        validate_strategy_config(config)
+
+
+def test_legacy_event_screening_rules_are_rejected_in_v4():
     config = load_strategy_config()
     config["screening"]["exclude_earnings"]["enabled"] = True
     with pytest.raises(ValueError, match="exclude_earnings"):

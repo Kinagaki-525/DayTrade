@@ -1,4 +1,4 @@
-config_schema_version: 4
+config_schema_version: 3
 strategy_version: "v1"
 validation_status: unvalidated
 
@@ -37,12 +37,8 @@ event_gate:
     enabled: true
     reject_target_date: true
     reject_previous_trading_day: true
-    target_date_source_ids:
-      - "JPX_EARNINGS_SCHEDULE"
-      - "COMPANY_IR"
-    previous_day_source_ids:
-      - "JPX_TDNET"
-      - "COMPANY_IR_DISCLOSURE"
+    primary_source_id: "JPX_EARNINGS_SCHEDULE"
+    fallback_source_id: "COMPANY_IR"
   tdnet:
     enabled: true
     policy: "REJECT_ANY_DISCLOSURE"

@@ -24,6 +24,10 @@ from src.contracts import (
     validate_candidate_pipeline_inputs,
     validate_json_document,
     validate_daily_report_inputs,
+    validate_event_gate_inputs,
+    validate_event_gate_output_contract,
+    validate_event_research_contract,
+    validate_event_research_inputs,
     validate_performance_inputs,
     validate_recommendation_candidate_link,
     validate_recommendation_pipeline_link,
@@ -47,6 +51,7 @@ from src.performance import build_performance_payload
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
 from src.event_gate import build_event_gate
+from src.event_research import init_event_research_payload
 from src.research import (
     MarketDataResearchAlignmentResult,
     MarketResearchValidationResult,
@@ -150,13 +155,27 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     pipeline_parser.add_argument("--output", required=True, type=Path)
 
+    init_event_research_parser = subparsers.add_parser("init-event-research")
+    init_event_research_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    init_event_research_parser.add_argument("--candidates", required=True, type=Path)
+    init_event_research_parser.add_argument("--previous-trading-day", required=True)
+    init_event_research_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    init_event_research_parser.add_argument("--output", required=True, type=Path)
+
+    validate_event_research_parser = subparsers.add_parser("validate-event-research")
+    validate_event_research_parser.add_argument("--event-research", required=True, type=Path)
+    validate_event_research_parser.add_argument("--candidate-pipeline", required=True, type=Path)
+    validate_event_research_parser.add_argument("--candidates", required=True, type=Path)
+    validate_event_research_parser.add_argument("--sources", required=True, type=Path)
+    validate_event_research_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    validate_event_research_parser.add_argument("--output", type=Path)
+
     event_gate_parser = subparsers.add_parser("build-event-gate")
-    event_gate_parser.add_argument("--market-research", required=True, type=Path)
+    event_gate_parser.add_argument("--event-research", required=True, type=Path)
     event_gate_parser.add_argument("--candidate-pipeline", required=True, type=Path)
     event_gate_parser.add_argument("--candidates", required=True, type=Path)
     event_gate_parser.add_argument("--sources", required=True, type=Path)
-    event_gate_parser.add_argument("--research-window", required=True, type=Path)
-    event_gate_parser.add_argument("--config", required=True, type=Path)
+    event_gate_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     event_gate_parser.add_argument("--output", required=True, type=Path)
 
     performance_parser = subparsers.add_parser("build-performance")
@@ -303,13 +322,29 @@ def main(argv: list[str] | None = None) -> int:
             args.config,
             args.output,
         )
-    if args.command == "build-event-gate":
-        return _build_event_gate(
-            args.market_research,
+    if args.command == "init-event-research":
+        return _init_event_research(
+            args.candidate_pipeline,
+            args.candidates,
+            args.previous_trading_day,
+            args.config,
+            args.output,
+        )
+    if args.command == "validate-event-research":
+        return _validate_event_research(
+            args.event_research,
             args.candidate_pipeline,
             args.candidates,
             args.sources,
-            args.research_window,
+            args.config,
+            args.output,
+        )
+    if args.command == "build-event-gate":
+        return _build_event_gate(
+            args.event_research,
+            args.candidate_pipeline,
+            args.candidates,
+            args.sources,
             args.config,
             args.output,
         )
@@ -1049,48 +1084,98 @@ def _alignment_error_messages(
     return messages
 
 
-def _build_event_gate(
-    market_research_path: Path,
+def _init_event_research(
     candidate_pipeline_path: Path,
     candidates_path: Path,
-    sources_path: Path,
-    research_window_path: Path,
+    previous_trading_day: str,
     config_path: Path,
     output_path: Path,
 ) -> int:
-    market_research = load_json_document(market_research_path, "market_research.schema.json")
+    candidate_pipeline = load_json_document(candidate_pipeline_path, "candidate_pipeline.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    config = load_strategy_config(config_path)
+    validate_event_research_inputs(
+        candidate_pipeline=candidate_pipeline,
+        candidates=candidates,
+        config=config,
+    )
+    input_hashes = {
+        "candidate_pipeline_sha256": _sha256_bytes(candidate_pipeline_path.read_bytes()),
+        "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
+        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+    }
+    payload = init_event_research_payload(
+        candidate_pipeline=candidate_pipeline,
+        candidates=candidates,
+        config=config,
+        previous_trading_day=previous_trading_day,
+        input_hashes=input_hashes,
+    )
+    _write_json(output_path, payload, "event_research.schema.json")
+    return 0
+
+
+def _validate_event_research(
+    event_research_path: Path,
+    candidate_pipeline_path: Path,
+    candidates_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path | None,
+) -> int:
+    event_research = load_json_document(event_research_path, "event_research.schema.json")
     candidate_pipeline = load_json_document(candidate_pipeline_path, "candidate_pipeline.schema.json")
     candidates = load_json_document(candidates_path, "candidates.schema.json")
     source_payload = load_json_document(sources_path, "sources.schema.json")
-    research_window = load_json_document(research_window_path, "research_window.schema.json")
+    config = load_strategy_config(config_path)
+    validate_event_research_inputs(
+        candidate_pipeline=candidate_pipeline,
+        candidates=candidates,
+        config=config,
+    )
+    validate_event_research_contract(event_research=event_research, source_payload=source_payload)
+    _emit_json({"status": "VALID"}, output_path)
+    return 0
+
+
+def _build_event_gate(
+    event_research_path: Path,
+    candidate_pipeline_path: Path,
+    candidates_path: Path,
+    sources_path: Path,
+    config_path: Path,
+    output_path: Path,
+) -> int:
+    event_research = load_json_document(event_research_path, "event_research.schema.json")
+    candidate_pipeline = load_json_document(candidate_pipeline_path, "candidate_pipeline.schema.json")
+    candidates = load_json_document(candidates_path, "candidates.schema.json")
+    source_payload = load_json_document(sources_path, "sources.schema.json")
     config = load_strategy_config(config_path)
     input_hashes = {
-        "market_research_sha256": _sha256_bytes(market_research_path.read_bytes()),
+        "event_research_sha256": _sha256_bytes(event_research_path.read_bytes()),
         "candidate_pipeline_sha256": _sha256_bytes(candidate_pipeline_path.read_bytes()),
         "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
         "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
-        "research_window_sha256": _sha256_bytes(research_window_path.read_bytes()),
         "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
     }
     validate_event_gate_inputs(
-        market_research=market_research,
+        event_research=event_research,
         candidate_pipeline=candidate_pipeline,
         candidates=candidates,
         source_payload=source_payload,
-        research_window=research_window,
         config=config,
         input_hashes=input_hashes,
     )
     payload = build_event_gate(
-        market_research=market_research,
+        event_research=event_research,
         candidate_pipeline=candidate_pipeline,
         candidates=candidates,
         source_payload=source_payload,
-        research_window=research_window,
         config=config,
         input_hashes=input_hashes,
     )
     validate_json_document(payload, "event_gate.schema.json")
+    validate_event_gate_output_contract(event_gate=payload, event_research=event_research)
     _write_json(output_path, payload, "event_gate.schema.json")
     return 0
 
