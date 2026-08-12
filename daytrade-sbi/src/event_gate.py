@@ -778,9 +778,10 @@ def validate_event_gate_integrity(
     internal consistency.
 
     This is a *read-only validator*: it recomputes the derivations that
-    ``build_event_gate()`` performs (per-candidate ``gate_status`` from
-    ``rule_evaluations``, ``summary`` counts, ``event_gate_complete``,
-    ``ranking_block_reasons`` and ``ranking_ready``) from the recorded
+    ``build_event_gate()`` performs (per-candidate ``gate_status`` and
+    ``reason_codes`` from ``rule_evaluations``, ``summary`` counts,
+    ``event_gate_complete``, ``ranking_block_reasons`` and
+    ``ranking_ready``) from the recorded
     candidate/rule data and reports every field that does not match what the
     artifact claims. It never changes what Event Gate itself computes or
     writes.

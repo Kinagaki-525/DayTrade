@@ -14,7 +14,7 @@ from src.config import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v4_config_keeps_screening_rules_disabled_without_thresholds():
+def test_current_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
     assert config["config_schema_version"] == 5
