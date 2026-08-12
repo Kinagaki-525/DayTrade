@@ -253,6 +253,7 @@ def validate_ranking_preconditions(
     _check_sources_uniqueness(source_payload)
     _check_market_data_uniqueness(market_data)
 
+    from src.ranking import pass_candidate_tickers
     from src.source_matrix import validate_source_matrix
 
     result = validate_source_matrix(source_matrix)
@@ -285,11 +286,7 @@ def validate_ranking_preconditions(
             "RANKING_SOURCE_LEDGER_INVALID: " + "; ".join(ledger_result.errors)
         )
 
-    pass_tickers = {
-        str(c.get("ticker")).strip()
-        for c in event_gate.get("candidates", [])
-        if c.get("gate_status") == "PASS"
-    }
+    pass_tickers = set(pass_candidate_tickers(event_gate))
     for record in records:
         if record.ticker not in pass_tickers:
             continue
@@ -354,111 +351,20 @@ def _verify_event_gate_internal_consistency(
     own top-level flags (event_gate_complete / ranking_ready /
     ranking_block_reasons / summary counts) are trusted.
 
-    This never changes what event_gate.py itself computes or writes -- it
-    only recomputes the same derivations independently, from the recorded
-    candidates/rule_evaluations, and hard-errors on any mismatch. Reuses
-    event_gate.py's own pure helper functions rather than reimplementing
-    the rule-aggregation / summary / block-reason logic.
+    The recomputation itself lives in event_gate.py as the public, pure
+    validator ``validate_event_gate_integrity()`` -- next to the logic it
+    mirrors -- so Ranking never reaches into event_gate.py's private
+    helpers and never reimplements the rule-aggregation / summary /
+    block-reason derivations. This only maps its findings onto Ranking's
+    RANKING_* error-code namespace.
     """
-    from src import event_gate as event_gate_module
+    from src.event_gate import validate_event_gate_integrity
 
-    candidates = event_gate.get("candidates", [])
-    if not isinstance(candidates, list):
-        raise ValueError("RANKING_EVENT_GATE_CANDIDATES_INVALID: event_gate.candidates must be a list")
-
-    all_tickers: list[str] = []
-    for candidate in candidates:
-        ticker = candidate.get("ticker")
-        if not isinstance(ticker, str):
-            raise ValueError("RANKING_EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker is not a string")
-        if ticker != ticker.strip():
-            raise ValueError(
-                f"RANKING_EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker has leading/trailing "
-                f"whitespace: {ticker!r}"
-            )
-        all_tickers.append(ticker)
-
-    # Uniqueness across ALL statuses combined (PASS/REJECT/DATA_UNAVAILABLE),
-    # not just within PASS.
-    if len(all_tickers) != len(set(all_tickers)):
+    errors = validate_event_gate_integrity(event_gate, source_payload)
+    if errors:
         raise ValueError(
-            "RANKING_EVENT_GATE_DUPLICATE_TICKER: duplicate candidate ticker across event_gate.candidates "
-            "(all statuses combined)"
+            "; ".join(f"RANKING_{error}" for error in errors)
         )
-
-    # event_gate_input_tickers must match the candidate ticker set exactly.
-    input_tickers = set(event_gate.get("event_gate_input_tickers", []))
-    if set(all_tickers) != input_tickers:
-        raise ValueError(
-            "RANKING_EVENT_GATE_INPUT_TICKER_MISMATCH: event_gate.event_gate_input_tickers does not match "
-            "the set of tickers across event_gate.candidates"
-        )
-
-    # Recompute each candidate's gate_status from its rule_evaluations using
-    # event_gate.py's own aggregation logic and confirm it equals the
-    # recorded gate_status.
-    for candidate in candidates:
-        rule_evaluations = candidate.get("rule_evaluations", [])
-        if not isinstance(rule_evaluations, list):
-            raise ValueError(
-                f"RANKING_EVENT_GATE_RULE_EVALUATIONS_INVALID: {candidate.get('ticker')}: "
-                "rule_evaluations must be a list"
-            )
-        recomputed_status = event_gate_module._candidate_gate_status(
-            [_RuleResultView(rule.get("result")) for rule in rule_evaluations]
-        )
-        if recomputed_status != candidate.get("gate_status"):
-            raise ValueError(
-                f"RANKING_EVENT_GATE_STATUS_MISMATCH: {candidate.get('ticker')}: recorded gate_status="
-                f"{candidate.get('gate_status')!r} does not match recomputed gate_status "
-                f"{recomputed_status!r} from rule_evaluations"
-            )
-
-    # Recompute PASS/REJECT/DATA_UNAVAILABLE + rule counts from the
-    # candidate list (using the now-verified gate_status/rule_evaluations)
-    # and confirm they match event_gate.summary exactly.
-    recomputed_summary = event_gate_module._build_summary(candidates)
-    if recomputed_summary != event_gate.get("summary"):
-        raise ValueError(
-            "RANKING_EVENT_GATE_SUMMARY_MISMATCH: event_gate.summary does not match recomputed "
-            "candidate status counts"
-        )
-
-    # Recompute event_gate_complete using event_gate.py's own logic.
-    recomputed_complete = event_gate_module._event_gate_complete(event_gate, source_payload)
-    if recomputed_complete != event_gate.get("event_gate_complete"):
-        raise ValueError(
-            "RANKING_EVENT_GATE_COMPLETE_MISMATCH: event_gate.event_gate_complete does not match "
-            "recomputed value"
-        )
-
-    # Recompute ranking_block_reasons / ranking_ready using event_gate.py's
-    # own logic, applied to the recomputed (not merely recorded) inputs.
-    recomputed_block_reasons = event_gate_module._ranking_block_reasons(
-        {"event_gate_complete": recomputed_complete, "summary": recomputed_summary}
-    )
-    if recomputed_block_reasons != event_gate.get("ranking_block_reasons"):
-        raise ValueError(
-            "RANKING_EVENT_GATE_BLOCK_REASONS_MISMATCH: event_gate.ranking_block_reasons does not match "
-            "recomputed value"
-        )
-    recomputed_ready = recomputed_complete is True and not recomputed_block_reasons
-    if recomputed_ready != event_gate.get("ranking_ready"):
-        raise ValueError(
-            "RANKING_EVENT_GATE_READY_MISMATCH: event_gate.ranking_ready does not match recomputed value"
-        )
-
-
-class _RuleResultView:
-    """Minimal attribute-carrying adapter so event_gate.py's
-    _candidate_gate_status() (which expects EventRuleEvaluation dataclass
-    instances) can be reused against plain rule_evaluations dicts loaded
-    from event_gate.json, without reimplementing its aggregation logic."""
-
-    __slots__ = ("result",)
-
-    def __init__(self, result: Any) -> None:
-        self.result = result
 
 
 def validate_ranking_output_contract(
@@ -470,7 +376,7 @@ def validate_ranking_output_contract(
     source_payload: dict[str, Any],
     config: dict[str, Any],
 ) -> None:
-    from src.ranking import build_ranking
+    from src.ranking import build_ranking, pass_candidate_tickers
 
     if ranking.get("target_date") != event_gate.get("target_date"):
         raise ValueError("RANKING_TARGET_DATE_MISMATCH: ranking target_date does not match event_gate")
@@ -481,12 +387,13 @@ def validate_ranking_output_contract(
     if ranking.get("ranking_status") not in ("COMPLETE", "DATA_UNAVAILABLE"):
         raise ValueError("RANKING_STATUS_INVALID: ranking_status must be COMPLETE or DATA_UNAVAILABLE")
 
-    pass_tickers = {
-        str(c.get("ticker")).strip()
-        for c in event_gate.get("candidates", [])
-        if c.get("gate_status") == "PASS"
-    }
-    ranking_tickers = {c.get("ticker") for c in ranking.get("candidates", [])}
+    pass_tickers = set(pass_candidate_tickers(event_gate))
+    ranking_ticker_list = [c.get("ticker") for c in ranking.get("candidates", [])]
+    ranking_tickers = set(ranking_ticker_list)
+    if len(ranking_ticker_list) != len(ranking_tickers):
+        raise ValueError(
+            "RANKING_DUPLICATE_CANDIDATE_TICKER: ranking.candidates contains a duplicate ticker"
+        )
     if pass_tickers != ranking_tickers:
         raise ValueError(
             "RANKING_CANDIDATE_SET_MISMATCH: ranking.candidates does not match event_gate PASS candidates"

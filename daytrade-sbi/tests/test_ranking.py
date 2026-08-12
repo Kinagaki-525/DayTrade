@@ -1674,3 +1674,223 @@ def test_cli_build_ranking_missing_source_page_file_is_rejected(tmp_path):
     result, output_path = None, None
     with pytest.raises(ValueError, match="RANKING_SOURCE_LEDGER_INVALID"):
         result, output_path = _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+# --- Mutation coverage: turnover attempt contract fields ---------------------
+
+
+@pytest.mark.parametrize(
+    ("field_name", "corrupt_value"),
+    [
+        ("coverage_status", "PARTIAL"),
+        ("covered_dates", ["2026-08-06"]),
+        ("covered_dates", [PREVIOUS_TRADING_DAY, "2026-08-06"]),
+        ("result_count", 2),
+        ("candidate_code", "9999"),
+        ("target_date", "2026-08-11"),
+    ],
+)
+def test_turnover_attempt_field_corruption_is_hard_error(field_name, corrupt_value):
+    """Mutation check: corrupting any single Turnover Source Attempt contract
+    field must fail the run, never be silently tolerated."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9101", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["source_attempts"][0][field_name] = corrupt_value
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "corrupt_value"),
+    [
+        ("field_name", "volume"),
+        ("trading_date", "2026-08-06"),
+        ("raw_unit", "YEN"),
+        ("source_ref", None),
+        ("source_ref", ""),
+        ("source_ref", "src-does-not-exist"),
+        ("canonical_value_yen", "10,000,000"),
+        ("canonical_value_yen", 10000000),
+    ],
+)
+def test_turnover_attempt_value_field_corruption_is_hard_error(field_name, corrupt_value):
+    """Mutation check for the single `values` item of a FOUND turnover
+    attempt, including its source_ref (the provenance link Ranking records)."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9102", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    source_payload["source_attempts"][0]["values"][0][field_name] = corrupt_value
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_turnover_attempt_multiple_values_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9103", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    values = source_payload["source_attempts"][0]["values"]
+    values.append(dict(values[0]))
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_ATTEMPT_CONTRACT_VIOLATION"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_candidate_turnover_source_refs_missing_canonical_ref_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9104", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"][0]["features"]["turnover"]["source_refs"] = ["src-other"]
+    with pytest.raises(RankingHardError, match="RANKING_TURNOVER_CANDIDATE_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Mutation coverage: order_plan, every field ------------------------------
+
+
+def test_order_plan_recomputation_covers_every_order_plan_field():
+    """The set of order_plan fields Ranking re-verifies must be exactly the
+    OrderPlan dataclass field set -- no field may escape recomputation."""
+    import dataclasses
+
+    from src.strategy import OrderPlan
+
+    plan = build_order_plan("400", "1", config=CONFIG)
+    assert set(plan.as_dict()) == {field.name for field in dataclasses.fields(OrderPlan)}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "corrupt_value"),
+    [
+        ("strategy_version", "v2"),
+        ("validation_status", "validated"),
+        ("entry_trigger", "999"),
+        ("entry_limit", "999"),
+        ("affordable", False),
+        ("estimated_purchase_amount", "1"),
+        ("expected_loss_yen", "1"),
+        ("shares", 1),
+        ("take_profit_price", "1"),
+        ("stop_loss_price", "1"),
+    ],
+)
+def test_order_plan_field_corruption_is_hard_error(field_name, corrupt_value):
+    """Mutation check: corrupting any single stored order_plan field must be
+    caught by the full recomputation via build_order_plan()."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9201", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    stored = candidates["candidates"][0]["order_plan"]
+    assert stored[field_name] != corrupt_value
+    stored[field_name] = corrupt_value
+    with pytest.raises(RankingHardError, match="RANKING_ORDER_PLAN_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_order_plan_missing_field_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9202", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    del candidates["candidates"][0]["order_plan"]["entry_limit"]
+    with pytest.raises(RankingHardError, match="RANKING_ORDER_PLAN_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_order_plan_unknown_extra_field_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9203", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    candidates["candidates"][0]["order_plan"]["score"] = "1"
+    with pytest.raises(RankingHardError, match="RANKING_ORDER_PLAN_MISMATCH"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Mutation coverage: tick_size provenance ---------------------------------
+
+
+def test_duplicate_tick_size_provenance_entries_are_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9301", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    provenance = market_data["records"][0]["field_provenance"][0]
+    market_data["records"][0]["field_provenance"].append(dict(provenance))
+    with pytest.raises(RankingHardError, match="RANKING_TICK_SIZE_PROVENANCE_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_tick_size_provenance_unknown_source_ref_is_hard_error():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9302", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    market_data["records"][0]["field_provenance"][0]["source_refs"] = ["tick-unknown"]
+    with pytest.raises(RankingHardError, match="RANKING_TICK_SIZE_PROVENANCE_INVALID"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+# --- Mutation coverage: Ranking universe ticker hygiene ----------------------
+
+
+@pytest.mark.parametrize("ticker", [" 9401", "9401 ", "", None, 9401])
+def test_build_ranking_rejects_malformed_event_gate_pass_ticker(ticker):
+    """build_ranking() is a public pure function: it must reject a malformed
+    event_gate PASS ticker outright rather than silently str()/strip()-ing it
+    into the ranking universe."""
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9401", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"][0]["ticker"] = ticker
+    with pytest.raises(RankingHardError, match="RANKING_TICKER_MALFORMED"):
+        _run(event_gate, candidates, market_data, source_payload)
+
+
+def test_output_contract_rejects_duplicate_ranking_candidate_ticker():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "9402", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    payload = _run(event_gate, candidates, market_data, source_payload)
+    payload["candidates"].append(copy.deepcopy(payload["candidates"][0]))
+    with pytest.raises(ValueError, match="RANKING_DUPLICATE_CANDIDATE_TICKER"):
+        validate_ranking_output_contract(
+            ranking=payload,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+# --- Event Gate integrity validator (public, pure) ---------------------------
+
+
+def test_validate_event_gate_integrity_accepts_consistent_payload():
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate, _candidates, _market_data, sources = _build_full_case(
+        [{"ticker": "9501", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    assert validate_event_gate_integrity(event_gate, sources) == []
+
+
+def test_validate_event_gate_integrity_is_read_only():
+    """The validator must not mutate the artifacts it inspects."""
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate, _candidates, _market_data, sources = _build_full_case(
+        [{"ticker": "9502", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    before_event_gate = copy.deepcopy(event_gate)
+    before_sources = copy.deepcopy(sources)
+    validate_event_gate_integrity(event_gate, sources)
+    assert event_gate == before_event_gate
+    assert sources == before_sources
+
+
+def test_validate_event_gate_integrity_reports_summary_mismatch():
+    from src.event_gate import validate_event_gate_integrity
+
+    event_gate, _candidates, _market_data, sources = _build_full_case(
+        [{"ticker": "9503", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["summary"]["pass_count"] = 5
+    errors = validate_event_gate_integrity(event_gate, sources)
+    assert any(error.startswith("EVENT_GATE_SUMMARY_MISMATCH") for error in errors)

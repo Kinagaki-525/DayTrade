@@ -12,7 +12,7 @@
   "ranking_complete": true,
   "reason_codes": [],
   "input_hashes": {
-    "event_gate_sha256": "631c00cbbe03f33d5d6480336a413bbb5dbda7bd40d8f68f1a6db712c39724c6",
+    "event_gate_sha256": "c8b51af02b6a33cdcbd7d2487e10af19e13aa7dee04398bc288a18d1d592b796",
     "candidates_sha256": "10c1425de7c8e5f559593589ecb52a3bc19a51326b1aab5d581c7f950444d5d6",
     "market_data_sha256": "8fddba7e6abfc7847100ba4a25e242d8c39b564afaad89c25964587730d4afdc",
     "sources_sha256": "6ca1ab10c42cf01394ee8b62bef123b29e2afcb93108ecc63d9b283249309870",

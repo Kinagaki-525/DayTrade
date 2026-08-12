@@ -28,6 +28,12 @@ def test_ranking_v1_regression_fixture_hashes_are_real_not_placeholders():
     event_gate = json.loads((FIXTURE_DIR / "event_gate.json").read_text(encoding="utf-8"))
     ranking = json.loads((FIXTURE_DIR / "ranking.json").read_text(encoding="utf-8"))
 
+    assert event_gate["input_hashes"]["event_research_sha256"] == _sha256(
+        FIXTURE_DIR / "event_research.json"
+    )
+    assert event_gate["input_hashes"]["candidate_pipeline_sha256"] == _sha256(
+        FIXTURE_DIR / "candidate_pipeline.json"
+    )
     assert event_gate["input_hashes"]["candidates_sha256"] == _sha256(FIXTURE_DIR / "candidates.json")
     assert event_gate["input_hashes"]["sources_sha256"] == _sha256(FIXTURE_DIR / "sources.json")
     assert event_gate["input_hashes"]["strategy_snapshot_sha256"] == _sha256(
@@ -98,3 +104,31 @@ def test_ranking_v1_regression_fixture_build_ranking_reproduces_complete():
         source_payload=source_payload,
         config=config,
     )
+
+
+def test_ranking_v1_regression_fixture_has_no_placeholder_hashes():
+    """metadata.yaml claims every recorded hash is genuine. Guard that claim
+    directly: no recorded sha256 in the fixture may be a repeated-character
+    placeholder such as '1111...' or 'aaaa...'."""
+    for name in ("event_gate.json", "ranking.json", "event_research.json"):
+        payload = json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
+        for key, value in (payload.get("input_hashes") or {}).items():
+            assert len(set(value)) > 1, f"{name}.input_hashes.{key} is a placeholder hash"
+
+
+def test_ranking_v1_regression_fixture_source_matrix_hash_is_real():
+    ranking = json.loads((FIXTURE_DIR / "ranking.json").read_text(encoding="utf-8"))
+    assert ranking["input_hashes"]["source_matrix_sha256"] == _sha256(
+        Path("config/source_matrix.yaml")
+    )
+
+
+def test_ranking_v1_regression_fixture_contains_only_documented_artifacts():
+    """Every file shipped in the fixture must be classified in metadata.yaml,
+    so an unused artifact cannot silently accumulate."""
+    metadata = (
+        Path("regression/2026-08-12-ranking-v1-complete/metadata.yaml")
+        .read_text(encoding="utf-8")
+    )
+    for path in sorted(FIXTURE_DIR.iterdir()):
+        assert f"runs/2026-08-12/{path.name}:" in metadata, f"{path.name} is not classified"

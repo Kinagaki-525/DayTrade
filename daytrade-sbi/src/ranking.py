@@ -79,6 +79,39 @@ def canonical_turnover_yen(raw_value: Any) -> Decimal:
     return parse_raw_turnover_thousand_yen(raw_value) * Decimal(1000)
 
 
+def pass_candidate_tickers(event_gate: dict[str, Any]) -> list[str]:
+    """The Ranking universe: exactly the Event Gate ``PASS`` tickers.
+
+    Tickers are validated, never normalized: a non-string or
+    whitespace-padded ticker is a hard error rather than something silently
+    ``str()``/``strip()``-coerced into the ranking universe, so a malformed
+    event_gate.json can never be laundered into a plausible-looking ranking
+    input. ``REJECT``/``DATA_UNAVAILABLE`` candidates are excluded.
+    """
+    pass_tickers: list[str] = []
+    for candidate in event_gate.get("candidates", []):
+        if not isinstance(candidate, dict):
+            raise _hard_error(
+                "RANKING_EVENT_GATE_CANDIDATES_INVALID",
+                "every event_gate candidate must be an object",
+            )
+        if candidate.get("gate_status") != "PASS":
+            continue
+        ticker = candidate.get("ticker")
+        if not isinstance(ticker, str) or not ticker or ticker != ticker.strip():
+            raise _hard_error(
+                "RANKING_TICKER_MALFORMED",
+                f"event_gate PASS candidate ticker is not a canonical string: {ticker!r}",
+            )
+        pass_tickers.append(ticker)
+    if len(pass_tickers) != len(set(pass_tickers)):
+        raise _hard_error(
+            "RANKING_DUPLICATE_CANDIDATE_TICKER",
+            "duplicate PASS ticker in event_gate.candidates",
+        )
+    return pass_tickers
+
+
 @dataclass(frozen=True)
 class _CandidateInput:
     ticker: str
@@ -150,16 +183,7 @@ def _collect_ranking_inputs(
             )
         market_by_ticker[ticker] = record
 
-    pass_tickers = [
-        str(c.get("ticker")).strip()
-        for c in event_gate.get("candidates", [])
-        if c.get("gate_status") == "PASS"
-    ]
-    if len(pass_tickers) != len(set(pass_tickers)):
-        raise _hard_error(
-            "RANKING_DUPLICATE_CANDIDATE_TICKER",
-            "duplicate PASS ticker in event_gate.candidates",
-        )
+    pass_tickers = pass_candidate_tickers(event_gate)
 
     inputs: list[_CandidateInput] = []
     for ticker in sorted(pass_tickers):
@@ -281,6 +305,11 @@ def _tick_size_source_refs(ticker: str, market_record: dict[str, Any]) -> tuple[
             "RANKING_TICK_SIZE_PROVENANCE_MISSING",
             f"{ticker}: market_data.json field_provenance for tick_size is missing",
         )
+    if len(provenances) > 1:
+        raise _hard_error(
+            "RANKING_TICK_SIZE_PROVENANCE_INVALID",
+            f"{ticker}: market_data.json has more than one field_provenance entry for tick_size",
+        )
     provenance = provenances[0]
     if provenance.get("status") != "VERIFIED":
         raise _hard_error(
@@ -331,27 +360,27 @@ def _recompute_order_plan(
 
     stored = candidate.get("order_plan") or {}
     recomputed_dict = recomputed.as_dict()
-    for field_name in (
-        "strategy_version",
-        "validation_status",
-        "entry_trigger",
-        "entry_limit",
-        "affordable",
-        "estimated_purchase_amount",
-        "expected_loss_yen",
-        "shares",
-        "take_profit_price",
-        "stop_loss_price",
-    ):
+    # Full-field recomputation: the compared field set is derived from the
+    # recomputed OrderPlan itself, so a future OrderPlan field can never
+    # silently escape verification. Extra stored fields are rejected too.
+    extra = set(stored) - set(recomputed_dict)
+    if extra:
+        raise _hard_error(
+            "RANKING_ORDER_PLAN_MISMATCH",
+            f"{ticker}: order_plan contains unknown field(s): {', '.join(sorted(extra))}",
+        )
+    for field_name in sorted(recomputed_dict):
         stored_value = stored.get(field_name)
         recomputed_value = recomputed_dict.get(field_name)
-        if field_name in ("strategy_version", "validation_status", "affordable", "shares"):
-            equal = stored_value == recomputed_value
-        else:
+        if isinstance(recomputed_value, Decimal):
+            # Numeric fields are serialized as decimal strings: compare by
+            # exact Decimal value, never by float or string identity.
             try:
-                equal = Decimal(str(stored_value)) == Decimal(str(recomputed_value))
+                equal = Decimal(str(stored_value)) == recomputed_value
             except Exception:  # noqa: BLE001
                 equal = False
+        else:
+            equal = stored_value == recomputed_value
         if not equal:
             raise _hard_error(
                 "RANKING_ORDER_PLAN_MISMATCH",
@@ -529,11 +558,6 @@ def _resolve_turnover(
         raise _hard_error(
             "RANKING_TURNOVER_CANONICAL_MISMATCH",
             f"{ticker}: recomputed canonical turnover does not equal stored canonical_value_yen",
-        )
-    if canonical < 0:
-        raise _hard_error(
-            "RANKING_TURNOVER_CANONICAL_MISMATCH",
-            f"{ticker}: turnover canonical value must not be negative",
         )
 
     source_ref = item.get("source_ref")

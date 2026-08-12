@@ -7,7 +7,55 @@ purpose: >
   Synthetic-but-real regression fixture generated with the actual
   build_event_gate()/build_ranking() functions (not hand-authored) to
   demonstrate a self-consistent Event Gate -> Ranking COMPLETE chain end to
-  end, with genuine sha256 hashes of the artifact bytes recorded in
-  event_gate.json/ranking.json input_hashes (no placeholder hashes).
+  end. Every sha256 recorded in event_gate.json/ranking.json input_hashes is
+  the genuine hash of the sibling artifact bytes (or of
+  config/source_matrix.yaml); there are no placeholder hashes, and
+  tests/test_ranking_regression.py asserts this.
   Ranking COMPLETE never implies TRADE-eligibility -- no recommendation.json
   is included, since Selection/rank1->TRADE is intentionally unimplemented.
+
+# Why each artifact is kept, so the set is explicit rather than implicit.
+# Classification:
+#   DIRECT INPUT        - passed to build-ranking / validate_ranking_*
+#   EXPECTED OUTPUT     - the recorded artifact the rebuild is compared to
+#   HASH CHAIN REQUIRED - not read by Ranking, but its bytes are the referent
+#                         of a sha256 recorded in an upstream artifact, so
+#                         removing it would leave a dangling hash
+artifacts:
+  runs/2026-08-12/event_gate.json:
+    classification: DIRECT INPUT
+    note: >
+      Ranking's primary precondition input. Its own input_hashes are
+      re-verified against the candidates/sources/strategy-snapshot bytes fed
+      to build-ranking (hash chain).
+  runs/2026-08-12/candidates.json:
+    classification: DIRECT INPUT
+  runs/2026-08-12/market_data.json:
+    classification: DIRECT INPUT
+  runs/2026-08-12/sources.json:
+    classification: DIRECT INPUT
+    note: >
+      Also the Source Ledger validated with source_base_dir pointing at this
+      run directory.
+  runs/2026-08-12/strategy_snapshot.yaml:
+    classification: DIRECT INPUT
+    note: config_schema_version 5 (includes the ranking block).
+  runs/2026-08-12/ranking.json:
+    classification: EXPECTED OUTPUT
+    note: >
+      Rebuilt by build_ranking() and compared field-for-field except
+      generated_at.
+  runs/2026-08-12/event_research.json:
+    classification: HASH CHAIN REQUIRED
+    note: >
+      Referent of event_gate.json input_hashes.event_research_sha256 (and it
+      records candidate_pipeline_sha256 in turn). Ranking never reads it.
+  runs/2026-08-12/candidate_pipeline.json:
+    classification: HASH CHAIN REQUIRED
+    note: >
+      Referent of event_gate.json input_hashes.candidate_pipeline_sha256 and
+      of event_research.json input_hashes.candidate_pipeline_sha256. Ranking
+      never reads it. Kept as bytes only; like the other regression fixtures
+      in this repository it predates the current candidate_pipeline schema
+      and is intentionally not re-generated here (that is Pipeline scope, not
+      Ranking scope).

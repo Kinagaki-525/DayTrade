@@ -768,3 +768,133 @@ def _ranking_block_reasons(payload: dict[str, Any]) -> list[str]:
     if summary.get("pass_count", 0) == 0:
         reasons.append("NO_EVENT_GATE_PASS_CANDIDATE")
     return [reason for reason in RANKING_BLOCK_REASON_ORDER if reason in reasons]
+
+
+def validate_event_gate_integrity(
+    payload: dict[str, Any],
+    source_payload: dict[str, Any],
+) -> list[str]:
+    """Pure, public re-verification of an already-written event_gate.json's
+    internal consistency.
+
+    This is a *read-only validator*: it recomputes the derivations that
+    ``build_event_gate()`` performs (per-candidate ``gate_status`` from
+    ``rule_evaluations``, ``summary`` counts, ``event_gate_complete``,
+    ``ranking_block_reasons`` and ``ranking_ready``) from the recorded
+    candidate/rule data and reports every field that does not match what the
+    artifact claims. It never changes what Event Gate itself computes or
+    writes.
+
+    It lives here, next to the logic it mirrors, so downstream consumers
+    (Ranking) can independently re-verify Event Gate's own flags before
+    trusting them without reaching into this module's private helpers.
+
+    Returns a list of ``"CODE: message"`` strings; an empty list means the
+    artifact is internally consistent. Callers map ``CODE`` onto their own
+    error-code namespace (Ranking prefixes each with ``RANKING_``).
+    """
+    errors: list[str] = []
+
+    candidates = payload.get("candidates", [])
+    if not isinstance(candidates, list):
+        return ["EVENT_GATE_CANDIDATES_INVALID: event_gate.candidates must be a list"]
+
+    all_tickers: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return ["EVENT_GATE_CANDIDATES_INVALID: every event_gate candidate must be an object"]
+        ticker = candidate.get("ticker")
+        if not isinstance(ticker, str):
+            errors.append(
+                "EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker is not a string"
+            )
+            continue
+        if ticker != ticker.strip():
+            errors.append(
+                "EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker has leading/trailing "
+                f"whitespace: {ticker!r}"
+            )
+            continue
+        all_tickers.append(ticker)
+    if errors:
+        return errors
+
+    # Uniqueness across ALL statuses combined (PASS/REJECT/DATA_UNAVAILABLE),
+    # not just within PASS.
+    if len(all_tickers) != len(set(all_tickers)):
+        errors.append(
+            "EVENT_GATE_DUPLICATE_TICKER: duplicate candidate ticker across event_gate.candidates "
+            "(all statuses combined)"
+        )
+
+    # event_gate_input_tickers must match the candidate ticker set exactly.
+    if set(all_tickers) != set(payload.get("event_gate_input_tickers", [])):
+        errors.append(
+            "EVENT_GATE_INPUT_TICKER_MISMATCH: event_gate.event_gate_input_tickers does not match "
+            "the set of tickers across event_gate.candidates"
+        )
+
+    # Recompute each candidate's gate_status from its rule_evaluations using
+    # the same aggregation build_event_gate() applies.
+    for candidate in candidates:
+        rule_evaluations = candidate.get("rule_evaluations", [])
+        if not isinstance(rule_evaluations, list) or not all(
+            isinstance(rule, dict) for rule in rule_evaluations
+        ):
+            errors.append(
+                f"EVENT_GATE_RULE_EVALUATIONS_INVALID: {candidate.get('ticker')}: "
+                "rule_evaluations must be a list of objects"
+            )
+            continue
+        recomputed_status = _candidate_gate_status(
+            [_RuleResultView(rule.get("result")) for rule in rule_evaluations]
+        )
+        if recomputed_status != candidate.get("gate_status"):
+            errors.append(
+                f"EVENT_GATE_STATUS_MISMATCH: {candidate.get('ticker')}: recorded gate_status="
+                f"{candidate.get('gate_status')!r} does not match recomputed gate_status "
+                f"{recomputed_status!r} from rule_evaluations"
+            )
+    if errors:
+        return errors
+
+    recomputed_summary = _build_summary(candidates)
+    if recomputed_summary != payload.get("summary"):
+        errors.append(
+            "EVENT_GATE_SUMMARY_MISMATCH: event_gate.summary does not match recomputed "
+            "candidate status counts"
+        )
+
+    recomputed_complete = _event_gate_complete(payload, source_payload)
+    if recomputed_complete != payload.get("event_gate_complete"):
+        errors.append(
+            "EVENT_GATE_COMPLETE_MISMATCH: event_gate.event_gate_complete does not match "
+            "recomputed value"
+        )
+
+    recomputed_block_reasons = _ranking_block_reasons(
+        {"event_gate_complete": recomputed_complete, "summary": recomputed_summary}
+    )
+    if recomputed_block_reasons != payload.get("ranking_block_reasons"):
+        errors.append(
+            "EVENT_GATE_BLOCK_REASONS_MISMATCH: event_gate.ranking_block_reasons does not match "
+            "recomputed value"
+        )
+    recomputed_ready = recomputed_complete is True and not recomputed_block_reasons
+    if recomputed_ready != payload.get("ranking_ready"):
+        errors.append(
+            "EVENT_GATE_READY_MISMATCH: event_gate.ranking_ready does not match recomputed value"
+        )
+    return errors
+
+
+class _RuleResultView:
+    """Minimal attribute-carrying adapter so ``_candidate_gate_status()``
+    (which expects :class:`EventRuleEvaluation` instances) can be reused
+    against the plain ``rule_evaluations`` dicts loaded back from
+    event_gate.json, without reimplementing its aggregation logic."""
+
+    __slots__ = ("result",)
+
+    def __init__(self, result: Any) -> None:
+        self.result = result

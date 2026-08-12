@@ -32,13 +32,12 @@ from src.contracts import (
     validate_recommendation_candidate_link,
     validate_recommendation_pipeline_link,
     validate_recommendation_risk_link,
-    validate_recommendation_sources,
-    validate_research_report_inputs,
     validate_ranking_output_contract,
     validate_ranking_preconditions,
+    validate_recommendation_sources,
+    validate_research_report_inputs,
     validate_run_artifact_allowlist,
 )
-from src.ranking import build_ranking
 from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
 from src.market import (
@@ -51,6 +50,7 @@ from src.market import (
 )
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
+from src.ranking import build_ranking
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
 from src.event_gate import build_event_gate
@@ -186,11 +186,10 @@ def build_parser() -> argparse.ArgumentParser:
     ranking_parser.add_argument("--candidates", required=True, type=Path)
     ranking_parser.add_argument("--market-data", required=True, type=Path)
     ranking_parser.add_argument("--sources", required=True, type=Path)
-    ranking_parser.add_argument(
-        "--source-matrix",
-        type=Path,
-        default=DEFAULT_SOURCE_MATRIX_PATH,
-    )
+    # Every build-ranking input is explicit: no implicit config or
+    # source-matrix fallback, so the recorded input_hashes always describe
+    # files the operator named.
+    ranking_parser.add_argument("--source-matrix", required=True, type=Path)
     ranking_parser.add_argument("--config", required=True, type=Path)
     ranking_parser.add_argument("--output", required=True, type=Path)
 

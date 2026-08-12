@@ -55,6 +55,7 @@
     "ranking_complete": {"type": "boolean"},
     "reason_codes": {
       "type": "array",
+      "uniqueItems": true,
       "items": {
         "enum": [
           "TURNOVER_SOURCE_NOT_FOUND",
@@ -68,6 +69,7 @@
     },
     "input_candidate_tickers": {
       "type": "array",
+      "uniqueItems": true,
       "items": {"type": "string", "minLength": 1}
     },
     "summary": {
@@ -121,6 +123,7 @@
         "input_status": {"enum": ["VALID", "DATA_UNAVAILABLE"]},
         "reason_codes": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "enum": [
               "TURNOVER_SOURCE_NOT_FOUND",
@@ -144,6 +147,7 @@
             "turnover_source_ref": {"type": ["string", "null"]},
             "tick_size_source_refs": {
               "type": "array",
+              "uniqueItems": true,
               "items": {"type": "string", "minLength": 1}
             }
           },
