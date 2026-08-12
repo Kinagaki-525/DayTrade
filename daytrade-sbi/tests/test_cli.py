@@ -1447,7 +1447,7 @@ def test_cli_help_is_importable_and_does_not_crash(argv):
     assert exc_info.value.code == 0
 
 
-def test_risk_check_requires_selection_for_v6_trade(monkeypatch):
+def test_risk_check_rejects_v1_trade_recommendation_under_v6_config(monkeypatch):
     strategy_version, config_sha256 = config_metadata()
     recommendation = {
         "schema_version": 1,
@@ -1489,7 +1489,7 @@ def test_risk_check_requires_selection_for_v6_trade(monkeypatch):
 
     monkeypatch.setattr(cli, "load_json_document", load_document)
 
-    with pytest.raises(ValueError, match="RISK_SELECTION_REQUIRED"):
+    with pytest.raises(ValueError, match="RISK_SELECTION_RECOMMENDATION_VERSION_INVALID"):
         cli.main(
             [
                 "risk-check",

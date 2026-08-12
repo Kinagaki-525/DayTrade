@@ -36,6 +36,7 @@ from src.contracts import (
     validate_recommendation_risk_link,
     validate_recommendation_sources,
     validate_research_report_inputs,
+    validate_recommendation_selection_link,
     validate_run_artifact_allowlist,
     validate_selection_output_contract,
     validate_selection_preconditions,
@@ -221,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     threshold_evaluation_parser.add_argument("--output", required=True, type=Path)
 
     selection_recommendation_parser = subparsers.add_parser("build-selection-recommendation")
+    selection_recommendation_parser.add_argument("--ranking", required=True, type=Path)
     selection_recommendation_parser.add_argument("--selection", required=True, type=Path)
     selection_recommendation_parser.add_argument("--candidates", required=True, type=Path)
     selection_recommendation_parser.add_argument("--candidate-pipeline", required=True, type=Path)
@@ -254,6 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument("--current-positions", type=int)
     risk_parser.add_argument("--trades-today", type=int)
     risk_parser.add_argument("--selection", type=Path)
+    risk_parser.add_argument("--ranking", type=Path)
 
     audit_parser = subparsers.add_parser("audit-official-ohlcv")
     audit_parser.add_argument("--market-data", required=True, type=Path)
@@ -434,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "build-selection-recommendation":
         return _build_selection_recommendation(
+            args.ranking,
             args.selection,
             args.candidates,
             args.candidate_pipeline,
@@ -465,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             args.source_matrix,
             args.market_research,
             args.selection,
+            args.ranking,
         )
     if args.command == "audit-official-ohlcv":
         return _audit_official_ohlcv(
@@ -723,6 +728,7 @@ def _risk_check(
     source_matrix_path: Path,
     market_research_path: Path | None,
     selection_path: Path | None = None,
+    ranking_path: Path | None = None,
 ) -> int:
     recommendation = load_json_document(
         recommendation_path,
@@ -750,21 +756,81 @@ def _risk_check(
         raise ValueError("recommendation config_sha256 does not match --config")
 
     # Config v6 introduces Selection as the gate between Ranking and
-    # Recommendation. For a v6 TRADE recommendation, --selection is
-    # effectively required and must show SELECTED for the same ticker: Risk
+    # Recommendation. A v6 TRADE recommendation must be Selection-driven
+    # (Recommendation v2, schema_version == 2) -- a v1 (non-Selection-driven)
+    # TRADE is never accepted under v6, regardless of whether --selection was
+    # supplied, so this check runs first and unconditionally.
+    config_schema_version = config.get("config_schema_version")
+    recommendation_schema_version = recommendation.get("schema_version")
+    if (
+        config_schema_version == 6
+        and decision == "TRADE"
+        and recommendation_schema_version != 2
+    ):
+        raise ValueError(
+            "RISK_SELECTION_RECOMMENDATION_VERSION_INVALID: a TRADE recommendation built "
+            "under a config_schema_version 6 config must be Selection-driven "
+            f"(recommendation.schema_version == 2); got schema_version={recommendation_schema_version!r}"
+        )
+
+    # For a config_schema_version 6 Selection-driven recommendation
+    # (schema_version == 2, covering both TRADE and NO_TRADE outcomes),
+    # --selection and --ranking are both required and Risk independently
+    # recomputes the real Selection trust chain: raw-byte SHA256 of
+    # ranking.json/selection.json/the config snapshot,
+    # validate_selection_preconditions, validate_selection_output_contract
+    # (recompute-and-compare against a forged selection.json), and
+    # validate_recommendation_selection_link using the ACTUAL selection.json
+    # SHA256 (never the string recorded inside recommendation.json). Risk
     # never re-derives a decision from Ranking on its own, and a Risk
     # REJECTED never falls back to any other candidate (Selection already
     # only ever considered Rank 1, and Risk cannot second-guess that).
-    if (
-        config.get("config_schema_version") == 6
-        and decision == "TRADE"
-        and selection_path is None
-    ):
-        raise ValueError(
-            "RISK_SELECTION_REQUIRED: --selection is required for a TRADE recommendation "
-            "built from a config_schema_version 6 config"
+    selection_driven_v6 = config_schema_version == 6 and recommendation_schema_version == 2
+    selection: dict[str, Any] | None = None
+    if selection_driven_v6:
+        if selection_path is None:
+            raise ValueError(
+                "RISK_SELECTION_REQUIRED: --selection is required for a config_schema_version 6 "
+                "Selection-driven (recommendation.schema_version == 2) recommendation"
+            )
+        if ranking_path is None:
+            raise ValueError(
+                "RISK_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
+                "Selection-driven (recommendation.schema_version == 2) recommendation"
+            )
+
+        ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
+        selection_sha256 = _sha256_bytes(selection_path.read_bytes())
+        strategy_snapshot_sha256 = _sha256_bytes(config_path.read_bytes())
+
+        ranking = load_json_document(ranking_path, "ranking.schema.json")
+        selection = load_json_document(selection_path, "selection.schema.json")
+
+        actual_selection_input_hashes = {
+            "ranking_sha256": ranking_sha256,
+            "strategy_snapshot_sha256": strategy_snapshot_sha256,
+        }
+        validate_selection_preconditions(
+            ranking=ranking,
+            config=config,
+            input_hashes=actual_selection_input_hashes,
         )
-    if selection_path is not None:
+        validate_selection_output_contract(
+            selection=selection,
+            ranking=ranking,
+            config=config,
+            input_hashes=actual_selection_input_hashes,
+        )
+        validate_recommendation_selection_link(
+            recommendation=recommendation,
+            selection=selection,
+            selection_sha256=selection_sha256,
+        )
+    elif selection_path is not None:
+        # Non-Selection-driven caller (pre-v6 config, or a v6 recommendation
+        # that is not schema_version 2 -- already rejected above for TRADE)
+        # still passed --selection: keep the previous, superficial
+        # cross-checks for backward compatibility.
         selection = load_json_document(selection_path, "selection.schema.json")
         if decision == "TRADE":
             if selection.get("selection_status") != "SELECTED":
@@ -1484,6 +1550,7 @@ def _evaluate_selection_thresholds(
 
 
 def _build_selection_recommendation(
+    ranking_path: Path,
     selection_path: Path,
     candidates_path: Path,
     candidate_pipeline_path: Path,
@@ -1493,12 +1560,49 @@ def _build_selection_recommendation(
     config_path: Path,
     output_path: Path,
 ) -> int:
-    from src.contracts import validate_recommendation_selection_link
     from src.selection_recommendation import build_selection_recommendation
 
+    # Fixed processing order (closes the trust-chain bypass): hash the raw
+    # bytes of ranking.json / selection.json / the strategy snapshot ->
+    # schema-validate ranking + selection -> load config -> build the ACTUAL
+    # input_hashes Selection should have used -> assert selection.input_hashes
+    # matches exactly -> validate_selection_preconditions ->
+    # validate_selection_output_contract (recomputes build_selection() and
+    # requires an exact match, catching a hand-forged selection.json whose
+    # business content does not match what Rank 1 would really produce, even
+    # if its input_hashes field was also faked to look self-consistent) ->
+    # only then proceed to the existing candidate/pipeline/market-data/
+    # sources cross-validation + build_selection_recommendation().
+    ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
     selection_sha256 = _sha256_bytes(selection_path.read_bytes())
+    strategy_snapshot_sha256 = _sha256_bytes(config_path.read_bytes())
 
+    ranking = load_json_document(ranking_path, "ranking.schema.json")
     selection = load_json_document(selection_path, "selection.schema.json")
+    config = load_strategy_config(config_path)
+
+    actual_input_hashes = {
+        "ranking_sha256": ranking_sha256,
+        "strategy_snapshot_sha256": strategy_snapshot_sha256,
+    }
+    if selection.get("input_hashes") != actual_input_hashes:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_INPUT_HASHES_MISMATCH: selection.input_hashes does not "
+            "match the actual SHA256 of the --ranking file / --config snapshot supplied here"
+        )
+
+    validate_selection_preconditions(
+        ranking=ranking,
+        config=config,
+        input_hashes=actual_input_hashes,
+    )
+    validate_selection_output_contract(
+        selection=selection,
+        ranking=ranking,
+        config=config,
+        input_hashes=actual_input_hashes,
+    )
+
     candidates = load_json_document(candidates_path, "candidates.schema.json")
     candidate_pipeline = load_json_document(
         candidate_pipeline_path, "candidate_pipeline.schema.json"
@@ -1506,7 +1610,6 @@ def _build_selection_recommendation(
     market_data = load_json_document(market_data_path, "market_data.schema.json")
     research_window = load_json_document(research_window_path, "research_window.schema.json")
     source_payload = load_json_document(sources_path, "sources.schema.json")
-    config = load_strategy_config(config_path)
 
     if selection.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("selection strategy_version does not match --config")
