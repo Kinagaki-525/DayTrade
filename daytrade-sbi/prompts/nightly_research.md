@@ -32,6 +32,7 @@ runs/YYYY-MM-DD/
   candidate_pipeline.json
   event_research.json
   event_gate.json
+  ranking.json
   performance.json
   research.md
   recommendation.json
@@ -136,14 +137,26 @@ py -B -m src.cli validate-event-research --event-research runs/YYYY-MM-DD/event_
 py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_gate.json
 ```
 
-`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（Ranking自体は未実装のため、`recommendation.json` は常に `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（`recommendation.json` は `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+
+Event Gateより前（Stage 1 `PASS`銘柄が確定した段階）に、Rankingが使う実際の売買代金（`turnover`）を`YAHOO_JP_QUOTE`（`source_matrix.yaml`のTURNOVER Source）で調査し、`sources.json`のSource Attempt（`field_name=turnover`、`raw_unit=THOUSAND_YEN`、`raw_value`は3桁カンマ区切りの数字のみ、`canonical_value_yen=raw_value×1000`）として保存する。Event Gate生成時点のInput Hashは、その後変更しない。
+
+## Ranking
+
+`event_gate.json` が `ranking_ready=true` の場合だけ `build-ranking` を実行する。
+
+```powershell
+py -B -m src.cli build-ranking --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/ranking.json
+```
+
+Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、実際の売買代金（desc）と呼値/発動価格の相対比（asc）の2 FeatureだけをCompetition Rankingし、単純Rank合計（`rank_points`）で並べ替える。AI判断・Score・Weight・閾値・推定売買代金は使わない。1件でも売買代金データが揃わない候補があれば、Ranking全体を`ranking_status=DATA_UNAVAILABLE`とする（Fail Closed、部分的なRankingは行わない）。`ranking.json`は上流Artifact（`event_gate.json`、`candidates.json`、`market_data.json`、`sources.json`、`source_matrix.yaml`、`strategy_snapshot.yaml`、`candidate_pipeline.json`）を一切変更しない。
 
 ## Codex比較とRecommendation
 
 - Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
 - `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。
 - `REJECTED` を候補へ戻さない。
-- Ranking未実装中は、候補が残っている場合も `NO_TRADE` とし、理由にRanking未実装を記録する。必要データが外部要因で揃わない場合だけ `DATA_UNAVAILABLE`。
+- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合は日次結果を `DATA_UNAVAILABLE` とする。`ranking_status=COMPLETE` の場合でも、Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、`NO_TRADE` とし、理由にSelection未実装を記録する。Ranking `COMPLETE` はTRADE可能を意味しない。
 - `recommendation.json` には `research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて `source_statuses` を保存する。
 - `pipeline_summary` は `candidate_pipeline.summary` から転記し、推測で変更しない。
 

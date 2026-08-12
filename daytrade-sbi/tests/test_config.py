@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def test_v4_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
-    assert config["config_schema_version"] == 4
+    assert config["config_schema_version"] == 5
     assert config["strategy_version"] == "v1"
     rules = normalize_screening_rules(config["screening"])
     assert set(rules) == set(SCREENING_KEYS)

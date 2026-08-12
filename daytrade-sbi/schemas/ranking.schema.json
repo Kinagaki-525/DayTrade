@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ranking.schema.json",
+  "title": "Ranking v1 result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ranking_version",
+    "ranking_method",
+    "target_date",
+    "generated_at",
+    "strategy_version",
+    "config_sha256",
+    "input_hashes",
+    "ranking_status",
+    "ranking_complete",
+    "ranked_count",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "ranking_version": {"const": "ranking-v1"},
+    "ranking_method": {"const": "ordinal_rank_sum"},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input_hashes": {
+      "type": "object",
+      "required": [
+        "event_gate_sha256",
+        "candidates_sha256",
+        "market_data_sha256",
+        "sources_sha256",
+        "source_matrix_sha256",
+        "strategy_snapshot_sha256"
+      ],
+      "properties": {
+        "event_gate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidates_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "market_data_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sources_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "ranking_status": {"enum": ["COMPLETE", "DATA_UNAVAILABLE"]},
+    "ranking_complete": {"type": "boolean"},
+    "ranked_count": {"type": "integer", "minimum": 0},
+    "candidates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/rankingCandidate"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "rankingCandidate": {
+      "type": "object",
+      "required": [
+        "ticker",
+        "input_status",
+        "reason_codes",
+        "provenance",
+        "feature_values",
+        "feature_ranks",
+        "rank_points",
+        "final_rank"
+      ],
+      "properties": {
+        "ticker": {"type": "string", "minLength": 1},
+        "input_status": {"enum": ["OK", "DATA_UNAVAILABLE"]},
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "TURNOVER_SOURCE_NOT_FOUND",
+              "TURNOVER_SOURCE_NOT_YET_AVAILABLE",
+              "TURNOVER_SOURCE_ACCESS_FAILED",
+              "TURNOVER_SOURCE_PARSE_FAILED",
+              "TURNOVER_SOURCE_STALE",
+              "TURNOVER_SOURCE_CONFLICT"
+            ]
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "turnover_source_id",
+            "turnover_attempt_id",
+            "turnover_source_ref"
+          ],
+          "properties": {
+            "turnover_source_id": {"type": ["string", "null"]},
+            "turnover_attempt_id": {"type": ["string", "null"]},
+            "turnover_source_ref": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        },
+        "feature_values": {
+          "type": "object",
+          "required": ["turnover", "relative_tick_size"],
+          "properties": {
+            "turnover": {
+              "oneOf": [
+                {"$ref": "#/$defs/decimal"},
+                {"type": "null"}
+              ]
+            },
+            "relative_tick_size": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["numerator_yen", "denominator_yen"],
+                  "properties": {
+                    "numerator_yen": {"$ref": "#/$defs/decimal"},
+                    "denominator_yen": {"$ref": "#/$defs/decimal"}
+                  },
+                  "additionalProperties": false
+                },
+                {"type": "null"}
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "feature_ranks": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["turnover_rank", "relative_tick_size_rank"],
+              "properties": {
+                "turnover_rank": {"type": "integer", "minimum": 1},
+                "relative_tick_size_rank": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            },
+            {"type": "null"}
+          ]
+        },
+        "rank_points": {
+          "oneOf": [
+            {"type": "integer", "minimum": 2},
+            {"type": "null"}
+          ]
+        },
+        "final_rank": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

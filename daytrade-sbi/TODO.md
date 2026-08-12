@@ -48,7 +48,13 @@
 - 適時開示・重要材料が出た銘柄の扱い
 - ストップ高・ストップ安付近の銘柄の扱い
 - 低位株をどこまで許容するか
-- 候補が複数ある場合の順位付け
+- 候補が複数ある場合の順位付け: `ranking-v1`として実装済み（`src/ranking.py`）。Event Gate `PASS`候補だけを対象に、実際の売買代金desc・呼値/発動価格の相対比ascの2 FeatureをCompetition RankingしてRank合計で並べる。ただしRank 1を`TRADE`へ変換する最終選定（Selection / Absolute Quality Gate）は未実装のまま。以下は引き続き未決定：
+  - 最低売買代金の閾値（Absolute Quality Gateの一部）
+  - 呼値/発動価格の相対比の上限閾値（Absolute Quality Gateの一部）
+  - Absolute Quality Gate自体の仕様
+  - Ranking Rank 1をTRADEへ変換する処理
+  - Risk EngineでRank 1がREJECTEDになった場合にRank 2へフォールバックするか
+  - 絶対的なNO_TRADE条件（Selectionの一部）
 - 条件該当銘柄がない日は取引しないルール
 
 最終的に、

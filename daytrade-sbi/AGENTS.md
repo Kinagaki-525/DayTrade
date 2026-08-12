@@ -26,6 +26,9 @@
 - 検索結果の断片だけを価格決定の根拠にしない
 - `config/source_matrix.yaml`に存在しない情報源を実行時に勝手に代替採用しない
 - Discoveryは出来高ランキングと値上がり率ランキングに限定し、Discovery順位をそのままRankingへ使わない
+- RankingはPython(`src/ranking.py`)だけが実行し、AIによる順位付けやRank変更を行わない
+- `estimated_turnover`をRankingの入力に使わない。実際の売買代金だけを使う
+- Ranking `COMPLETE`はTRADE可能を意味しない。Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは別途実装するまで行わない
 - 株価等の数値ごとに情報源、URL、取得日時、取引日、銘柄、値を保存する
 - 更新日不明、古いデータ、必須値欠落、出典矛盾を推測で解決しない
 - 確認できた事実とCodex評価を明確に分ける

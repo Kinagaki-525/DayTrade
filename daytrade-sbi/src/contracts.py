@@ -40,6 +40,7 @@ RUN_ARTIFACT_ALLOWLIST = {
     "official_ohlcv_audit.json",
     "execution_result.json",
     "source_pages",
+    "ranking.json",
 }
 
 
@@ -79,8 +80,8 @@ def validate_event_research_inputs(
     candidates: dict[str, Any],
     config: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") != 4:
-        raise ValueError("config_schema_version must be 4 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5):
+        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
     if candidates.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
@@ -116,8 +117,8 @@ def validate_event_gate_inputs(
     config: dict[str, Any],
     input_hashes: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") != 4:
-        raise ValueError("config_schema_version must be 4 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5):
+        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
     _require_equal(event_research, candidate_pipeline, "target_date", "event_research/candidate_pipeline")
     _require_equal(event_research, candidates, "target_date", "event_research/candidates")
     if candidates.get("strategy_version") != config.get("strategy_version"):
@@ -189,6 +190,136 @@ def validate_event_gate_output_contract(
                 raise ValueError(
                     f"{candidate.get('ticker')}: DATA_UNAVAILABLE rule {rule.get('rule_id')} requires reason_codes"
                 )
+
+
+def validate_ranking_preconditions(
+    *,
+    event_gate: dict[str, Any],
+    candidates: dict[str, Any],
+    market_data: dict[str, Any],
+    source_payload: dict[str, Any],
+    source_matrix: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    if config.get("config_schema_version") != 5:
+        raise ValueError("config_schema_version must be 5 for build-ranking")
+    if "ranking" not in config:
+        raise ValueError("config is missing the ranking block required for build-ranking")
+
+    if event_gate.get("event_gate_complete") is not True:
+        raise ValueError("event_gate.event_gate_complete must be true for build-ranking")
+    if event_gate.get("ranking_ready") is not True:
+        raise ValueError("event_gate.ranking_ready must be true for build-ranking")
+    if event_gate.get("ranking_block_reasons"):
+        raise ValueError("event_gate.ranking_block_reasons must be empty for build-ranking")
+
+    if event_gate.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("event_gate strategy_version does not match --config")
+    if event_gate.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("event_gate config_sha256 does not match --config")
+    _require_equal(event_gate, candidates, "target_date", "event_gate/candidates")
+    if candidates.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("candidates strategy_version does not match --config")
+    if candidates.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("candidates config_sha256 does not match --config")
+    if not event_gate.get("target_date"):
+        raise ValueError("event_gate.target_date is required")
+    if not event_gate.get("previous_trading_day"):
+        raise ValueError("event_gate.previous_trading_day is required")
+
+    _check_sources_uniqueness(source_payload)
+    _check_market_data_uniqueness(market_data)
+
+    from src.source_matrix import validate_source_matrix
+
+    result = validate_source_matrix(source_matrix)
+    if not result.valid:
+        raise ValueError("Source matrix validation failed: " + "; ".join(result.errors))
+
+    required_hashes = {
+        "event_gate_sha256",
+        "candidates_sha256",
+        "market_data_sha256",
+        "sources_sha256",
+        "source_matrix_sha256",
+        "strategy_snapshot_sha256",
+    }
+    if set(input_hashes.keys()) != required_hashes:
+        raise ValueError("input_hashes mismatch")
+
+
+def _check_market_data_uniqueness(market_data: dict[str, Any]) -> None:
+    tickers: set[str] = set()
+    for record in market_data.get("records", []):
+        ticker = record.get("ticker")
+        if isinstance(ticker, str):
+            if ticker in tickers:
+                raise ValueError(f"duplicate market_data record ticker: {ticker}")
+            tickers.add(ticker)
+
+
+def validate_ranking_output_contract(
+    *,
+    ranking: dict[str, Any],
+    event_gate: dict[str, Any],
+    candidates: dict[str, Any],
+    market_data: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    from src.ranking import build_ranking
+
+    if ranking.get("target_date") != event_gate.get("target_date"):
+        raise ValueError("ranking target_date does not match event_gate")
+    if ranking.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError("ranking strategy_version does not match --config")
+    if ranking.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError("ranking config_sha256 does not match --config")
+    if ranking.get("ranking_status") not in ("COMPLETE", "DATA_UNAVAILABLE"):
+        raise ValueError("ranking_status must be COMPLETE or DATA_UNAVAILABLE")
+
+    pass_tickers = {
+        str(c.get("ticker")).strip()
+        for c in event_gate.get("candidates", [])
+        if c.get("gate_status") == "PASS"
+    }
+    ranking_tickers = {c.get("ticker") for c in ranking.get("candidates", [])}
+    if pass_tickers != ranking_tickers:
+        raise ValueError("ranking.candidates does not match event_gate PASS candidates")
+
+    if ranking.get("ranking_status") == "COMPLETE":
+        if ranking.get("ranking_complete") is not True:
+            raise ValueError("ranking_complete must be true when ranking_status is COMPLETE")
+        for candidate in ranking.get("candidates", []):
+            if candidate.get("final_rank") is None:
+                raise ValueError("COMPLETE ranking requires a final_rank for every candidate")
+    else:
+        if ranking.get("ranking_complete") is not False:
+            raise ValueError(
+                "ranking_complete must be false when ranking_status is DATA_UNAVAILABLE"
+            )
+        for candidate in ranking.get("candidates", []):
+            if candidate.get("final_rank") is not None or candidate.get("rank_points") is not None:
+                raise ValueError(
+                    "DATA_UNAVAILABLE ranking must null out final_rank/rank_points for every candidate"
+                )
+
+    # Recomputation-based verification: the output must exactly match a
+    # fresh call to build_ranking with the same inputs (no mutation, no
+    # non-determinism).
+    recomputed = build_ranking(
+        event_gate=event_gate,
+        candidates=candidates,
+        market_data=market_data,
+        source_payload=source_payload,
+        config=config,
+        input_hashes=ranking.get("input_hashes", {}),
+    )
+    if recomputed.get("candidates") != ranking.get("candidates"):
+        raise ValueError("ranking.candidates does not match recomputed ranking result")
+    if recomputed.get("ranking_status") != ranking.get("ranking_status"):
+        raise ValueError("ranking_status does not match recomputed ranking result")
 
 
 def _check_sources_uniqueness(source_payload: dict[str, Any]) -> None:

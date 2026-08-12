@@ -154,6 +154,15 @@ sources:
     update_timing: REALTIME_OR_DELAYED
     zero_results_are_found: true
 
+  - source_id: YAHOO_JP_QUOTE
+    information_type: TURNOVER
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: Yahoo! Finance Japan Stock Quote
+    url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+
   - source_id: KABUTAN_NEWS
     information_type: NEWS
     role: CONTEXT

@@ -71,7 +71,8 @@
             "TIMELY_DISCLOSURE",
             "EARNINGS_SCHEDULE",
             "ISSUER_DISCLOSURE",
-            "NEWS"
+            "NEWS",
+            "TURNOVER"
           ]
         },
         "role": {

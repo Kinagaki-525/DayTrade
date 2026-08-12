@@ -39,12 +39,12 @@ py -B -m pytest
     - `ranking_ready=false`の場合、Rankingを開始しない
     - Event Gate候補に`gate_status=DATA_UNAVAILABLE`が1件でも存在する場合、Rankingを開始せず日次結果を`DATA_UNAVAILABLE`とする
     - Event Gateが正常完了し`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合、Rankingを開始せず`NO_TRADE`とする
-    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となる。ただしRankingは未実装のため、main agentが独自比較して`TRADE`を作らず、既存フィールドでRanking未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
+    - Event Gateが正常完了し`PASS`候補が1件以上かつ`DATA_UNAVAILABLE`候補が0件の場合、`ranking_ready=true`となり`build-ranking`を実行して`ranking.json`を生成する。`ranking.json`の`ranking_status`は`COMPLETE`または`DATA_UNAVAILABLE`のいずれかであり、いずれの場合もRank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、main agentが独自比較して`TRADE`を作ることはない。`ranking_status=DATA_UNAVAILABLE`の場合は日次結果を`DATA_UNAVAILABLE`とし、`ranking_status=COMPLETE`の場合は既存フィールドでSelection未実装である旨を記録した`NO_TRADE`を`recommendation.json`へ保存する
     - `REJECT`・`DATA_UNAVAILABLE`のEvent Gate候補はいずれのケースでもRankingへ渡さない
 20. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
 21. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
 22. `recommendation.md`と`report.md`を生成
-23. run artifact allowlist（`event_research.json`、`event_gate.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
+23. run artifact allowlist（`event_research.json`、`event_gate.json`、`ranking.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
 24. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理

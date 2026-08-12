@@ -1,4 +1,4 @@
-config_schema_version: 4
+config_schema_version: 5
 strategy_version: "v1"
 validation_status: unvalidated
 
@@ -57,6 +57,26 @@ event_gate:
       - "COMPANY_IR_DISCLOSURE"
   post_cutoff:
     recheck_required: true
+
+ranking:
+  enabled: true
+  version: "ranking-v1"
+  method: "ordinal_rank_sum"
+  features:
+    turnover:
+      direction: desc
+      source_policy: actual_only
+      estimated_allowed: false
+    relative_tick_size:
+      direction: asc
+  feature_rank_method: competition
+  aggregation:
+    method: rank_sum
+  tie_break:
+    - turnover_desc
+    - relative_tick_size_asc
+    - ticker_asc
+  missing_data_policy: fail_closed
 
 screening:
   minimum_volume:
