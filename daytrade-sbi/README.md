@@ -84,7 +84,7 @@ Pythonが固定条件でスクリーニング
 Pythonが候補パイプラインと性能計測を保存
   ↓
 Hard Screening PASS候補と分析Featureを保存
-  ↓ Ranking未実装中はTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
+  ↓ Selection未実装中はRanking COMPLETEでもTRADEへ進めずNO_TRADEまたはDATA_UNAVAILABLE
 Python Risk Engineが注文案を再計算・検証
   ↓ PASS、REJECTED、または NOT_APPLICABLE
 MarkdownのSBI手入力候補を生成

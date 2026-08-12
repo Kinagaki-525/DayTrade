@@ -809,10 +809,10 @@ def validate_event_gate_integrity(
                 "EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker is not a string"
             )
             continue
-        if ticker != ticker.strip():
+        if not ticker or ticker != ticker.strip():
             errors.append(
-                "EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker has leading/trailing "
-                f"whitespace: {ticker!r}"
+                "EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker is empty or has "
+                f"leading/trailing whitespace: {ticker!r}"
             )
             continue
         all_tickers.append(ticker)

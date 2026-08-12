@@ -116,3 +116,133 @@ def test_legacy_null_screening_values_remain_read_only_compatible():
 
     assert rules["minimum_volume"]["enabled"] is False
     assert rules["minimum_volume"]["threshold"] is None
+
+
+# --- v5 ranking block validation (anti scope-creep enforcement) --------------
+
+
+def test_v5_config_ships_the_expected_fixed_ranking_block():
+    config = load_strategy_config()
+
+    ranking = config["ranking"]
+    assert ranking["enabled"] is True
+    assert ranking["version"] == "ranking-v1"
+    assert ranking["method"] == "ordinal_rank_sum"
+    assert ranking["feature_rank_method"] == "competition"
+    assert ranking["aggregation"] == {"method": "rank_sum"}
+    assert ranking["missing_data_policy"] == "fail_closed"
+    assert ranking["tie_break"] == [
+        "turnover_desc",
+        "relative_tick_size_asc",
+        "ticker_asc",
+    ]
+    assert set(ranking["features"]) == {"turnover", "relative_tick_size"}
+    assert ranking["features"]["turnover"] == {
+        "direction": "desc",
+        "source_policy": "actual_only",
+        "estimated_allowed": False,
+    }
+    assert ranking["features"]["relative_tick_size"] == {"direction": "asc"}
+
+
+def test_v5_config_requires_a_ranking_block():
+    config = load_strategy_config()
+    del config["ranking"]
+    with pytest.raises(ValueError, match="ranking"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize(
+    "forbidden_field",
+    [
+        "score",
+        "weight",
+        "weights",
+        "confidence",
+        "expected_return",
+        "expected_profit",
+        "probability",
+        "normalization",
+        "threshold",
+        "thresholds",
+        "minimum_turnover",
+        "maximum_relative_tick_size",
+    ],
+)
+def test_ranking_block_rejects_permanently_out_of_scope_fields(forbidden_field):
+    """Scope guard: minimum-turnover / max-relative-tick thresholds, scores,
+    weights, confidences and normalization are permanently out of scope for
+    ranking-v1 and must not be configurable."""
+    config = load_strategy_config()
+    config["ranking"][forbidden_field] = 1
+    with pytest.raises(ValueError, match="ranking must not define"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize(
+    ("block_path", "field_name"),
+    [
+        (("ranking",), "momentum"),
+        (("ranking", "features"), "topix500_membership"),
+        (("ranking", "features"), "previous_day_change_pct"),
+        (("ranking", "features"), "daily_range_pct"),
+        (("ranking", "features", "turnover"), "weight"),
+        (("ranking", "features", "relative_tick_size"), "score"),
+        (("ranking", "aggregation"), "weights"),
+    ],
+)
+def test_ranking_block_rejects_unknown_fields(block_path, field_name):
+    config = load_strategy_config()
+    block = config
+    for key in block_path:
+        block = block[key]
+    block[field_name] = 1
+    with pytest.raises(ValueError, match="ranking"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize(
+    ("block_path", "field_name", "value"),
+    [
+        (("ranking",), "enabled", False),
+        (("ranking",), "version", "ranking-v2"),
+        (("ranking",), "method", "weighted_score"),
+        (("ranking",), "feature_rank_method", "dense"),
+        (("ranking",), "missing_data_policy", "best_effort"),
+        (("ranking",), "tie_break", ["ticker_asc"]),
+        (("ranking", "features", "turnover"), "direction", "asc"),
+        (("ranking", "features", "turnover"), "source_policy", "estimated_allowed"),
+        (("ranking", "features", "turnover"), "estimated_allowed", True),
+        (("ranking", "features", "relative_tick_size"), "direction", "desc"),
+        (("ranking", "aggregation"), "method", "weighted_sum"),
+    ],
+)
+def test_ranking_block_rejects_changed_fixed_values(block_path, field_name, value):
+    """Mutation check: every fixed ranking-v1 setting must be pinned, so a
+    silent change of ranking method, direction, tie-break, competition
+    ranking, fail-closed policy or the actual-turnover-only source policy
+    cannot slip through configuration."""
+    config = load_strategy_config()
+    block = config
+    for key in block_path:
+        block = block[key]
+    assert block[field_name] != value
+    block[field_name] = value
+    with pytest.raises(ValueError, match="ranking"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize("missing_block", ["features", "aggregation"])
+def test_ranking_block_requires_its_nested_blocks(missing_block):
+    config = load_strategy_config()
+    del config["ranking"][missing_block]
+    with pytest.raises(ValueError, match="ranking"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize("missing_feature", ["turnover", "relative_tick_size"])
+def test_ranking_features_require_both_features(missing_feature):
+    config = load_strategy_config()
+    del config["ranking"]["features"][missing_feature]
+    with pytest.raises(ValueError, match="ranking|turnover|relative_tick_size"):
+        validate_strategy_config(config)

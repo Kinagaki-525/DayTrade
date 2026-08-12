@@ -344,14 +344,27 @@ RANKING_FORBIDDEN_FIELDS = frozenset(
 )
 
 
+def _reject_ranking_block_fields(block: dict[str, Any], allowed: frozenset[str], path: str) -> None:
+    """Reject anything outside a ranking block's fixed field set.
+
+    The permanently-out-of-scope names (scores, weights, confidences,
+    normalization, and the minimum-turnover / maximum-relative-tick
+    thresholds) are reported first and by name: they are a deliberate scope
+    decision rather than a typo, and an operator must be told so explicitly.
+    Checking them after the generic unknown-field check would make that
+    message unreachable, because every forbidden name is also unknown.
+    """
+    forbidden = set(block) & RANKING_FORBIDDEN_FIELDS
+    if forbidden:
+        raise ValueError(f"{path} must not define: {', '.join(sorted(forbidden))}")
+    unknown = set(block) - allowed
+    if unknown:
+        raise ValueError(f"{path} contains unknown field(s): {', '.join(sorted(unknown))}")
+
+
 def _validate_ranking_config(config: dict[str, Any]) -> None:
     ranking = _required_mapping(config, "ranking")
-    unknown = set(ranking) - RANKING_ALLOWED_TOP_KEYS
-    if unknown:
-        raise ValueError(f"ranking contains unknown field(s): {', '.join(sorted(unknown))}")
-    forbidden = set(ranking) & RANKING_FORBIDDEN_FIELDS
-    if forbidden:
-        raise ValueError(f"ranking must not define: {', '.join(sorted(forbidden))}")
+    _reject_ranking_block_fields(ranking, RANKING_ALLOWED_TOP_KEYS, "ranking")
     if ranking.get("enabled") is not True:
         raise ValueError("ranking.enabled must be true")
     if ranking.get("version") != "ranking-v1":
@@ -369,17 +382,12 @@ def _validate_ranking_config(config: dict[str, Any]) -> None:
     ]:
         raise ValueError("ranking.tie_break must be fixed")
 
-    features = _required_mapping(ranking, "features")
-    unknown_features = set(features) - RANKING_ALLOWED_FEATURE_KEYS
-    if unknown_features:
-        raise ValueError(
-            f"ranking.features contains unknown field(s): {', '.join(sorted(unknown_features))}"
-        )
-    turnover = _required_mapping(features, "turnover")
-    unknown_turnover = set(turnover) - RANKING_ALLOWED_TURNOVER_KEYS
-    forbidden_turnover = set(turnover) & RANKING_FORBIDDEN_FIELDS
-    if unknown_turnover or forbidden_turnover:
-        raise ValueError("ranking.features.turnover contains unknown/forbidden field(s)")
+    features = _required_mapping(ranking, "features", "ranking")
+    _reject_ranking_block_fields(features, RANKING_ALLOWED_FEATURE_KEYS, "ranking.features")
+    turnover = _required_mapping(features, "turnover", "ranking.features")
+    _reject_ranking_block_fields(
+        turnover, RANKING_ALLOWED_TURNOVER_KEYS, "ranking.features.turnover"
+    )
     if turnover.get("direction") != "desc":
         raise ValueError("ranking.features.turnover.direction must be 'desc'")
     if turnover.get("source_policy") != "actual_only":
@@ -387,21 +395,17 @@ def _validate_ranking_config(config: dict[str, Any]) -> None:
     if turnover.get("estimated_allowed") is not False:
         raise ValueError("ranking.features.turnover.estimated_allowed must be false")
 
-    relative_tick_size = _required_mapping(features, "relative_tick_size")
-    unknown_tick = set(relative_tick_size) - RANKING_ALLOWED_TICK_KEYS
-    forbidden_tick = set(relative_tick_size) & RANKING_FORBIDDEN_FIELDS
-    if unknown_tick or forbidden_tick:
-        raise ValueError(
-            "ranking.features.relative_tick_size contains unknown/forbidden field(s)"
-        )
+    relative_tick_size = _required_mapping(features, "relative_tick_size", "ranking.features")
+    _reject_ranking_block_fields(
+        relative_tick_size, RANKING_ALLOWED_TICK_KEYS, "ranking.features.relative_tick_size"
+    )
     if relative_tick_size.get("direction") != "asc":
         raise ValueError("ranking.features.relative_tick_size.direction must be 'asc'")
 
-    aggregation = _required_mapping(ranking, "aggregation")
-    unknown_aggregation = set(aggregation) - RANKING_ALLOWED_AGGREGATION_KEYS
-    forbidden_aggregation = set(aggregation) & RANKING_FORBIDDEN_FIELDS
-    if unknown_aggregation or forbidden_aggregation:
-        raise ValueError("ranking.aggregation contains unknown/forbidden field(s)")
+    aggregation = _required_mapping(ranking, "aggregation", "ranking")
+    _reject_ranking_block_fields(
+        aggregation, RANKING_ALLOWED_AGGREGATION_KEYS, "ranking.aggregation"
+    )
     if aggregation.get("method") != "rank_sum":
         raise ValueError("ranking.aggregation.method must be 'rank_sum'")
 
@@ -554,10 +558,19 @@ def _required(mapping: dict[str, Any], key: str, path: str = "configuration") ->
     return mapping[key]
 
 
-def _required_mapping(config: dict[str, Any], key: str) -> dict[str, Any]:
-    value = _required(config, key)
+def _required_mapping(
+    config: dict[str, Any], key: str, path: str = "configuration"
+) -> dict[str, Any]:
+    """Fetch a required nested mapping.
+
+    ``path`` names the block ``config`` itself is, so a nested lookup can
+    report ``ranking.features`` instead of the ambiguous top-level-sounding
+    ``configuration.features``. It defaults to the top-level block name used
+    by every pre-existing caller, so their messages are unchanged.
+    """
+    value = _required(config, key, path)
     if not isinstance(value, dict):
-        raise ValueError(f"{key} must be a mapping")
+        raise ValueError(f"{key} must be a mapping" if path == "configuration" else f"{path}.{key} must be a mapping")
     return value
 
 

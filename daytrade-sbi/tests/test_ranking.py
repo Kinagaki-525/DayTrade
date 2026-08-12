@@ -981,12 +981,27 @@ def test_candidate_not_eligible_is_hard_error():
         _run(event_gate, candidates, market_data, source_payload)
 
 
-def test_event_gate_not_ready_is_hard_error():
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_code"),
+    [
+        ("ranking_ready", False, "RANKING_EVENT_GATE_NOT_READY"),
+        ("event_gate_complete", False, "RANKING_EVENT_GATE_NOT_COMPLETE"),
+        (
+            "ranking_block_reasons",
+            ["NO_EVENT_GATE_PASS_CANDIDATE"],
+            "RANKING_EVENT_GATE_BLOCKED",
+        ),
+    ],
+)
+def test_event_gate_precondition_flags_are_hard_errors(field_name, value, expected_code):
+    """Each Event Gate precondition raises the same error code here as it does
+    in contracts.validate_ranking_preconditions(): the code must not depend on
+    which layer caught the violation."""
     event_gate, candidates, market_data, source_payload = _build_case(
         [{"ticker": "9004", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
     )
-    event_gate["ranking_ready"] = False
-    with pytest.raises(RankingHardError, match="RANKING_EVENT_GATE_NOT_READY"):
+    event_gate[field_name] = value
+    with pytest.raises(RankingHardError, match=expected_code):
         _run(event_gate, candidates, market_data, source_payload)
 
 
@@ -2160,7 +2175,7 @@ def test_non_object_market_data_record_is_ranking_hard_error():
         [{"ticker": "TB06", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
     )
     market_data["records"].append("not-an-object")
-    with pytest.raises(RankingHardError, match="RANKING_MARKET_DATA_INVALID"):
+    with pytest.raises(RankingHardError, match="RANKING_MARKET_DATA_RECORDS_INVALID"):
         _run(event_gate, candidates, market_data, source_payload)
 
 
@@ -2219,7 +2234,7 @@ def test_duplicate_market_data_record_is_hard_error():
         [{"ticker": "TC04", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
     )
     market_data["records"].append(copy.deepcopy(market_data["records"][0]))
-    with pytest.raises(RankingHardError, match="RANKING_DUPLICATE_MARKET_RECORD"):
+    with pytest.raises(RankingHardError, match="RANKING_DUPLICATE_MARKET_DATA_TICKER"):
         _run(event_gate, candidates, market_data, source_payload)
 
 

@@ -174,7 +174,7 @@ Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、�
 ## Codex比較とRecommendation
 
 - Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
-- `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。
+- `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。これは`ranking.json`の`ranking_complete`とは別のフィールドであり、`ranking.json`が`ranking_complete=true`でも`candidate_pipeline.summary.ranking_complete`は`false`のままである（Rankingの完了はTRADE可能を意味しない）。
 - `REJECTED` を候補へ戻さない。
 - `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合は日次結果を `DATA_UNAVAILABLE` とする。`ranking_status=COMPLETE` の場合でも、Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、`NO_TRADE` とし、理由にSelection未実装を記録する。Ranking `COMPLETE` はTRADE可能を意味しない。
 - `recommendation.json` には `research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて `source_statuses` を保存する。

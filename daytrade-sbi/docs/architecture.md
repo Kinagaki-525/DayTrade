@@ -69,10 +69,10 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 ## 状態
 
 - `ELIGIBLE`: 市場データ検証と設定済み固定条件を通過。取引推奨ではない。
-- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Event Gateでは対象日の決算・前営業日決算・TDnet開示・一次確認済み危険ニュースのいずれにも該当しないと判定された状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking完了までは取引推奨ではない。
+- `PASS`: Hard Screeningでは有効なTRADE_CRITICAL ruleを通過した状態。Event Gateでは対象日の決算・前営業日決算・TDnet開示・一次確認済み危険ニュースのいずれにも該当しないと判定された状態。Risk Engineでは注文案が固定リスク条件を通過した状態。Ranking `COMPLETE`後も、最終選定（Selection / Absolute Quality Gate）が実装・完了するまで取引推奨ではない。
 - `REJECT`: Hard Screeningの有効ruleにより候補から除外、またはEvent Gateで決算・TDnet開示・一次確認済み危険ニュースが確認され候補から除外された状態。Rankingへ渡さない。
-- `TRADE`: Rankingおよび最終選定の仕様確定後に生成可能となる、Event Gate `PASS`候補から選ばれる1銘柄の注文案。誰がどのように生成するかは今回確定しない。Ranking未実装中は生成しない。Risk Engine通過前は採用不可。
-- `NO_TRADE`: Event Gateが正常完了し、`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合の結果。Ranking未実装中にEvent Gate `PASS`候補が存在する場合も、Ranking未実装（`RANKING_NOT_IMPLEMENTED`相当の理由を記録）として`NO_TRADE`を保存できる。注文を作らない。
+- `TRADE`: 最終選定（Selection / Absolute Quality Gate）の仕様確定後に生成可能となる、Ranking結果から選ばれる1銘柄の注文案。誰がどのように生成するかは今回確定しない。Selection未実装中は生成しない。Ranking `COMPLETE`やRank 1の存在だけでは生成しない。Risk Engine通過前は採用不可。
+- `NO_TRADE`: Event Gateが正常完了し、`PASS`候補・`DATA_UNAVAILABLE`候補がともに0件の場合の結果。Rankingが`COMPLETE`しRank 1が存在する場合も、Selection未実装（Selection未実装である旨を既存フィールドへ記録）として`NO_TRADE`を保存する。注文を作らない。
 - `DATA_UNAVAILABLE`: 必要な市場データまたはSource Policyが揃わず、取引判断まで到達していない状態。Event Gateに`DATA_UNAVAILABLE`の候補が1件でも存在する場合を含む。Rankingへ渡さない。
 - `REJECTED`: 注文案またはデータが固定条件に違反。値を自動修正しない。
 - `NOT_APPLICABLE`: `NO_TRADE`または`DATA_UNAVAILABLE`のため注文リスク評価対象がない。

@@ -224,7 +224,7 @@ def _collect_ranking_inputs(
     for record in market_data.get("records", []):
         if not isinstance(record, dict):
             raise _hard_error(
-                "RANKING_MARKET_DATA_INVALID",
+                "RANKING_MARKET_DATA_RECORDS_INVALID",
                 "every market_data.json record must be an object",
             )
         ticker = record.get("ticker")
@@ -235,7 +235,7 @@ def _collect_ranking_inputs(
             )
         if ticker in market_by_ticker:
             raise _hard_error(
-                "RANKING_DUPLICATE_MARKET_RECORD",
+                "RANKING_DUPLICATE_MARKET_DATA_TICKER",
                 f"duplicate market_data record ticker: {ticker}",
             )
         market_by_ticker[ticker] = record
@@ -463,15 +463,15 @@ def _resolve_turnover(
     market_record: dict[str, Any],
     attempts: list[dict[str, Any]],
     sources: list[dict[str, Any]],
-    target_date: str | None,
-    previous_trading_day: str | None,
-    event_gate_as_of: str | None,
+    target_date: str,
+    previous_trading_day: str,
+    event_gate_as_of: str,
 ) -> _TurnoverResult:
     attempt = select_canonical_attempt(
         attempts,
         ticker=ticker,
         source_id=TURNOVER_SOURCE_ID,
-        target_date=str(target_date),
+        target_date=target_date,
         event_gate_as_of=event_gate_as_of,
     )
     if attempt is None:
@@ -659,7 +659,7 @@ def _four_way_consistency_check(
     sources: list[dict[str, Any]],
     market_record: dict[str, Any],
     candidate: dict[str, Any],
-    previous_trading_day: str | None,
+    previous_trading_day: str,
 ) -> None:
     matches = [
         source
@@ -818,9 +818,12 @@ def build_ranking(
     """
     from src.config import strategy_config_sha256
 
+    # Same three conditions, same three error codes as
+    # contracts.validate_ranking_preconditions(): the code an operator sees
+    # must not depend on which layer caught the violation.
     if event_gate.get("event_gate_complete") is not True:
         raise _hard_error(
-            "RANKING_EVENT_GATE_NOT_READY",
+            "RANKING_EVENT_GATE_NOT_COMPLETE",
             "event_gate.event_gate_complete must be true",
         )
     if event_gate.get("ranking_ready") is not True:
@@ -830,7 +833,7 @@ def build_ranking(
         )
     if event_gate.get("ranking_block_reasons"):
         raise _hard_error(
-            "RANKING_EVENT_GATE_NOT_READY",
+            "RANKING_EVENT_GATE_BLOCKED",
             "event_gate.ranking_block_reasons must be empty",
         )
 
