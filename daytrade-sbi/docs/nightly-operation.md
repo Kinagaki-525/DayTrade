@@ -30,13 +30,17 @@ py -B -m pytest
 11. `plan-stage2-batches`でStage 2調査対象をbatch化し、必要なCandidate Researchを実施・merge
 12. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
 13. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
-14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`、`ranking_complete=false`を確認する
-15. Ranking未実装中は`TRADE`へ進めず、`recommendation.json`へ`NO_TRADE`または`DATA_UNAVAILABLE`を保存
-16. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
-17. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
-18. `recommendation.md`と`report.md`を生成
-19. run artifact allowlistを検証し、`trades/recommendations.csv`へ推奨履歴を追加
-20. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
+14. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
+15. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査でSource Attempt・Evidence・News Classificationを`sources.json`へ追加して`event_research.json`を完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+16. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
+17. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
+18. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する
+19. `event_gate.json`の`ranking_ready=true`の場合だけRankingへ進める。Rankingは未実装のため、Event Gate `PASS`候補が存在してもmain agentが独自比較して`TRADE`を作らず、`recommendation.json`へ`NO_TRADE`または`DATA_UNAVAILABLE`を保存する。`REJECT`・`DATA_UNAVAILABLE`のEvent Gate候補はRankingへ渡さない
+20. `TRADE`の場合だけ人間に保有数・当日取引数を確認し、Risk Engineを実行して`risk_result.json`を保存
+21. `NO_TRADE`または`DATA_UNAVAILABLE`の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+22. `recommendation.md`と`report.md`を生成
+23. run artifact allowlist（`event_research.json`、`event_gate.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
+24. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告
 
 ## 人間が行う処理
 
