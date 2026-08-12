@@ -221,12 +221,12 @@ def validate_strategy_config(config: dict[str, Any]) -> None:
     )
 
     screening = _required_mapping(config, "screening")
-    normalize_screening_rules(screening)
+    normalized_screening = normalize_screening_rules(screening)
     if schema_version == 6:
         _validate_event_gate_config_v4(config)
         _validate_ranking_config(config)
         _validate_selection_config(config)
-        if screening["minimum_turnover"]["enabled"] and _selection_enabled(config):
+        if normalized_screening["minimum_turnover"]["enabled"] and _selection_enabled(config):
             raise ValueError(
                 "screening.minimum_turnover and selection.rules.minimum_turnover_yen "
                 "must not both be enabled"
@@ -440,16 +440,26 @@ SELECTION_ALLOWED_TICK_RATIO_KEYS = frozenset({"numerator", "denominator"})
 SELECTION_FORBIDDEN_FIELDS = frozenset(
     {
         "score",
+        "scores",
         "weight",
         "weights",
         "confidence",
+        "probability",
         "expected_return",
         "expected_profit",
-        "probability",
+        "alpha",
+        "ranking_score",
         "normalization",
         "recommended_threshold",
         "optimal_threshold",
+        "best_threshold",
+        "suggested_threshold",
+        "rank2",
         "rank2_fallback",
+        "fallback_rank",
+        "fallback_candidates",
+        "ai_score",
+        "llm_score",
     }
 )
 
@@ -502,21 +512,21 @@ def _validate_selection_config(config: dict[str, Any]) -> None:
     threshold_yen = _required(
         turnover_rule, "threshold_yen", "selection.rules.minimum_turnover_yen"
     )
-    if enabled:
+    # When selection.enabled is true, threshold_yen is mandatory and must be
+    # a valid positive integer. When false, two states are legal: null
+    # (Calibration Pending -- the Production default, not yet calibrated)
+    # or a fully valid, already-calibrated value kept in config while
+    # temporarily disabled (Emergency Disable). A partially-set value is
+    # always rejected, whether enabled or not.
+    if enabled or threshold_yen is not None:
         if isinstance(threshold_yen, bool) or not isinstance(threshold_yen, int):
             raise ValueError(
                 "selection.rules.minimum_turnover_yen.threshold_yen must be a "
-                "positive plain integer when selection.enabled is true"
+                "positive plain integer when set"
             )
         if threshold_yen <= 0:
             raise ValueError(
                 "selection.rules.minimum_turnover_yen.threshold_yen must be > 0"
-            )
-    else:
-        if threshold_yen is not None:
-            raise ValueError(
-                "selection.rules.minimum_turnover_yen.threshold_yen must be null "
-                "while selection.enabled is false"
             )
 
     tick_rule = _required_mapping(
@@ -534,11 +544,12 @@ def _validate_selection_config(config: dict[str, Any]) -> None:
     threshold_ratio = _required(
         tick_rule, "threshold_ratio", "selection.rules.maximum_relative_tick_size"
     )
-    if enabled:
+    # Same both-null-or-both-valid rule as threshold_yen above.
+    if enabled or threshold_ratio is not None:
         if not isinstance(threshold_ratio, dict):
             raise ValueError(
                 "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
-                "a mapping when selection.enabled is true"
+                "a mapping when set"
             )
         _reject_selection_block_fields(
             threshold_ratio,
@@ -571,12 +582,17 @@ def _validate_selection_config(config: dict[str, Any]) -> None:
                 "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
                 "expressed in lowest terms (gcd == 1)"
             )
-    else:
-        if threshold_ratio is not None:
-            raise ValueError(
-                "selection.rules.maximum_relative_tick_size.threshold_ratio must be "
-                "null while selection.enabled is false"
-            )
+
+    # Mixed states (one rule null, the other set) are rejected regardless of
+    # enabled, since selection.rules are evaluated together (rule_logic ==
+    # "all") and a mixed configuration cannot represent either a coherent
+    # Calibration Pending state or a coherent Emergency Disable state.
+    if (threshold_yen is None) != (threshold_ratio is None):
+        raise ValueError(
+            "selection.rules.minimum_turnover_yen.threshold_yen and "
+            "selection.rules.maximum_relative_tick_size.threshold_ratio must "
+            "either both be null or both be set"
+        )
 
 
 def _validate_v2_legacy_event_rules(screening: dict[str, Any]) -> None:
