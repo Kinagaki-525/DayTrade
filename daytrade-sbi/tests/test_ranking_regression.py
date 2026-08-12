@@ -169,6 +169,29 @@ def test_ranking_v1_regression_fixture_passes_production_screening():
         assert result == recorded_by_ticker[record.ticker]
 
 
+def test_ranking_v1_regression_fixture_is_minimal_and_keeps_opaque_provenance():
+    """MEDIUM-1: the fixture is a Minimal Ranking Regression. Every artifact
+    metadata.yaml lists as not stored must really be absent, while
+    event_gate.json must keep the Opaque Upstream Provenance hashes of those
+    artifacts -- dropping the files must never mean dropping the hashes
+    (the Event Gate schema is unchanged)."""
+    metadata = load_yaml(Path("regression/2026-08-12-ranking-v1-complete/metadata.yaml"))
+    assert metadata["regression_type"] == "MINIMAL_RANKING_REGRESSION"
+
+    not_stored = {entry["artifact"] for entry in metadata["not_stored"]}
+    assert "runs/2026-08-12/candidate_pipeline.json" in not_stored
+    assert "runs/2026-08-12/event_research.json" in not_stored
+    assert "runs/2026-08-12/market_research.json" in not_stored
+    fixture_root = FIXTURE_DIR.parent.parent
+    for artifact in not_stored:
+        assert not (fixture_root / artifact).exists(), f"{artifact} is listed as not stored"
+
+    event_gate = json.loads((FIXTURE_DIR / "event_gate.json").read_text(encoding="utf-8"))
+    for key in ("event_research_sha256", "candidate_pipeline_sha256"):
+        recorded = event_gate["input_hashes"][key]
+        assert isinstance(recorded, str) and len(recorded) == 64
+
+
 ALLOWED_CLASSIFICATIONS = {"DIRECT INPUT", "EXPECTED OUTPUT"}
 
 
