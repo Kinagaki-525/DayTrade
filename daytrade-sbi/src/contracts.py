@@ -201,37 +201,54 @@ def validate_ranking_preconditions(
     source_matrix: dict[str, Any],
     config: dict[str, Any],
     input_hashes: dict[str, Any],
+    source_base_dir: Path | None = None,
 ) -> None:
     if config.get("config_schema_version") != 5:
-        raise ValueError("config_schema_version must be 5 for build-ranking")
+        raise ValueError("RANKING_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 5 for build-ranking")
     if "ranking" not in config:
-        raise ValueError("config is missing the ranking block required for build-ranking")
+        raise ValueError(
+            "RANKING_CONFIG_BLOCK_MISSING: config is missing the ranking block required for build-ranking"
+        )
+
+    # CRITICAL: never trust event_gate.json's own top-level flags
+    # (event_gate_complete / ranking_ready / ranking_block_reasons) at face
+    # value. A schema-valid but internally-contradictory event_gate.json
+    # must be rejected before any of those flags are relied upon below.
+    _verify_event_gate_internal_consistency(event_gate, source_payload=source_payload)
 
     if event_gate.get("event_gate_complete") is not True:
-        raise ValueError("event_gate.event_gate_complete must be true for build-ranking")
+        raise ValueError(
+            "RANKING_EVENT_GATE_NOT_COMPLETE: event_gate.event_gate_complete must be true for build-ranking"
+        )
     if event_gate.get("ranking_ready") is not True:
-        raise ValueError("event_gate.ranking_ready must be true for build-ranking")
+        raise ValueError("RANKING_EVENT_GATE_NOT_READY: event_gate.ranking_ready must be true for build-ranking")
     if event_gate.get("ranking_block_reasons"):
-        raise ValueError("event_gate.ranking_block_reasons must be empty for build-ranking")
+        raise ValueError(
+            "RANKING_EVENT_GATE_BLOCKED: event_gate.ranking_block_reasons must be empty for build-ranking"
+        )
 
     if event_gate.get("strategy_version") != config.get("strategy_version"):
-        raise ValueError("event_gate strategy_version does not match --config")
+        raise ValueError("RANKING_STRATEGY_VERSION_MISMATCH: event_gate strategy_version does not match --config")
     if event_gate.get("config_sha256") != strategy_config_sha256(config):
-        raise ValueError("event_gate config_sha256 does not match --config")
+        raise ValueError("RANKING_CONFIG_SHA256_MISMATCH: event_gate config_sha256 does not match --config")
     _require_equal(event_gate, candidates, "target_date", "event_gate/candidates")
     if candidates.get("strategy_version") != config.get("strategy_version"):
-        raise ValueError("candidates strategy_version does not match --config")
+        raise ValueError("RANKING_STRATEGY_VERSION_MISMATCH: candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
-        raise ValueError("candidates config_sha256 does not match --config")
+        raise ValueError("RANKING_CONFIG_SHA256_MISMATCH: candidates config_sha256 does not match --config")
     if not event_gate.get("target_date"):
-        raise ValueError("event_gate.target_date is required")
+        raise ValueError("RANKING_TARGET_DATE_MISSING: event_gate.target_date is required")
     if not event_gate.get("previous_trading_day"):
-        raise ValueError("event_gate.previous_trading_day is required")
+        raise ValueError("RANKING_PREVIOUS_TRADING_DAY_MISSING: event_gate.previous_trading_day is required")
 
     if candidates.get("target_date") != event_gate.get("target_date"):
-        raise ValueError("candidates.json target_date does not match event_gate.json target_date")
+        raise ValueError(
+            "RANKING_TARGET_DATE_MISMATCH: candidates.json target_date does not match event_gate.json target_date"
+        )
     if market_data.get("target_date") != event_gate.get("target_date"):
-        raise ValueError("market_data.json target_date does not match event_gate.json target_date")
+        raise ValueError(
+            "RANKING_TARGET_DATE_MISMATCH: market_data.json target_date does not match event_gate.json target_date"
+        )
 
     _check_sources_uniqueness(source_payload)
     _check_market_data_uniqueness(market_data)
@@ -240,13 +257,17 @@ def validate_ranking_preconditions(
 
     result = validate_source_matrix(source_matrix)
     if not result.valid:
-        raise ValueError("Source matrix validation failed: " + "; ".join(result.errors))
+        raise ValueError(
+            "RANKING_SOURCE_MATRIX_INVALID: Source matrix validation failed: " + "; ".join(result.errors)
+        )
 
     # CRITICAL-1: mandatory Source Ledger / Market Data provenance
     # validation. Parse market_data.json into the project's established
     # MarketDataRecord objects and run the same validate_source_ledger() /
     # validate_market_data() checks used elsewhere in the pipeline -- never
-    # trust a bare data_status=="VERIFIED" string in isolation.
+    # trust a bare data_status=="VERIFIED" string in isolation. Mirrors
+    # _load_market_bundle()'s pattern in cli.py: pass source_base_dir so
+    # referenced source page files are also verified to exist on disk.
     from src.market import MarketDataRecord, validate_market_data, validate_source_ledger
 
     records = [
@@ -257,6 +278,7 @@ def validate_ranking_preconditions(
         records,
         source_payload,
         source_matrix=source_matrix,
+        source_base_dir=source_base_dir,
     )
     if not ledger_result.valid:
         raise ValueError(
@@ -287,7 +309,7 @@ def validate_ranking_preconditions(
         "strategy_snapshot_sha256",
     }
     if set(input_hashes.keys()) != required_hashes:
-        raise ValueError("input_hashes mismatch")
+        raise ValueError("RANKING_INPUT_HASHES_INVALID: input_hashes mismatch")
 
     # Hash-chain re-verification: candidates.json, sources.json, and the
     # strategy snapshot fed into ranking must be byte-identical to what
@@ -304,6 +326,7 @@ def validate_ranking_preconditions(
         current = input_hashes.get(ranking_key)
         if not recorded or recorded != current:
             raise ValueError(
+                "RANKING_HASH_CHAIN_MISMATCH: "
                 f"event_gate.input_hashes.{event_gate_key} does not match the "
                 f"{ranking_key} of the file supplied to build-ranking "
                 "(candidates.json/sources.json/strategy snapshot must be "
@@ -317,8 +340,125 @@ def _check_market_data_uniqueness(market_data: dict[str, Any]) -> None:
         ticker = record.get("ticker")
         if isinstance(ticker, str):
             if ticker in tickers:
-                raise ValueError(f"duplicate market_data record ticker: {ticker}")
+                raise ValueError(f"RANKING_DUPLICATE_MARKET_DATA_TICKER: duplicate market_data record ticker: {ticker}")
             tickers.add(ticker)
+
+
+def _verify_event_gate_internal_consistency(
+    event_gate: dict[str, Any],
+    *,
+    source_payload: dict[str, Any],
+) -> None:
+    """Independent re-verification of event_gate.json's internal
+    consistency, run on the Ranking side before any of event_gate.json's
+    own top-level flags (event_gate_complete / ranking_ready /
+    ranking_block_reasons / summary counts) are trusted.
+
+    This never changes what event_gate.py itself computes or writes -- it
+    only recomputes the same derivations independently, from the recorded
+    candidates/rule_evaluations, and hard-errors on any mismatch. Reuses
+    event_gate.py's own pure helper functions rather than reimplementing
+    the rule-aggregation / summary / block-reason logic.
+    """
+    from src import event_gate as event_gate_module
+
+    candidates = event_gate.get("candidates", [])
+    if not isinstance(candidates, list):
+        raise ValueError("RANKING_EVENT_GATE_CANDIDATES_INVALID: event_gate.candidates must be a list")
+
+    all_tickers: list[str] = []
+    for candidate in candidates:
+        ticker = candidate.get("ticker")
+        if not isinstance(ticker, str):
+            raise ValueError("RANKING_EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker is not a string")
+        if ticker != ticker.strip():
+            raise ValueError(
+                f"RANKING_EVENT_GATE_TICKER_MALFORMED: event_gate candidate ticker has leading/trailing "
+                f"whitespace: {ticker!r}"
+            )
+        all_tickers.append(ticker)
+
+    # Uniqueness across ALL statuses combined (PASS/REJECT/DATA_UNAVAILABLE),
+    # not just within PASS.
+    if len(all_tickers) != len(set(all_tickers)):
+        raise ValueError(
+            "RANKING_EVENT_GATE_DUPLICATE_TICKER: duplicate candidate ticker across event_gate.candidates "
+            "(all statuses combined)"
+        )
+
+    # event_gate_input_tickers must match the candidate ticker set exactly.
+    input_tickers = set(event_gate.get("event_gate_input_tickers", []))
+    if set(all_tickers) != input_tickers:
+        raise ValueError(
+            "RANKING_EVENT_GATE_INPUT_TICKER_MISMATCH: event_gate.event_gate_input_tickers does not match "
+            "the set of tickers across event_gate.candidates"
+        )
+
+    # Recompute each candidate's gate_status from its rule_evaluations using
+    # event_gate.py's own aggregation logic and confirm it equals the
+    # recorded gate_status.
+    for candidate in candidates:
+        rule_evaluations = candidate.get("rule_evaluations", [])
+        if not isinstance(rule_evaluations, list):
+            raise ValueError(
+                f"RANKING_EVENT_GATE_RULE_EVALUATIONS_INVALID: {candidate.get('ticker')}: "
+                "rule_evaluations must be a list"
+            )
+        recomputed_status = event_gate_module._candidate_gate_status(
+            [_RuleResultView(rule.get("result")) for rule in rule_evaluations]
+        )
+        if recomputed_status != candidate.get("gate_status"):
+            raise ValueError(
+                f"RANKING_EVENT_GATE_STATUS_MISMATCH: {candidate.get('ticker')}: recorded gate_status="
+                f"{candidate.get('gate_status')!r} does not match recomputed gate_status "
+                f"{recomputed_status!r} from rule_evaluations"
+            )
+
+    # Recompute PASS/REJECT/DATA_UNAVAILABLE + rule counts from the
+    # candidate list (using the now-verified gate_status/rule_evaluations)
+    # and confirm they match event_gate.summary exactly.
+    recomputed_summary = event_gate_module._build_summary(candidates)
+    if recomputed_summary != event_gate.get("summary"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_SUMMARY_MISMATCH: event_gate.summary does not match recomputed "
+            "candidate status counts"
+        )
+
+    # Recompute event_gate_complete using event_gate.py's own logic.
+    recomputed_complete = event_gate_module._event_gate_complete(event_gate, source_payload)
+    if recomputed_complete != event_gate.get("event_gate_complete"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_COMPLETE_MISMATCH: event_gate.event_gate_complete does not match "
+            "recomputed value"
+        )
+
+    # Recompute ranking_block_reasons / ranking_ready using event_gate.py's
+    # own logic, applied to the recomputed (not merely recorded) inputs.
+    recomputed_block_reasons = event_gate_module._ranking_block_reasons(
+        {"event_gate_complete": recomputed_complete, "summary": recomputed_summary}
+    )
+    if recomputed_block_reasons != event_gate.get("ranking_block_reasons"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_BLOCK_REASONS_MISMATCH: event_gate.ranking_block_reasons does not match "
+            "recomputed value"
+        )
+    recomputed_ready = recomputed_complete is True and not recomputed_block_reasons
+    if recomputed_ready != event_gate.get("ranking_ready"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_READY_MISMATCH: event_gate.ranking_ready does not match recomputed value"
+        )
+
+
+class _RuleResultView:
+    """Minimal attribute-carrying adapter so event_gate.py's
+    _candidate_gate_status() (which expects EventRuleEvaluation dataclass
+    instances) can be reused against plain rule_evaluations dicts loaded
+    from event_gate.json, without reimplementing its aggregation logic."""
+
+    __slots__ = ("result",)
+
+    def __init__(self, result: Any) -> None:
+        self.result = result
 
 
 def validate_ranking_output_contract(
@@ -333,13 +473,13 @@ def validate_ranking_output_contract(
     from src.ranking import build_ranking
 
     if ranking.get("target_date") != event_gate.get("target_date"):
-        raise ValueError("ranking target_date does not match event_gate")
+        raise ValueError("RANKING_TARGET_DATE_MISMATCH: ranking target_date does not match event_gate")
     if ranking.get("strategy_version") != config.get("strategy_version"):
-        raise ValueError("ranking strategy_version does not match --config")
+        raise ValueError("RANKING_STRATEGY_VERSION_MISMATCH: ranking strategy_version does not match --config")
     if ranking.get("config_sha256") != strategy_config_sha256(config):
-        raise ValueError("ranking config_sha256 does not match --config")
+        raise ValueError("RANKING_CONFIG_SHA256_MISMATCH: ranking config_sha256 does not match --config")
     if ranking.get("ranking_status") not in ("COMPLETE", "DATA_UNAVAILABLE"):
-        raise ValueError("ranking_status must be COMPLETE or DATA_UNAVAILABLE")
+        raise ValueError("RANKING_STATUS_INVALID: ranking_status must be COMPLETE or DATA_UNAVAILABLE")
 
     pass_tickers = {
         str(c.get("ticker")).strip()
@@ -348,38 +488,66 @@ def validate_ranking_output_contract(
     }
     ranking_tickers = {c.get("ticker") for c in ranking.get("candidates", [])}
     if pass_tickers != ranking_tickers:
-        raise ValueError("ranking.candidates does not match event_gate PASS candidates")
+        raise ValueError(
+            "RANKING_CANDIDATE_SET_MISMATCH: ranking.candidates does not match event_gate PASS candidates"
+        )
 
     summary = ranking.get("summary") or {}
     if ranking.get("ranking_status") == "COMPLETE":
         if ranking.get("ranking_complete") is not True:
-            raise ValueError("ranking_complete must be true when ranking_status is COMPLETE")
+            raise ValueError(
+                "RANKING_COMPLETE_FLAG_MISMATCH: ranking_complete must be true when ranking_status is COMPLETE"
+            )
         for candidate in ranking.get("candidates", []):
             if candidate.get("final_rank") is None:
-                raise ValueError("COMPLETE ranking requires a final_rank for every candidate")
+                raise ValueError(
+                    "RANKING_FINAL_RANK_MISSING: COMPLETE ranking requires a final_rank for every candidate"
+                )
     else:
         if ranking.get("ranking_complete") is not False:
             raise ValueError(
-                "ranking_complete must be false when ranking_status is DATA_UNAVAILABLE"
+                "RANKING_COMPLETE_FLAG_MISMATCH: ranking_complete must be false when ranking_status is "
+                "DATA_UNAVAILABLE"
             )
         for candidate in ranking.get("candidates", []):
             if candidate.get("final_rank") is not None or candidate.get("rank_points") is not None:
                 raise ValueError(
-                    "DATA_UNAVAILABLE ranking must null out final_rank/rank_points for every candidate"
+                    "RANKING_DATA_UNAVAILABLE_FIELDS_NOT_NULL: DATA_UNAVAILABLE ranking must null out "
+                    "final_rank/rank_points for every candidate"
                 )
         if summary.get("ranked_count") != 0 or summary.get("top_ranked_ticker") is not None:
             raise ValueError(
-                "DATA_UNAVAILABLE ranking requires summary.ranked_count==0 and "
-                "summary.top_ranked_ticker==null"
+                "RANKING_DATA_UNAVAILABLE_SUMMARY_INVALID: DATA_UNAVAILABLE ranking requires "
+                "summary.ranked_count==0 and summary.top_ranked_ticker==null"
             )
 
     if set(ranking.get("input_candidate_tickers", [])) != pass_tickers:
-        raise ValueError("ranking.input_candidate_tickers does not match event_gate PASS candidates")
+        raise ValueError(
+            "RANKING_INPUT_CANDIDATE_TICKERS_MISMATCH: ranking.input_candidate_tickers does not match "
+            "event_gate PASS candidates"
+        )
+
+    # Semantic field recomputation: previous_trading_day and
+    # event_gate_as_of are carried through verbatim from event_gate.json,
+    # so recompute-and-compare against event_gate rather than merely
+    # schema-shape-checking their presence. generated_at is intentionally
+    # exempt (wall-clock at write time).
+    if ranking.get("previous_trading_day") != event_gate.get("previous_trading_day"):
+        raise ValueError(
+            "RANKING_PREVIOUS_TRADING_DAY_MISMATCH: ranking.previous_trading_day does not match "
+            "event_gate.previous_trading_day"
+        )
+    if ranking.get("event_gate_as_of") != event_gate.get("event_gate_as_of"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_AS_OF_MISMATCH: ranking.event_gate_as_of does not match "
+            "event_gate.event_gate_as_of"
+        )
 
     # Recomputation-based verification: the output must exactly match a
     # fresh call to build_ranking with the same inputs (no mutation, no
-    # non-determinism). This also re-verifies summary fields and
-    # top_ranked_ticker by recomputation rather than schema-shape alone.
+    # non-determinism). This also re-verifies summary fields,
+    # top_ranked_ticker, and the full ordered reason_codes set by
+    # recomputation rather than schema-shape/presence alone.
     recomputed = build_ranking(
         event_gate=event_gate,
         candidates=candidates,
@@ -389,14 +557,36 @@ def validate_ranking_output_contract(
         input_hashes=ranking.get("input_hashes", {}),
     )
     if recomputed.get("candidates") != ranking.get("candidates"):
-        raise ValueError("ranking.candidates does not match recomputed ranking result")
+        raise ValueError(
+            "RANKING_CANDIDATES_RECOMPUTE_MISMATCH: ranking.candidates does not match recomputed ranking result"
+        )
     if recomputed.get("ranking_status") != ranking.get("ranking_status"):
-        raise ValueError("ranking_status does not match recomputed ranking result")
+        raise ValueError(
+            "RANKING_STATUS_RECOMPUTE_MISMATCH: ranking_status does not match recomputed ranking result"
+        )
     if recomputed.get("summary") != summary:
-        raise ValueError("ranking.summary does not match recomputed ranking result")
+        raise ValueError(
+            "RANKING_SUMMARY_RECOMPUTE_MISMATCH: ranking.summary does not match recomputed ranking result"
+        )
     if recomputed.get("input_candidate_tickers") != ranking.get("input_candidate_tickers"):
         raise ValueError(
-            "ranking.input_candidate_tickers does not match recomputed ranking result"
+            "RANKING_INPUT_CANDIDATE_TICKERS_RECOMPUTE_MISMATCH: ranking.input_candidate_tickers does not "
+            "match recomputed ranking result"
+        )
+    if recomputed.get("reason_codes") != ranking.get("reason_codes"):
+        raise ValueError(
+            "RANKING_REASON_CODES_RECOMPUTE_MISMATCH: ranking.reason_codes does not match recomputed "
+            "ranking result (including canonical order)"
+        )
+    if recomputed.get("previous_trading_day") != ranking.get("previous_trading_day"):
+        raise ValueError(
+            "RANKING_PREVIOUS_TRADING_DAY_RECOMPUTE_MISMATCH: ranking.previous_trading_day does not match "
+            "recomputed ranking result"
+        )
+    if recomputed.get("event_gate_as_of") != ranking.get("event_gate_as_of"):
+        raise ValueError(
+            "RANKING_EVENT_GATE_AS_OF_RECOMPUTE_MISMATCH: ranking.event_gate_as_of does not match "
+            "recomputed ranking result"
         )
 
 

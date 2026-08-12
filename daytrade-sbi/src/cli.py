@@ -1243,6 +1243,7 @@ def _build_ranking(
         source_matrix=source_matrix,
         config=config,
         input_hashes=input_hashes,
+        source_base_dir=sources_path.parent,
     )
 
     payload = build_ranking(

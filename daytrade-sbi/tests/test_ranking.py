@@ -212,8 +212,55 @@ def _event_gate(tickers: list[str]) -> dict:
     }
 
 
+_EVENT_RULE_IDS = (
+    "earnings_on_target_date",
+    "earnings_on_previous_trading_day",
+    "tdnet_disclosure_in_event_window",
+    "dangerous_news_with_primary_confirmation",
+)
+
+
+def _pass_rule_evaluations() -> list[dict]:
+    """Four PASS rule_evaluations matching event_gate.py's EVENT_RULE_IDS
+    exactly, so gate_status/summary/ranking_ready recompute consistently
+    under the CRITICAL Event Gate re-verification in contracts.py."""
+    return [
+        {
+            "rule_id": rule_id,
+            "result": "PASS",
+            "reason_codes": [],
+            "source_ids": [],
+            "source_attempt_ids": [],
+            "evidence_ids": [],
+        }
+        for rule_id in _EVENT_RULE_IDS
+    ]
+
+
+def _event_gate_summary(*, pass_count: int, reject_count: int = 0, data_unavailable_count: int = 0) -> dict:
+    input_count = pass_count + reject_count + data_unavailable_count
+    return {
+        "input_count": input_count,
+        "pass_count": pass_count,
+        "reject_count": reject_count,
+        "data_unavailable_count": data_unavailable_count,
+        "rule_counts": [
+            {
+                "rule_id": rule_id,
+                "pass_count": input_count,
+                "reject_count": 0,
+                "data_unavailable_count": 0,
+            }
+            for rule_id in _EVENT_RULE_IDS
+        ],
+    }
+
+
 def _full_event_gate(tickers: list[str]) -> dict:
-    """A schema-conformant event_gate.json payload (for CLI-level tests)."""
+    """A schema-conformant, internally-consistent event_gate.json payload
+    (for CLI-level tests) -- every PASS candidate carries real PASS
+    rule_evaluations so the CRITICAL Event Gate re-verification in
+    contracts.py recomputes the same gate_status/summary/ranking_ready."""
     return {
         "schema_version": 2,
         "event_gate_version": "event-gate-v1",
@@ -236,15 +283,14 @@ def _full_event_gate(tickers: list[str]) -> dict:
         "event_gate_complete": True,
         "ranking_ready": True,
         "ranking_block_reasons": [],
-        "summary": {
-            "input_count": len(tickers),
-            "pass_count": len(tickers),
-            "reject_count": 0,
-            "data_unavailable_count": 0,
-            "rule_counts": [],
-        },
+        "summary": _event_gate_summary(pass_count=len(tickers)),
         "candidates": [
-            {"ticker": ticker, "gate_status": "PASS", "reason_codes": [], "rule_evaluations": []}
+            {
+                "ticker": ticker,
+                "gate_status": "PASS",
+                "reason_codes": [],
+                "rule_evaluations": _pass_rule_evaluations(),
+            }
             for ticker in tickers
         ],
     }
@@ -1339,3 +1385,292 @@ def test_output_contract_input_candidate_tickers_mismatch_is_rejected():
             source_payload=source_payload,
             config=CONFIG,
         )
+
+
+# --- CRITICAL: Event Gate internal-consistency re-verification -------------
+
+
+def _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources):
+    output_path = tmp_path / "ranking.json"
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
+    )
+    return cli.main(
+        [
+            "build-ranking",
+            "--event-gate",
+            str(event_gate_path),
+            "--candidates",
+            str(candidates_path),
+            "--market-data",
+            str(market_data_path),
+            "--sources",
+            str(sources_path),
+            "--source-matrix",
+            str(DEFAULT_SOURCE_MATRIX_PATH),
+            "--config",
+            str(DEFAULT_CONFIG_PATH),
+            "--output",
+            str(output_path),
+        ]
+    ), output_path
+
+
+def test_event_gate_reverify_rejects_false_ranking_ready_with_data_unavailable(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "HH01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # A second candidate is DATA_UNAVAILABLE, but the top-level flags falsely
+    # claim ranking_ready=true with no block reasons.
+    du_rules = _pass_rule_evaluations()
+    du_rules[0]["result"] = "DATA_UNAVAILABLE"
+    du_rules[0]["reason_codes"] = ["EARNINGS_SCHEDULE_UNAVAILABLE"]
+    event_gate["candidates"].append(
+        {"ticker": "HH02", "gate_status": "DATA_UNAVAILABLE", "reason_codes": ["EARNINGS_SCHEDULE_UNAVAILABLE"], "rule_evaluations": du_rules}
+    )
+    event_gate["event_gate_input_tickers"].append("HH02")
+    event_gate["upstream_candidate_tickers"].append("HH02")
+    event_gate["summary"] = _event_gate_summary(pass_count=1, data_unavailable_count=1)
+    # False claim: still says ranking is ready with no block reasons.
+    event_gate["ranking_ready"] = True
+    event_gate["ranking_block_reasons"] = []
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_zero_pass_with_false_ranking_ready(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case([])
+    event_gate["candidates"] = [
+        {"ticker": "II01", "gate_status": "REJECT", "reason_codes": ["EARNINGS_ON_TARGET_DATE"], "rule_evaluations": [
+            {**rule, "result": "REJECT", "reason_codes": ["EARNINGS_ON_TARGET_DATE"], "evidence_ids": ["ev-1"]}
+            if rule["rule_id"] == "earnings_on_target_date"
+            else rule
+            for rule in _pass_rule_evaluations()
+        ]}
+    ]
+    event_gate["event_gate_input_tickers"] = ["II01"]
+    event_gate["upstream_candidate_tickers"] = ["II01"]
+    event_gate["summary"] = _event_gate_summary(pass_count=0, reject_count=1)
+    event_gate["summary"]["rule_counts"][0] = {
+        "rule_id": "earnings_on_target_date",
+        "pass_count": 0,
+        "reject_count": 1,
+        "data_unavailable_count": 0,
+    }
+    # False claim: zero PASS candidates but ranking_ready=true.
+    event_gate["ranking_ready"] = True
+    event_gate["ranking_block_reasons"] = []
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_summary_count_mismatch(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "JJ01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Summary falsely claims 2 PASS when only 1 candidate is recorded.
+    event_gate["summary"]["pass_count"] = 2
+    event_gate["summary"]["input_count"] = 2
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_SUMMARY_MISMATCH"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_pass_status_implying_reject(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "KK01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # gate_status says PASS but the earnings rule actually rejected it.
+    event_gate["candidates"][0]["rule_evaluations"][0]["result"] = "REJECT"
+    event_gate["candidates"][0]["rule_evaluations"][0]["reason_codes"] = ["EARNINGS_ON_TARGET_DATE"]
+    event_gate["candidates"][0]["rule_evaluations"][0]["evidence_ids"] = ["ev-1"]
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_STATUS_MISMATCH"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_pass_status_implying_data_unavailable(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "LL01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # gate_status says PASS but a rule actually is DATA_UNAVAILABLE.
+    event_gate["candidates"][0]["rule_evaluations"][1]["result"] = "DATA_UNAVAILABLE"
+    event_gate["candidates"][0]["rule_evaluations"][1]["reason_codes"] = ["PREVIOUS_DAY_DISCLOSURE_UNAVAILABLE"]
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_STATUS_MISMATCH"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_duplicate_ticker_across_statuses(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "MM01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    reject_rules = [
+        {**rule, "result": "REJECT", "reason_codes": ["EARNINGS_ON_TARGET_DATE"], "evidence_ids": ["ev-1"]}
+        if rule["rule_id"] == "earnings_on_target_date"
+        else rule
+        for rule in _pass_rule_evaluations()
+    ]
+    event_gate["candidates"].append(
+        {"ticker": "MM01", "gate_status": "REJECT", "reason_codes": ["EARNINGS_ON_TARGET_DATE"], "rule_evaluations": reject_rules}
+    )
+    event_gate["summary"]["input_count"] = 2
+    event_gate["summary"]["reject_count"] = 1
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_DUPLICATE_TICKER"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+def test_event_gate_reverify_rejects_whitespace_ticker(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "NN01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    event_gate["candidates"][0]["ticker"] = " NN01"
+    event_gate["event_gate_input_tickers"] = [" NN01"]
+
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_TICKER_MALFORMED"):
+        _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)
+
+
+# --- MEDIUM: canonical ordering ---------------------------------------------
+
+
+def test_ranking_data_reason_order_constant_matches_schema_enum():
+    from src.ranking import RANKING_DATA_REASON_ORDER
+
+    assert RANKING_DATA_REASON_ORDER == (
+        "TURNOVER_SOURCE_NOT_FOUND",
+        "TURNOVER_SOURCE_NOT_YET_AVAILABLE",
+        "TURNOVER_SOURCE_ACCESS_FAILED",
+        "TURNOVER_SOURCE_PARSE_FAILED",
+        "TURNOVER_SOURCE_STALE",
+        "TURNOVER_SOURCE_CONFLICT",
+    )
+
+
+def test_aggregate_reason_codes_use_canonical_order_not_alphabetical():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [
+            {"ticker": "OO01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+            {"ticker": "OO02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+        ]
+    )
+    # OO01 -> STALE (alphabetically later reason code), OO02 -> NOT_FOUND
+    # (alphabetically earlier). Canonical order puts NOT_FOUND before STALE;
+    # alphabetical sort would put STALE before NOT_FOUND.
+    source_payload["source_attempts"][0]["status"] = "STALE"
+    source_payload["source_attempts"][0]["values"] = None
+    source_payload["source_attempts"][0]["result_count"] = None
+    source_payload["source_attempts"][0]["coverage_status"] = None
+    source_payload["source_attempts"][0]["covered_dates"] = None
+    market_data["records"][0]["turnover"] = None
+    candidates["candidates"][0]["features"]["turnover"]["value"] = None
+    candidates["candidates"][0]["features"]["turnover"]["source_refs"] = []
+
+    source_payload["source_attempts"][1]["status"] = "NOT_FOUND"
+    source_payload["source_attempts"][1]["values"] = None
+    source_payload["source_attempts"][1]["result_count"] = None
+    source_payload["source_attempts"][1]["coverage_status"] = None
+    source_payload["source_attempts"][1]["covered_dates"] = None
+    market_data["records"][1]["turnover"] = None
+    candidates["candidates"][1]["features"]["turnover"]["value"] = None
+    candidates["candidates"][1]["features"]["turnover"]["source_refs"] = []
+
+    result = _run(event_gate, candidates, market_data, source_payload)
+    assert result["ranking_status"] == "DATA_UNAVAILABLE"
+    assert result["reason_codes"] == ["TURNOVER_SOURCE_NOT_FOUND", "TURNOVER_SOURCE_STALE"]
+
+
+def test_tick_size_source_refs_are_sorted_and_deduplicated():
+    event_gate, candidates, market_data, source_payload = _build_case(
+        [{"ticker": "PP01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    tick_source = market_data["records"][0]["sources"][0]
+    duplicate_source = dict(tick_source)
+    duplicate_source["source_ref"] = "tick-zzz-PP01"
+    market_data["records"][0]["sources"].append(duplicate_source)
+    # Out-of-order with a duplicate: should collapse to a sorted, deduped tuple.
+    market_data["records"][0]["field_provenance"][0]["source_refs"] = [
+        "tick-zzz-PP01",
+        tick_source["source_ref"],
+        tick_source["source_ref"],
+    ]
+
+    result = _run(event_gate, candidates, market_data, source_payload)
+    refs = result["candidates"][0]["provenance"]["tick_size_source_refs"]
+    assert refs == sorted(set(refs))
+    assert refs == sorted({"tick-zzz-PP01", tick_source["source_ref"]})
+
+
+# --- MEDIUM: output contract semantic field recomputation -------------------
+
+
+def test_output_contract_previous_trading_day_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "QQ01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["previous_trading_day"] = "2099-01-01"
+    with pytest.raises(ValueError, match="RANKING_PREVIOUS_TRADING_DAY_MISMATCH"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+def test_output_contract_event_gate_as_of_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "QQ02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    ranking["event_gate_as_of"] = "2099-01-01T00:00:00+09:00"
+    with pytest.raises(ValueError, match="RANKING_EVENT_GATE_AS_OF_MISMATCH"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+def test_output_contract_reason_codes_order_mismatch_is_rejected():
+    event_gate, candidates, market_data, source_payload, ranking = _build_output_contract_case(
+        [{"ticker": "QQ03", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # COMPLETE ranking has an empty reason_codes list; corrupt it to a
+    # non-empty, wrongly-ordered value and confirm recomputation catches it.
+    ranking["reason_codes"] = ["TURNOVER_SOURCE_STALE", "TURNOVER_SOURCE_NOT_FOUND"]
+    with pytest.raises(ValueError, match="RANKING_REASON_CODES_RECOMPUTE_MISMATCH"):
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=market_data,
+            source_payload=source_payload,
+            config=CONFIG,
+        )
+
+
+# --- LOW/MEDIUM: CLI source ledger path validation ---------------------------
+
+
+def test_cli_build_ranking_missing_source_page_file_is_rejected(tmp_path):
+    event_gate, candidates, market_data, sources = _build_full_case(
+        [{"ticker": "RR01", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"}]
+    )
+    # Point a source_attempt at a page file that does not exist on disk. The
+    # build-ranking CLI command must pass source_base_dir through to
+    # validate_source_ledger() (mirroring the market-bundle pattern used
+    # elsewhere in cli.py) so this is caught, not silently accepted.
+    for attempt in sources["source_attempts"]:
+        attempt["source_page_path"] = "source_pages/does-not-exist.html"
+
+    result, output_path = None, None
+    with pytest.raises(ValueError, match="RANKING_SOURCE_LEDGER_INVALID"):
+        result, output_path = _run_build_ranking_cli(tmp_path, event_gate, candidates, market_data, sources)

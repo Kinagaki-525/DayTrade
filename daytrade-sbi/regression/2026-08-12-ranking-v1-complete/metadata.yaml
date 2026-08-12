@@ -1,0 +1,13 @@
+target_date: 2026-08-12
+decision: RANKING_COMPLETE_NOT_TRADE
+ranking_status: COMPLETE
+event_gate_pass_candidates: 1
+canonical_run_dir: "runs/2026-08-12"
+purpose: >
+  Synthetic-but-real regression fixture generated with the actual
+  build_event_gate()/build_ranking() functions (not hand-authored) to
+  demonstrate a self-consistent Event Gate -> Ranking COMPLETE chain end to
+  end, with genuine sha256 hashes of the artifact bytes recorded in
+  event_gate.json/ranking.json input_hashes (no placeholder hashes).
+  Ranking COMPLETE never implies TRADE-eligibility -- no recommendation.json
+  is included, since Selection/rank1->TRADE is intentionally unimplemented.

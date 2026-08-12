@@ -79,6 +79,21 @@ def test_v3_config_is_still_loadable_with_legacy_event_gate_shape():
     assert v3_config["event_gate"]["earnings"]["primary_source_id"] == "JPX_EARNINGS_SCHEDULE"
 
 
+def test_v4_config_fixture_loads_without_ranking_block():
+    """Genuine legacy-shaped (pre-ranking) schema_version=4 strategy.yaml:
+    this is what strategy.yaml looked like before the `ranking:` block was
+    added. It must still load successfully and must NOT contain a ranking
+    section -- proving true backward compatibility rather than re-testing
+    the current v5 config."""
+    v4_config = load_strategy_config(PROJECT_ROOT / "tests" / "fixtures" / "strategy_v4.yaml")
+    assert v4_config["config_schema_version"] == 4
+    assert "ranking" not in v4_config
+    assert v4_config["event_gate"]["earnings"]["target_date_source_ids"] == [
+        "JPX_EARNINGS_SCHEDULE",
+        "COMPANY_IR",
+    ]
+
+
 def test_v4_config_requires_new_earnings_source_id_lists():
     config = load_strategy_config()
     config["event_gate"]["earnings"]["target_date_source_ids"] = ["OTHER"]

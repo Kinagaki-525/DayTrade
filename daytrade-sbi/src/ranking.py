@@ -26,6 +26,20 @@ DATA_UNAVAILABLE_STATUS_TO_REASON_CODE = {
     "CONFLICT": "TURNOVER_SOURCE_CONFLICT",
 }
 
+# Canonical/spec-defined ordering for the six known Ranking reason codes.
+# Both the per-candidate `reason_codes` and the top-level aggregate
+# `reason_codes` must be emitted (and validated) in this fixed order, never
+# alphabetically and never in discovery order. Matches ranking.schema.json's
+# enum ordering and DATA_UNAVAILABLE_STATUS_TO_REASON_CODE's declaration
+# order above.
+RANKING_DATA_REASON_ORDER: tuple[str, ...] = tuple(DATA_UNAVAILABLE_STATUS_TO_REASON_CODE.values())
+
+
+def _order_reason_codes(codes: Any) -> list[str]:
+    """Return codes deduplicated and sorted into RANKING_DATA_REASON_ORDER."""
+    code_set = set(codes)
+    return [code for code in RANKING_DATA_REASON_ORDER if code in code_set]
+
 # Workflow-incomplete statuses are always hard errors, never DATA_UNAVAILABLE.
 WORKFLOW_INCOMPLETE_STATUSES = frozenset(
     {"NOT_STARTED", "DEPENDENCY_NOT_READY", "EXECUTION_FAILED"}
@@ -291,7 +305,9 @@ def _tick_size_source_refs(ticker: str, market_record: dict[str, Any]) -> tuple[
             f"{ticker}: market_data.json tick_size field_provenance source_refs "
             f"reference unknown sources: {missing}",
         )
-    return tuple(str(ref) for ref in source_refs)
+    # Canonical ordering: sorted + deduplicated, never insertion order and
+    # never allowing duplicates through into the artifact.
+    return tuple(sorted({str(ref) for ref in source_refs}))
 
 
 def _recompute_order_plan(
@@ -767,7 +783,7 @@ def build_ranking(
                 {
                     "ticker": item.ticker,
                     "input_status": item.input_status,
-                    "reason_codes": list(item.reason_codes),
+                    "reason_codes": _order_reason_codes(item.reason_codes),
                     "provenance": _provenance(item),
                     "feature_values": {
                         "turnover_yen": (
@@ -842,8 +858,8 @@ def build_ranking(
         top_ranked_ticker = next(
             c["ticker"] for c in payload_candidates if c["final_rank"] == 1
         )
-    aggregate_reason_codes = sorted(
-        {code for item in inputs for code in item.reason_codes}
+    aggregate_reason_codes = _order_reason_codes(
+        code for item in inputs for code in item.reason_codes
     )
 
     return {

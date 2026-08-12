@@ -1,0 +1,162 @@
+config_schema_version: 5
+strategy_version: "v1"
+validation_status: unvalidated
+
+account:
+  broker: sbi
+  market: japanese_stocks
+  account_type: cash
+
+capital:
+  total_yen: 100000
+  position_size: 100
+
+risk:
+  max_loss_per_trade_yen: 500
+  max_positions: 1
+  max_trades_per_day: 1
+  averaging_down: false
+  overnight_hold: false
+  short_selling: false
+  margin_trading: false
+
+strategy:
+  allowed:
+    - previous_day_high_breakout
+
+previous_day_high_breakout:
+  trigger_ticks: 1
+  entry_limit_offset_ticks: 1
+
+exit:
+  take_profit_yen: 800
+
+event_gate:
+  version: "event-gate-v1"
+  earnings:
+    enabled: true
+    reject_target_date: true
+    reject_previous_trading_day: true
+    target_date_source_ids:
+      - "JPX_EARNINGS_SCHEDULE"
+      - "COMPANY_IR"
+    previous_day_source_ids:
+      - "JPX_TDNET"
+      - "COMPANY_IR_DISCLOSURE"
+  tdnet:
+    enabled: true
+    policy: "REJECT_ANY_DISCLOSURE"
+    source_id: "JPX_TDNET"
+  news:
+    enabled: true
+    required_source_ids:
+      - "YAHOO_JP_NEWS"
+      - "KABUTAN_NEWS"
+    confirmation_source_ids:
+      - "JPX_TDNET"
+      - "COMPANY_IR_DISCLOSURE"
+  post_cutoff:
+    recheck_required: true
+
+ranking:
+  enabled: true
+  version: "ranking-v1"
+  method: "ordinal_rank_sum"
+  features:
+    turnover:
+      direction: desc
+      source_policy: actual_only
+      estimated_allowed: false
+    relative_tick_size:
+      direction: asc
+  feature_rank_method: competition
+  aggregation:
+    method: rank_sum
+  tie_break:
+    - turnover_desc
+    - relative_tick_size_asc
+    - ticker_asc
+  missing_data_policy: fail_closed
+
+screening:
+  minimum_volume:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - volume
+    operator: ">="
+    threshold: null
+    reason_code: VOLUME_BELOW_MINIMUM
+  minimum_turnover:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - turnover
+    operator: ">="
+    threshold: null
+    reason_code: TURNOVER_BELOW_MINIMUM
+  minimum_price:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - close
+    operator: ">="
+    threshold: null
+    reason_code: PRICE_BELOW_MINIMUM
+  maximum_price:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - close
+    operator: "<="
+    threshold: null
+    reason_code: PRICE_ABOVE_MAXIMUM
+  maximum_spread:
+    enabled: false
+    phase: execution_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - spread
+    operator: "<="
+    threshold: null
+    reason_code: SPREAD_ABOVE_MAXIMUM
+  minimum_daily_range:
+    enabled: false
+    phase: hard_screening
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - daily_range_yen
+    operator: ">="
+    threshold: null
+    reason_code: DAILY_RANGE_BELOW_MINIMUM
+  maximum_gap_percent:
+    enabled: false
+    phase: entry_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - opening_gap_pct
+    operator: "<="
+    threshold: null
+    reason_code: GAP_ABOVE_MAXIMUM
+  exclude_earnings:
+    enabled: false
+    phase: event_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - earnings_scheduled
+    operator: "is_not"
+    threshold: null
+    reason_code: EARNINGS_SCHEDULED
+  exclude_special_disclosures:
+    enabled: false
+    phase: event_gate
+    criticality: TRADE_CRITICAL
+    input_fields:
+      - special_disclosures
+    operator: "is_not"
+    threshold: null
+    reason_code: SPECIAL_DISCLOSURE_FOUND

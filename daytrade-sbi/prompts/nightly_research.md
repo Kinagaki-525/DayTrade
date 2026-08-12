@@ -139,7 +139,27 @@ py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_researc
 
 `event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（`recommendation.json` は `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
 
-Event Gateより前（Stage 1 `PASS`銘柄が確定した段階）に、Rankingが使う実際の売買代金（`turnover`）を`YAHOO_JP_QUOTE`（`source_matrix.yaml`のTURNOVER Source）で調査し、`sources.json`のSource Attempt（`field_name=turnover`、`raw_unit=THOUSAND_YEN`、`raw_value`は3桁カンマ区切りの数字のみ、`canonical_value_yen=raw_value×1000`）として保存する。Event Gate生成時点のInput Hashは、その後変更しない。
+Event Gateより前（Stage 1 `PASS`銘柄が確定した段階）に、Rankingが使う実際の売買代金（`turnover`）を`YAHOO_JP_QUOTE`（`source_matrix.yaml`のTURNOVER Source）で調査し、`sources.json`のSource Attemptとして保存する。`status=FOUND` のTurnover Source Attemptは以下の契約を厳密に満たすこと（`src/ranking.py`が値そのままではなくこの契約を再検証する）:
+
+- `source_id=YAHOO_JP_QUOTE`
+- `source_role=PRIMARY`
+- `criticality=TRADE_CRITICAL`
+- `information_type=TURNOVER`
+- `candidate_code=`（対象銘柄のticker）
+- `target_date=`（当日のtarget_date）
+- `status=FOUND`
+- `result_count=1`
+- `coverage_status=COMPLETE`
+- `covered_dates=[previous_trading_day]`（前営業日1件のみ）
+- `values`は要素数ちょうど1件で、以下を満たす:
+  - `field_name=turnover`
+  - `trading_date=`（previous_trading_day）
+  - `raw_value`: 半角数字のみの文字列、または3桁ごとにカンマ区切りされた数字文字列のいずれか（`^(?:\d+|\d{1,3}(?:,\d{3})+)$` に一致する形式。カンマなしの純粋な数字列も、正しく3桁区切りされたカンマ付き数字列も両方受理される。それ以外の区切り方や余分な文字は不可）
+  - `raw_unit=THOUSAND_YEN`
+  - `canonical_value_yen`: `raw_value`からカンマを除去して数値化した値 × 1000 と一致する数字のみの文字列
+  - `source_ref`: `sources.json`の対応するレコードを一意に指す参照
+
+Event Gate生成時点のInput Hashは、その後変更しない。
 
 ## Ranking
 
