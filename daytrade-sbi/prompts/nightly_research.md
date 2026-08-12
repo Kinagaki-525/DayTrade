@@ -73,10 +73,13 @@ py -B -m src.cli init-candidate-research --market-research runs/YYYY-MM-DD/marke
 
 Stage 2 Candidate Researchは `YAHOO_JP_HISTORY`（OHLCV）や `YAHOO_JP_NEWS`（ニュース）を含め、`.T` Suffix固定のYahoo!ファイナンスURLを使い得る。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` のURL templateはいずれも `https://finance.yahoo.co.jp/quote/{ticker}.T...` であり、`.T`は東京証券取引所上場銘柄のSuffixである。一方Discoveryは `ALL_MARKETS` のため、東証以外・上場市場不明の候補が混ざり得る。
 
-そのため、**Stage 2 Candidate Researchを開始する前に**、Stage 1 `PASS` 候補ごとにTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを判定する。
+そのため、`apply-stage1` の直後に、Stage 1 `PASS` 候補**全件**についてTSE上場が既存の検証済みSource Evidence（例: `JPX_LISTED_COMPANY` 由来の上場市場情報）から確認できるかを、個別候補の除外ではなく**一括ゲート**として判定する。手順の並びは次の通り。
 
-- 確認できた候補だけ、Stage 2で `YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE` の `.T` URLを構築・取得してよい。
-- 確認できない候補は、これら3 Source向けに `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。その候補はStage 2 Candidate Research（そして以降のTurnover Research、Ranking）へ進めない（Fail Closed）。停止位置はStage 2開始前であり、Turnover Researchのステップまで待たない。
+`apply-stage1` → Stage 1 PASS候補全件のTSE確認（一括ゲート） → 全件確認成功の場合のみ `plan-stage2-batches` を実行
+
+- Stage 1 `PASS` 候補全件についてTSE上場を確認できた場合のみ `plan-stage2-batches` を実行し、Stage 2 Candidate Researchを全候補について通常どおり進める。
+- **1件でも確認不能なら `plan-stage2-batches` を実行せず、以降の全ステージ（Stage 2 / Turnover Research / Event Research / Ranking）を開始しない。** これは個別候補をStage 1 `PASS`集合から除外・スキップして残りの候補だけ進める仕組みではない。`stage1_status` を書き換えたり、確認できない候補だけを取り除いたりしない。夜間実行全体をこの時点でFail Closedとして停止する。
+- `.T` Suffixを推測したURLを一切構築・取得しない。Source Attemptを `FOUND` として記録せず、推測データも保存しない。
 - 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
 
 ## Candidate Research
@@ -126,10 +129,9 @@ Turnover ResearchはStage 2内の補助Researchとして扱い、`market_researc
 
 ### Yahoo!ファイナンス Symbol Suffixの運用前提（Fail Closed）
 
-`YAHOO_JP_QUOTE` のURL templateは `https://finance.yahoo.co.jp/quote/{ticker}.T` であり、`.T`は東京証券取引所上場銘柄のSuffixである。TSE上場確認は「Stage 2着手前のTSE上場確認（Fail Closed）」で既にStage 2開始前に完了しているため、ここで改めて確認できていない候補（＝Stage 2に進めなかった候補）はTurnover Researchの対象にもならない。
+`YAHOO_JP_QUOTE` のURL templateは `https://finance.yahoo.co.jp/quote/{ticker}.T` であり、`.T`は東京証券取引所上場銘柄のSuffixである。TSE上場確認は「Stage 2着手前のTSE上場確認（Fail Closed）」で既にStage 2開始前に**全件一括ゲート**として完了している。つまりTurnover Researchが実行される時点では、Stage 1 `PASS`候補全件についてTSE上場確認が済んでいる状態しかあり得ない（1件でも確認不能ならその時点で夜間実行全体が停止しており、Turnover Researchまで到達しない）。
 
-- Stage 2着手前の確認でTSE上場と確認できた候補だけ `.T` を使う。
-- 確認できていない場合は `.T` を推測で使わない。Turnover Source Attemptを `FOUND` として記録せず、推測したSuffixで取得したデータも保存しない。その候補についてはTurnover値が得られていない状態のまま扱い、Rankingへ進めない（Fail Closed）。
+- `.T` は全対象候補に共通して使う（一括ゲート通過済みのため）。
 - 非東証市場向けのSuffix解決（`.F` / `.S` / `.N` など）は現時点で未定義であり、この運用では解決しない。Suffix Mappingを推測で追加しない。新しいReason Codeも追加しない。未決定事項として `TODO.md` に記録している。
 
 ### Turnover Source Attempt契約

@@ -58,7 +58,7 @@
 - Yahoo Finance symbol suffix resolution（未決定）: `YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`https://finance.yahoo.co.jp/quote/{ticker}.T...`で`.T`（東証）固定だが、Discoveryの`default_discovery_market_filter`は`ALL_MARKETS`のため、東証以外・上場市場不明の候補が混ざり得る。現時点でCandidateごとに「東証上場である」ことを構造的に保証するField（enum化された市場コード等）は存在せず、`market_data.json`の`market`はSource付きだが自由文字列である。以下は未決定：
   - 非東証市場向けSuffix（`.F` / `.S` / `.N` など）のMapping。推測で追加しない
   - Candidateごとの上場市場を機械可読に保証するField/Contractを持つかどうか
-  - 現在の運用: 検証済みSource Evidenceから東証上場を確認できない候補は、Stage 2 Candidate Research開始前（`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のいずれも取得する前）に停止する。`.T`を推測して取得せず、Source Attemptを`FOUND`にせず、Stage 2以降（Turnover Research・Event Research・Ranking）へ進めない（Fail Closed。新Reason Codeは追加しない）
+  - 現在の運用: `apply-stage1`の直後、`plan-stage2-batches`を実行する前に、Stage 1 `PASS`候補全件についてTSE上場確認を**一括ゲート**として行う。1件でも検証済みSource Evidenceから東証上場を確認できない候補があれば、`plan-stage2-batches`を実行せず、`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のいずれも取得せず、`.T`を推測して取得せず、Source Attemptを`FOUND`にせず、Stage 2以降（Turnover Research・Event Research・Ranking）を含む夜間実行全体をその時点で停止する（Fail Closed。個別候補の除外・スキップではない。新Reason Codeは追加しない）
 - 条件該当銘柄がない日は取引しないルール
 
 最終的に、
