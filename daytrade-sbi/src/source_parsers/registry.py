@@ -29,6 +29,7 @@ PARSERS: dict[str, SourceParser] = {
     "jpx.tick_size": jpx.parse_tick_size,
     "jpx.topix500": jpx.parse_topix500,
     "jpx.disclosure_index": jpx.parse_disclosure_index,
+    "jpx.earnings_schedule": jpx.parse_earnings_schedule,
     "jpx.daily_report": jpx.parse_daily_report,
     "yahoo_jp.ranking": yahoo_jp.parse_ranking,
     "yahoo_jp.history": yahoo_jp.parse_history,
@@ -47,7 +48,7 @@ SOURCE_PARSER_NAMES: dict[str, str] = {
     "JPX_TICK_SIZE": "jpx.tick_size",
     "JPX_TOPIX500": "jpx.topix500",
     "JPX_TDNET": "jpx.disclosure_index",
-    "JPX_EARNINGS_SCHEDULE": "jpx.disclosure_index",
+    "JPX_EARNINGS_SCHEDULE": "jpx.earnings_schedule",
     "JPX_DAILY_REPORT": "jpx.daily_report",
     "YAHOO_JP_VOLUME_RANKING": "yahoo_jp.ranking",
     "YAHOO_JP_GAIN_RANKING": "yahoo_jp.ranking",
@@ -88,11 +89,12 @@ def verify_source_parser_binding(source_definition: dict[str, Any]) -> str:
             "SOURCE_ACQUISITION_BLOCK_MISSING",
             f"{source_id}: source definition has no acquisition block",
         )
-    declared = acquisition.get("parser")
+    declared = acquisition.get("parser_id")
     if declared != expected:
         raise ParserRegistryError(
             "SOURCE_PARSER_MISMATCH",
-            f"{source_id}: acquisition.parser is {declared!r}, registry requires {expected!r}",
+            f"{source_id}: acquisition.parser_id is {declared!r}, "
+            f"registry requires {expected!r}",
         )
     return expected
 

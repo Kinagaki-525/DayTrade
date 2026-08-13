@@ -109,10 +109,119 @@ def test_sandbox_is_enabled_with_a_restricted_domain_list():
     assert set(sandbox["network"]["allowedDomains"]) == ALLOWED_DOMAINS
 
 
+def test_sandbox_allowlist_is_exactly_the_approved_host_set():
+    """The allowlist is derived security policy, not a wishlist: it must equal
+    the Source Matrix template hosts plus every human-approved issuer host --
+    no extra host, no missing host."""
+    from src.network_policy import required_sandbox_domains, sandbox_allowed_domains
+    from src.source_matrix import load_source_matrix
+
+    required = set(required_sandbox_domains(load_source_matrix()))
+    assert set(sandbox_allowed_domains(SETTINGS)) == required
+
+
+def test_sandbox_unavailability_may_not_silently_fall_back_to_the_host():
+    """A command that cannot be sandboxed must be blocked rather than run
+    unsandboxed (which would restore full network access)."""
+    sandbox = _settings()["sandbox"]
+    assert sandbox["allowUnsandboxedCommands"] is False
+    assert sandbox["autoAllowBashIfSandboxed"] is False
+    assert sandbox["network"]["allowLocalBinding"] is False
+
+
 def test_permission_escalation_modes_are_disabled():
-    settings = _settings()
-    assert settings["disableBypassPermissionsMode"] == "disable"
-    assert settings["disableAutoMode"] == "disable"
+    """``disableBypassPermissionsMode`` lives inside ``permissions`` in Claude
+    Code's settings.json schema, alongside ``defaultMode`` -- not at the top
+    level, and there is no ``disableAutoMode`` key."""
+    permissions = _settings()["permissions"]
+    assert permissions["disableBypassPermissionsMode"] == "disable"
+    assert permissions["defaultMode"] == "default"
+    assert "disableAutoMode" not in _settings()
+    assert "disableBypassPermissionsMode" not in _settings()
+
+
+def test_missing_required_host_halts_instead_of_editing_settings(tmp_path):
+    """Phase II Production Verifier behaviour: an un-allowlisted required host
+    is SECURITY_POLICY_CHANGE_REQUIRED, never an automatic settings edit."""
+    from src.network_policy import NetworkPolicyError, verify_sandbox_allowlist
+    from src.source_matrix import load_source_matrix
+
+    stripped = tmp_path / "settings.json"
+    stripped.write_text(
+        json.dumps({"sandbox": {"network": {"allowedDomains": []}}}),
+        encoding="utf-8",
+    )
+    before = SETTINGS.read_bytes()
+    with pytest.raises(NetworkPolicyError) as excinfo:
+        verify_sandbox_allowlist(load_source_matrix(), settings_path=stripped)
+    assert excinfo.value.code == "SECURITY_POLICY_CHANGE_REQUIRED"
+    assert SETTINGS.read_bytes() == before
+
+
+def test_approved_issuer_hosts_must_also_be_allowlisted():
+    from src.network_policy import NetworkPolicyError, verify_sandbox_allowlist
+    from src.source_matrix import load_source_matrix
+
+    registry = {
+        "registry_schema_version": 1,
+        "approval_policy": {
+            "human_approved_only": True,
+            "auto_discovery_allowed": False,
+        },
+        "issuers": [
+            {
+                "ticker": "7203",
+                "approved_hosts": ["global.example-issuer.co.jp"],
+                "approved_by": "human",
+                "approved_at": "2026-08-12",
+            }
+        ],
+    }
+    with pytest.raises(NetworkPolicyError) as excinfo:
+        verify_sandbox_allowlist(
+            load_source_matrix(), issuer_registry=registry, settings_path=SETTINGS
+        )
+    assert excinfo.value.code == "SECURITY_POLICY_CHANGE_REQUIRED"
+    assert "global.example-issuer.co.jp" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "url,source_id,code",
+    [
+        ("https://localhost/x", "JPX_CALENDAR", "NETWORK_POLICY_LOCAL_HOST_FORBIDDEN"),
+        ("https://127.0.0.1/x", "JPX_CALENDAR", "NETWORK_POLICY_RAW_IP_FORBIDDEN"),
+        ("https://evil.example.com/x", "JPX_CALENDAR", "NETWORK_POLICY_HOST_NOT_ALLOWED"),
+        ("http://www.jpx.co.jp/x", "JPX_CALENDAR", "NETWORK_POLICY_SCHEME_FORBIDDEN"),
+        ("https://www.jpx.co.jp:8443/x", "JPX_CALENDAR", "NETWORK_POLICY_PORT_FORBIDDEN"),
+    ],
+)
+def test_off_policy_hosts_are_blocked(url, source_id, code):
+    from src.network_policy import NetworkPolicyError, validate_request_url
+
+    with pytest.raises(NetworkPolicyError) as excinfo:
+        validate_request_url(url, source_id=source_id)
+    assert excinfo.value.code == code
+
+
+def test_unapproved_issuer_host_is_blocked():
+    from src.network_policy import NetworkPolicyError, validate_request_url
+
+    empty_registry = {
+        "registry_schema_version": 1,
+        "approval_policy": {
+            "human_approved_only": True,
+            "auto_discovery_allowed": False,
+        },
+        "issuers": [],
+    }
+    with pytest.raises(NetworkPolicyError) as excinfo:
+        validate_request_url(
+            "https://issuer.example.co.jp/ir/",
+            source_id="COMPANY_IR",
+            ticker="7203",
+            issuer_registry=empty_registry,
+        )
+    assert excinfo.value.code == "ISSUER_DOMAIN_NOT_APPROVED"
 
 
 def test_network_guard_is_registered_as_a_pretooluse_bash_hook():

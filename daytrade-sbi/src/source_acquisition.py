@@ -26,6 +26,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from src.event_objects import (
+    deterministic_coverage_status,
+    deterministic_event_objects,
+)
 from src.file_io import atomic_write_text
 from src.network_policy import (
     NetworkPolicyError,
@@ -36,7 +40,7 @@ from src.source_fetch import (
     FetchResult,
     SourceFetchError,
     curl_transport,
-    fetch_source,
+    _fetch_source,
     verify_source_page,
 )
 from src.source_matrix import (
@@ -66,9 +70,13 @@ STAGE_SOURCE_IDS: dict[str, tuple[str, ...]] = {
         "JPX_TOPIX500",
     ),
     "TURNOVER": ("YAHOO_JP_QUOTE",),
+    # All six event sources the Event Gate configuration references. COMPANY_IR
+    # is required by event_gate.earnings.target_date_source_ids; dropping it
+    # would make every earnings rule permanently DATA_UNAVAILABLE.
     "EVENT": (
         "JPX_TDNET",
         "JPX_EARNINGS_SCHEDULE",
+        "COMPANY_IR",
         "COMPANY_IR_DISCLOSURE",
         "YAHOO_JP_NEWS",
         "KABUTAN_NEWS",
@@ -143,6 +151,104 @@ def attempt_id_for(
         [source_id, candidate_code or "GLOBAL", url, target_date, research_cutoff]
     )
     return "att-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+class RequestBudgetCache:
+    """The Request Budget, enforced against evidence already on disk.
+
+    Attempt identity is the tuple ``(source_id, candidate_code, resolved_url,
+    target_date, research_cutoff)`` -- exactly what :func:`attempt_id_for`
+    hashes. Before any network request, an attempt whose identity is already
+    satisfied by a stored, hash-verified raw page is reused with
+    ``cache_status="HIT"`` and **no GET is issued**.
+
+    A stored page whose bytes no longer hash to the recorded SHA256 is a hard
+    stop (``SOURCE_PAGE_HASH_MISMATCH`` from :func:`verify_source_page`): the
+    run is tampered with or corrupted, and silently re-fetching to "self-heal"
+    would hide exactly that.
+    """
+
+    def __init__(self, run_dir: Path, existing: dict[str, Any] | None = None) -> None:
+        self.run_dir = Path(run_dir)
+        self._by_id: dict[str, dict[str, Any]] = {}
+        self._by_page_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for attempt in (existing or {}).get("source_attempts", []):
+            if isinstance(attempt, dict) and attempt.get("attempt_id"):
+                self.remember(attempt)
+
+    @staticmethod
+    def _page_key(attempt: dict[str, Any]) -> tuple[str, str, str]:
+        """Identity of the *raw page*, which is candidate-independent.
+
+        A globally-shared page (one JPX_TDNET index relevant to every
+        candidate) is fetched exactly once; each relevant candidate then gets
+        its own candidate-scoped Source Attempt referencing the same stored
+        bytes and the same SHA256.
+        """
+        return (
+            str(attempt.get("url") or ""),
+            str(attempt.get("target_date") or ""),
+            str(attempt.get("research_cutoff") or ""),
+        )
+
+    def lookup_page(
+        self,
+        *,
+        url: str,
+        target_date: str,
+        research_cutoff: str,
+    ) -> dict[str, Any] | None:
+        """A stored raw page for this exact URL, whoever fetched it."""
+        return self._by_page_key.get((url, target_date, research_cutoff))
+
+    def lookup(
+        self,
+        *,
+        source_id: str,
+        candidate_code: str | None,
+        url: str,
+        target_date: str,
+        research_cutoff: str,
+    ) -> dict[str, Any] | None:
+        attempt_id = attempt_id_for(
+            source_id=source_id,
+            candidate_code=candidate_code,
+            url=url,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+        )
+        attempt = self._by_id.get(attempt_id)
+        if attempt is None:
+            return None
+        # Only a genuinely completed acquisition is reusable, and only when
+        # the whole identity tuple -- not just the id -- still agrees.
+        if attempt.get("status") not in {"FOUND", "PARSE_FAILED"}:
+            return None
+        if (
+            str(attempt.get("source_id") or "") != source_id
+            or (attempt.get("candidate_code") or None) != candidate_code
+            or str(attempt.get("url") or "") != url
+            or str(attempt.get("target_date") or "") != target_date
+            or str(attempt.get("research_cutoff") or "") != research_cutoff
+        ):
+            return None
+        if not attempt.get("source_page_path") or not attempt.get("source_page_sha256"):
+            return None
+        if attempt.get("source_page_size_bytes") is None:
+            return None
+        return attempt
+
+    def remember(self, attempt: dict[str, Any]) -> None:
+        if not attempt.get("attempt_id"):
+            return
+        record = dict(attempt)
+        self._by_id[str(record["attempt_id"])] = record
+        if (
+            record.get("source_page_path")
+            and record.get("source_page_sha256")
+            and record.get("source_page_size_bytes") is not None
+        ):
+            self._by_page_key.setdefault(self._page_key(record), record)
 
 
 def resolve_url(
@@ -233,6 +339,7 @@ def acquire_source(
     run_dir: Path,
     issuer_registry: dict[str, Any] | None = None,
     transport: Callable[[str], Any] = curl_transport,
+    cache: "RequestBudgetCache | None" = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Acquire and parse a single source. Returns (attempt, ledger values)."""
     # Parser binding is verified *before* the network call: a mis-wired
@@ -258,15 +365,59 @@ def acquire_source(
             [],
         )
 
-    result: FetchResult = fetch_source(
-        url,
-        source_id=source_id,
-        candidate_code=candidate_code,
-        ticker=candidate_code,
-        issuer_registry=issuer_registry,
-        run_dir=run_dir,
-        transport=transport,
-    )
+    # ---- Request Budget: is this exact tuple already satisfied on disk? ----
+    cached = None
+    if cache is not None:
+        cached = cache.lookup(
+            source_id=source_id,
+            candidate_code=candidate_code,
+            url=url,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+        )
+        if cached is None:
+            # Globally-shared page: the same URL was already fetched for
+            # another candidate. Reuse the raw bytes, still record a separate
+            # candidate-scoped attempt. Network requests: 1. Attempts: N.
+            cached = cache.lookup_page(
+                url=url,
+                target_date=target_date,
+                research_cutoff=research_cutoff,
+            )
+
+    if cached is not None:
+        # A cache HIT costs zero network requests. The stored bytes are
+        # re-hashed first; a mismatch is a hard stop, never a silent re-fetch.
+        stored = verify_source_page(
+            run_dir, str(cached["source_page_path"]), str(cached["source_page_sha256"])
+        )
+        result = FetchResult(
+            url=str(cached["url"]),
+            source_id=source_id,
+            candidate_code=candidate_code,
+            status="FOUND",
+            http_status=cached.get("http_status"),
+            content_type=cached.get("content_type"),
+            transport_exit_code=int(cached.get("transport_exit_code", 0)),
+            body=stored,
+            source_page_sha256=str(cached["source_page_sha256"]),
+            source_page_size_bytes=int(cached["source_page_size_bytes"]),
+            source_page_path=str(cached["source_page_path"]),
+        )
+        cache_status = "HIT"
+        retrieved_at = str(cached.get("retrieved_at") or utc_now_iso())
+    else:
+        result = _fetch_source(
+            url,
+            source_id=source_id,
+            candidate_code=candidate_code,
+            ticker=candidate_code,
+            issuer_registry=issuer_registry,
+            run_dir=run_dir,
+            transport=transport,
+        )
+        cache_status = "MISS"
+        retrieved_at = utc_now_iso()
 
     attempt = _failed_attempt(
         definition=definition,
@@ -281,9 +432,12 @@ def acquire_source(
     if result.status != "FOUND":
         return attempt, []
 
-    # Re-read the bytes from disk and re-verify their hash before parsing:
-    # the parser must operate on exactly the stored evidence.
-    stored = verify_source_page(run_dir, result.source_page_path, result.source_page_sha256)
+    if cache_status == "MISS":
+        # Re-read the bytes from disk and re-verify their hash before parsing:
+        # the parser must operate on exactly the stored evidence.
+        stored = verify_source_page(
+            run_dir, result.source_page_path, result.source_page_sha256
+        )
 
     parsed = parse_source_page(
         stored,
@@ -305,28 +459,22 @@ def acquire_source(
             "source_page_path": result.source_page_path,
             "source_page_sha256": result.source_page_sha256,
             "source_page_size_bytes": result.source_page_size_bytes,
-            "retrieved_at": utc_now_iso(),
-            "cache_status": "MISS",
+            "retrieved_at": retrieved_at,
+            "cache_status": cache_status,
         }
     )
+    if cache is not None:
+        cache.remember(attempt)
 
     if parsed.status != "FOUND":
+        # FIX-012: the raw evidence WAS acquired and stored, so every
+        # transport/evidence field stays on the attempt. Only the parsed
+        # values are absent. Stripping the evidence here would destroy the
+        # audit trail for exactly the failures that most need one.
         attempt["status"] = parsed.status
         attempt["values"] = None
         attempt["result_count"] = None
         attempt["notes"] = list(attempt["notes"]) + list(parsed.reason_codes)
-        if parsed.status != "FOUND":
-            # A non-FOUND parse keeps the evidence, but the attempt is not a
-            # FOUND attempt, so v3's FOUND-only required fields do not apply.
-            for key in (
-                "acquisition_method",
-                "http_status",
-                "content_type",
-                "transport_exit_code",
-                "source_page_sha256",
-                "source_page_size_bytes",
-            ):
-                attempt.pop(key, None)
         return attempt, []
 
     values: list[dict[str, Any]] = []
@@ -354,6 +502,17 @@ def acquire_source(
                 }
             )
 
+    # Event sources additionally contribute Event Objects in exactly the shape
+    # the existing Event Gate reads. They live alongside the parsed values in
+    # the same list: the gate picks out dicts carrying ``event_type`` and
+    # ignores everything else.
+    event_objects = deterministic_event_objects(source_id, attempt["attempt_id"], values)
+    if event_objects:
+        values = values + event_objects
+    coverage_status = deterministic_coverage_status(source_id, values)
+    if coverage_status is not None:
+        attempt["coverage_status"] = coverage_status
+
     attempt["values"] = values
     attempt["result_count"] = len(values)
     return attempt, ledger_values
@@ -371,11 +530,16 @@ def acquire_stage(
     issuer_registry: dict[str, Any] | None = None,
     transport: Callable[[str], Any] = curl_transport,
     source_ids: tuple[str, ...] | None = None,
+    existing_ledger: dict[str, Any] | None = None,
 ) -> AcquisitionResult:
     """Run one acquisition stage.
 
     ``tickers`` is the exact candidate set the caller is authorized to
     acquire for; the engine never widens it.
+
+    ``existing_ledger`` is the run's current sources.json. It seeds the
+    Request Budget cache, so re-running the same acquisition CLI against an
+    already-satisfied run performs **zero** additional network requests.
     """
     if stage not in STAGE_SOURCE_IDS:
         raise AcquisitionError("UNKNOWN_ACQUISITION_STAGE", f"unknown stage {stage!r}")
@@ -404,12 +568,12 @@ def acquire_stage(
             )
         verify_source_parser_binding(definitions[source_id])
 
+    cache = RequestBudgetCache(run_dir, existing_ledger)
+
     seen_attempt_ids: set[str] = set()
     for source_id in selected:
         definition = definitions[source_id]
-        candidates: list[str | None] = (
-            [None] if source_id in GLOBAL_SOURCE_IDS else list(tickers)
-        )
+        candidates: list[str | None] = _candidate_scope(stage, source_id, tickers)
         for candidate_code in candidates:
             attempt, values = acquire_source(
                 definition,
@@ -420,6 +584,7 @@ def acquire_stage(
                 run_dir=run_dir,
                 issuer_registry=issuer_registry,
                 transport=transport,
+                cache=cache,
             )
             # Request Budget: one GET per exact tuple, per run.
             if attempt["attempt_id"] in seen_attempt_ids:
@@ -434,6 +599,27 @@ def acquire_stage(
         _apply_turnover_semantics(result)
 
     return result
+
+
+def _candidate_scope(
+    stage: str,
+    source_id: str,
+    tickers: list[str],
+) -> list[str | None]:
+    """Which candidate codes this source produces attempts for.
+
+    The Event Gate selects evidence with ``candidate_code == ticker``, so
+    every event source -- including the globally-shared index pages -- must
+    yield one **candidate-scoped** attempt per candidate. The Request Budget
+    cache collapses those N attempts onto a single network GET of the shared
+    page (see :class:`RequestBudgetCache`), so this widens the attempt count,
+    never the request count.
+    """
+    if stage == "EVENT":
+        return list(tickers)
+    if source_id in GLOBAL_SOURCE_IDS:
+        return [None]
+    return list(tickers)
 
 
 def _apply_tse_listing_gate(result: AcquisitionResult, tickers: list[str]) -> None:

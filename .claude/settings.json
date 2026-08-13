@@ -1,5 +1,7 @@
 {
   "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
     "deny": [
       "WebSearch",
       "WebFetch",
@@ -18,17 +20,19 @@
   },
   "sandbox": {
     "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
     "network": {
+      "allowLocalBinding": false,
+      "allowUnixSockets": [],
       "allowedDomains": [
-        "www.jpx.co.jp",
         "finance.yahoo.co.jp",
         "kabutan.jp",
+        "www.jpx.co.jp",
         "www.release.tdnet.info"
       ]
     }
   },
-  "disableBypassPermissionsMode": "disable",
-  "disableAutoMode": "disable",
   "hooks": {
     "PreToolUse": [
       {

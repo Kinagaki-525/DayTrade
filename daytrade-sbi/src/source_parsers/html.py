@@ -46,3 +46,19 @@ def values_for_label(text: str, label: str) -> list[str]:
 
 def hrefs(text: str) -> list[str]:
     return [html_module.unescape(href) for href in _HREF_PATTERN.findall(text)]
+
+
+def rows_with_hrefs(text: str) -> list[tuple[list[str], list[str]]]:
+    """``[(cells, hrefs)]`` for every ``<tr>``, preserving document order.
+
+    Lets a parser tie an anchor (which carries the canonical ticker) to the
+    other cells of the same row (which carry the display name) without
+    guessing column offsets across the whole page.
+    """
+    rows: list[tuple[list[str], list[str]]] = []
+    for row_html in _ROW_PATTERN.findall(text):
+        cells = [clean(cell) for _, cell in _CELL_PATTERN.findall(row_html)]
+        if not cells:
+            continue
+        rows.append((cells, hrefs(row_html)))
+    return rows

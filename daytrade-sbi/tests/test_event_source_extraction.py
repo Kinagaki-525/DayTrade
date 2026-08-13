@@ -50,8 +50,17 @@ def _extraction(ledger, **overrides):
         "ticker": attempt["candidate_code"],
         "trading_date": attempt["target_date"],
         "source_page_sha256": attempt["source_page_sha256"],
-        "event_type": "EARNINGS_ANNOUNCEMENT",
-        "event_date": "2026-08-14",
+        "coverage_status": "COMPLETE",
+        # Event Objects use the event_type literals the EXISTING Event Gate
+        # matches on -- "EARNINGS", not an invented "EARNINGS_ANNOUNCEMENT".
+        "events": [
+            {
+                "evidence_id": "ev-test-earnings",
+                "event_type": "EARNINGS",
+                "event_date": "2026-08-14",
+                "published_at": "2026-08-12T15:00:00+09:00",
+            }
+        ],
     }
     item.update(overrides)
     return {
@@ -63,18 +72,67 @@ def _extraction(ledger, **overrides):
     }
 
 
-def test_valid_extraction_merges(tmp_path, ledger):
+def test_event_extraction_updates_attempt_values_consumed_by_event_gate(
+    tmp_path, ledger
+):
+    """The merge must land in source_attempts[].values -- the exact place
+    src.event_gate reads -- in the exact shape it reads."""
+    from src.event_gate import _attempt_events
+
     merged = merge_event_source_extraction(
         extraction=_extraction(ledger), ledger=ledger, run_dir=tmp_path
     )
-    fields = {value["field_name"] for value in merged["sources"]}
-    assert {"event_type", "event_date"} <= fields
-    # the event date is stored as its own field, never as the trading_date
-    event_date_value = next(
-        v for v in merged["sources"] if v["field_name"] == "event_date"
+    attempt = merged["source_attempts"][0]
+    assert attempt["coverage_status"] == "COMPLETE"
+
+    events = _attempt_events(attempt)
+    earnings = [event for event in events if event.get("event_type") == "EARNINGS"]
+    assert len(earnings) == 1
+    assert earnings[0]["event_date"] == "2026-08-14"
+    assert earnings[0]["evidence_id"] == "ev-test-earnings"
+    # The deterministic parse values survive alongside the Event Objects.
+    assert any(
+        isinstance(value, dict) and value.get("field_name")
+        for value in attempt["values"]
     )
-    assert event_date_value["value"] == "2026-08-14"
-    assert event_date_value["trading_date"] == TARGET_DATE
+
+
+def test_merge_is_idempotent(tmp_path, ledger):
+    once = merge_event_source_extraction(
+        extraction=_extraction(ledger), ledger=ledger, run_dir=tmp_path
+    )
+    twice = merge_event_source_extraction(
+        extraction=_extraction(ledger), ledger=once, run_dir=tmp_path
+    )
+    assert twice["source_attempts"] == once["source_attempts"]
+
+
+def test_event_object_with_an_invented_event_type_is_rejected(tmp_path, ledger):
+    extraction = _extraction(ledger)
+    extraction["extractions"][0]["events"][0]["event_type"] = "EARNINGS_ANNOUNCEMENT"
+    with pytest.raises(ValueError):
+        merge_event_source_extraction(
+            extraction=extraction, ledger=ledger, run_dir=tmp_path
+        )
+
+
+def test_news_classification_must_reference_a_real_event(tmp_path, ledger):
+    extraction = _extraction(ledger)
+    extraction["extractions"][0]["news_classifications"] = [
+        {
+            "news_evidence_id": "ev-does-not-exist",
+            "published_at": "2026-08-12T15:00:00+09:00",
+            "signal_type": "NON_EVENT",
+            "subject_status": "NOT_SUBJECT",
+            "confirmation_evidence_ids": [],
+            "confirmation_source_attempt_ids": [],
+        }
+    ]
+    with pytest.raises(EventExtractionMergeError) as exc_info:
+        merge_event_source_extraction(
+            extraction=extraction, ledger=ledger, run_dir=tmp_path
+        )
+    assert exc_info.value.code == "EVENT_EXTRACTION_NEWS_EVIDENCE_UNKNOWN"
 
 
 def test_unknown_attempt_id_is_rejected(tmp_path, ledger):
@@ -129,8 +187,21 @@ def test_tampered_raw_page_is_rejected_at_merge_time(tmp_path, ledger):
 
 
 def test_non_classifiable_source_is_rejected(tmp_path, ledger):
+    """JPX_TDNET is DETERMINISTIC: its Event Objects come from the parser, so
+    the AI may not stage a classification for it at all. The staging schema
+    rejects it before any ledger check is reached."""
     extraction = _extraction(ledger)
     extraction["extractions"][0]["source_id"] = "JPX_TDNET"
+    with pytest.raises(ValueError) as exc_info:
+        merge_event_source_extraction(
+            extraction=extraction, ledger=ledger, run_dir=tmp_path
+        )
+    assert "JPX_TDNET" in str(exc_info.value)
+
+
+def test_classifiable_source_must_still_match_the_attempt(tmp_path, ledger):
+    extraction = _extraction(ledger)
+    extraction["extractions"][0]["source_id"] = "KABUTAN_NEWS"
     with pytest.raises(EventExtractionMergeError) as exc_info:
         merge_event_source_extraction(
             extraction=extraction, ledger=ledger, run_dir=tmp_path
@@ -181,7 +252,11 @@ def test_file_level_merge_is_atomic_and_leaves_sources_valid(tmp_path, ledger):
         run_dir=tmp_path,
     )
     merged = json.loads(sources_path.read_text(encoding="utf-8"))
-    assert any(value["field_name"] == "event_type" for value in merged["sources"])
+    assert any(
+        isinstance(value, dict) and value.get("event_type") == "EARNINGS"
+        for attempt in merged["source_attempts"]
+        for value in attempt.get("values") or []
+    )
 
 
 def test_failed_merge_leaves_sources_json_untouched(tmp_path, ledger):

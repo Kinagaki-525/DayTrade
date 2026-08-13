@@ -201,16 +201,83 @@ def parse_topix500(
     )
 
 
+EARNINGS_SCHEDULE_DATE_PATTERN = re.compile(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})")
+
+
+def _iso_date_in(token: str) -> str | None:
+    match = EARNINGS_SCHEDULE_DATE_PATTERN.search(token or "")
+    if match is None:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def parse_earnings_schedule(
+    raw: bytes,
+    source_definition: dict[str, Any],
+    context: ParseContext,
+) -> ParseResult:
+    """JPX_EARNINGS_SCHEDULE -> the scheduled earnings date for one ticker.
+
+    Deterministic end to end: the row is matched on the ticker code published
+    in the first column and the announcement date is read from that row --
+    never inferred from prose, never summarized by an AI. An absent ticker is
+    a legitimately empty result (no scheduled earnings), which the Event Gate
+    reads as "clean", not as missing data.
+    """
+    if not context.ticker:
+        return parse_failed("JPX_EARNINGS_SCHEDULE requires a target ticker")
+    try:
+        page = _decode(raw, context)
+    except DecodeError as exc:
+        return parse_failed(exc.message)
+
+    events: list[dict[str, str]] = []
+    for row in table_rows(page.text):
+        if len(row) < 2 or row[0] != context.ticker:
+            continue
+        announced = _iso_date_in(row[1])
+        if announced is None:
+            return parse_failed(
+                f"earnings schedule row for {context.ticker} has no parseable "
+                f"date: {row[1]!r}"
+            )
+        entry = {
+            "event_date": announced,
+            "headline": clean(row[2]) if len(row) > 2 else "",
+        }
+        if entry not in events:
+            events.append(entry)
+
+    if len({event["event_date"] for event in events}) > 1:
+        return parse_failed(
+            f"ambiguous earnings schedule dates for ticker {context.ticker}"
+        )
+
+    return ParseResult(
+        status="FOUND",
+        values=(
+            ParsedValue(
+                field_name="earnings_schedule_events",
+                ticker=context.ticker,
+                trading_date=context.trading_date,
+                value=events,
+            ),
+        ),
+    )
+
+
 def parse_disclosure_index(
     raw: bytes,
     source_definition: dict[str, Any],
     context: ParseContext,
 ) -> ParseResult:
-    """TDnet / earnings-schedule style index pages.
+    """TDnet-style disclosure index pages.
 
-    Only headline text and its published date are extracted; whether a
-    headline constitutes a gating event is decided later by Event AI
-    Classification against the same stored local page.
+    Deterministic: each row contributes its published timestamp and headline
+    text verbatim. Whether a headline is *dangerous* is a later, separate
+    judgement; whether a disclosure exists in the window is decided by code
+    from these entries.
     """
     try:
         page = _decode(raw, context)

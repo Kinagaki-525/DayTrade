@@ -15,7 +15,7 @@ from src.source_fetch import (
     SourceFetchError,
     TransportResult,
     curl_argv,
-    fetch_source,
+    _fetch_source,
     source_page_filename,
     status_for_http_status,
     verify_source_page,
@@ -42,9 +42,17 @@ def _transport(
     return _run
 
 
-def test_curl_argv_is_fixed_and_safe():
-    argv = curl_argv("https://www.jpx.co.jp/x", user_agent_value="daytrade/1.0")
+def test_curl_argv_is_fixed_and_safe(tmp_path):
+    body_path = tmp_path / "body.raw"
+    argv = curl_argv(
+        "https://www.jpx.co.jp/x",
+        user_agent_value="daytrade/1.0",
+        body_path=body_path,
+    )
     assert argv[0] == "curl"
+    # The body goes to a file; stdout is reserved for --write-out metadata.
+    assert argv[argv.index("--output") + 1] == str(body_path)
+    assert argv[argv.index("--write-out") + 1] == "%{http_code} %{content_type}"
     assert "--disable" in argv  # never read curlrc
     assert "--no-location" in argv  # never follow redirects
     assert argv[argv.index("--retry") + 1] == str(MAX_RETRIES) == "0"
@@ -72,22 +80,86 @@ def test_user_agent_must_come_from_the_environment(monkeypatch):
     assert source_fetch.user_agent() == "daytrade/1.0"
 
 
-def test_curl_transport_runs_without_a_shell(monkeypatch):
+def _fake_curl(monkeypatch, body: bytes, stdout: bytes = b"200 text/html", code: int = 0):
+    """Stand in for curl: write ``body`` to --output, print metadata on stdout.
+
+    This mirrors the real contract exactly -- two separate streams -- so a body
+    can never masquerade as metadata.
+    """
     captured: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
         captured["argv"] = argv
         captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(argv, 0, b"body\n200\ntext/html", b"")
+        from pathlib import Path as _Path
+
+        _Path(argv[argv.index("--output") + 1]).write_bytes(body)
+        return subprocess.CompletedProcess(argv, code, stdout, b"")
 
     monkeypatch.setenv(source_fetch.USER_AGENT_ENV_VAR, "daytrade/1.0")
     monkeypatch.setattr(subprocess, "run", fake_run)
+    return captured
 
+
+def test_curl_transport_runs_without_a_shell(monkeypatch):
+    captured = _fake_curl(monkeypatch, b"body")
     result = source_fetch.curl_transport("https://www.jpx.co.jp/x")
     assert result.http_status == 200
+    assert result.content_type == "text/html"
     assert result.body == b"body"
     assert captured["kwargs"]["shell"] is False
     assert isinstance(captured["argv"], list)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"<html>no trailing newline</html>", id="no-trailing-newline"),
+        pytest.param(b"<html>trailing newline</html>\n", id="trailing-newline"),
+        pytest.param(bytes(range(256)), id="binary-bytes"),
+        pytest.param(b"prefix\n200\ntext/html", id="body-looks-like-write-out"),
+        pytest.param(b"\n200\ntext/html", id="body-is-exactly-write-out"),
+        pytest.param(b"", id="empty-body"),
+        pytest.param(b"a\n" * 1000, id="many-newlines"),
+    ],
+)
+def test_curl_body_without_newline_is_not_corrupted(monkeypatch, body):
+    """The body is read from a file, never sliced out of a shared stdout
+    stream, so no byte sequence in the body can corrupt it or be confused
+    with the transport metadata."""
+    _fake_curl(monkeypatch, body, stdout=b"200 text/html; charset=utf-8")
+    result = source_fetch.curl_transport("https://www.jpx.co.jp/x")
+    assert result.body == body
+    assert result.http_status == 200
+    assert result.content_type == "text/html; charset=utf-8"
+
+
+def test_curl_transport_never_delimiter_parses_the_body(monkeypatch):
+    """A body that *is* a plausible write-out trailer still reports the real
+    status code from stdout, not the one embedded in the page."""
+    _fake_curl(monkeypatch, b"whatever\n404\ntext/plain", stdout=b"200 text/html")
+    result = source_fetch.curl_transport("https://www.jpx.co.jp/x")
+    assert result.http_status == 200
+    assert result.body == b"whatever\n404\ntext/plain"
+
+
+def test_curl_transport_timeout_is_access_failed(monkeypatch, tmp_path):
+    def fake_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 30)
+
+    monkeypatch.setenv(source_fetch.USER_AGENT_ENV_VAR, "daytrade/1.0")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = source_fetch.curl_transport("https://www.jpx.co.jp/x")
+    assert result.exit_code == source_fetch.CURL_TIMEOUT_EXIT_CODE
+    assert status_for_http_status(result.http_status) == "ACCESS_FAILED"
+
+
+def test_write_out_metadata_parsing_is_strict():
+    assert source_fetch.parse_write_out(b"200 text/html") == (200, "text/html")
+    assert source_fetch.parse_write_out(b"404 ") == (404, None)
+    assert source_fetch.parse_write_out(b"") == (None, None)
+    assert source_fetch.parse_write_out(b"not-a-status") == (None, None)
+    assert source_fetch.parse_write_out(b"999 x") == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -99,10 +171,15 @@ def test_curl_transport_runs_without_a_shell(monkeypatch):
         (403, "ACCESS_FAILED"),
         (404, "NOT_FOUND"),
         (410, "NOT_FOUND"),
-        (425, "NOT_YET_AVAILABLE"),
+        # 425/503 are ordinary access failures. There is no NOT_YET_AVAILABLE
+        # status: inventing one would invite the retry loop the Request Budget
+        # forbids.
+        (425, "ACCESS_FAILED"),
         (429, "ACCESS_FAILED"),
         (500, "ACCESS_FAILED"),
-        (503, "NOT_YET_AVAILABLE"),
+        (502, "ACCESS_FAILED"),
+        (503, "ACCESS_FAILED"),
+        (504, "ACCESS_FAILED"),
         (None, "ACCESS_FAILED"),
         (418, "ACCESS_FAILED"),
     ],
@@ -112,7 +189,7 @@ def test_http_status_maps_to_source_status(http_status, expected):
 
 
 def test_fetch_stores_unmodified_bytes_with_their_sha256(tmp_path):
-    result = fetch_source(
+    result = _fetch_source(
         "https://www.jpx.co.jp/listing/co-search/",
         source_id="JPX_LISTED_COMPANY",
         candidate_code="7203",
@@ -131,7 +208,7 @@ def test_fetch_stores_unmodified_bytes_with_their_sha256(tmp_path):
 
 
 def test_global_source_page_uses_the_GLOBAL_token(tmp_path):
-    result = fetch_source(
+    result = _fetch_source(
         "https://www.jpx.co.jp/corporate/about-jpx/calendar/",
         source_id="JPX_CALENDAR",
         candidate_code=None,
@@ -154,7 +231,7 @@ def test_source_page_filename_scheme():
 
 
 def test_redirect_is_not_followed_and_becomes_access_failed(tmp_path):
-    result = fetch_source(
+    result = _fetch_source(
         "https://www.jpx.co.jp/x",
         source_id="JPX_CALENDAR",
         run_dir=tmp_path,
@@ -168,7 +245,7 @@ def test_policy_violation_never_reaches_the_transport(tmp_path):
     def exploding_transport(url: str):  # pragma: no cover - must not run
         raise AssertionError("transport must not be called for a rejected URL")
 
-    result = fetch_source(
+    result = _fetch_source(
         "http://evil.example.com/x",
         source_id="JPX_CALENDAR",
         run_dir=tmp_path,
@@ -178,8 +255,8 @@ def test_policy_violation_never_reaches_the_transport(tmp_path):
     assert result.notes == ("NETWORK_POLICY_SCHEME_FORBIDDEN",)
 
 
-def test_transport_failure_is_access_failed(tmp_path):
-    result = fetch_source(
+def test_transport_timeout_is_access_failed(tmp_path):
+    result = _fetch_source(
         "https://www.jpx.co.jp/x",
         source_id="JPX_CALENDAR",
         run_dir=tmp_path,
@@ -187,12 +264,25 @@ def test_transport_failure_is_access_failed(tmp_path):
     )
     assert result.status == "ACCESS_FAILED"
     assert result.transport_exit_code == 28
+    assert result.notes == ("TRANSPORT_TIMEOUT",)
+
+
+def test_curl_execution_failure_is_execution_failed(tmp_path):
+    """A curl that could not run at all is EXECUTION_FAILED -- an
+    infrastructure fault -- not a fact about the source."""
+    result = _fetch_source(
+        "https://www.jpx.co.jp/x",
+        source_id="JPX_CALENDAR",
+        run_dir=tmp_path,
+        transport=_transport(body=b"", status=None, exit_code=127),
+    )
+    assert result.status == "EXECUTION_FAILED"
     assert result.notes == ("TRANSPORT_FAILED",)
 
 
 def test_oversized_response_is_rejected(tmp_path):
     oversized = b"x" * (MAX_RESPONSE_BYTES + 1)
-    result = fetch_source(
+    result = _fetch_source(
         "https://www.jpx.co.jp/x",
         source_id="JPX_CALENDAR",
         run_dir=tmp_path,
@@ -203,7 +293,7 @@ def test_oversized_response_is_rejected(tmp_path):
 
 
 def test_verify_source_page_detects_a_one_byte_tamper(tmp_path):
-    result = fetch_source(
+    result = _fetch_source(
         "https://www.jpx.co.jp/x",
         source_id="JPX_CALENDAR",
         run_dir=tmp_path,

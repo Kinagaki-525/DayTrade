@@ -16,6 +16,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +31,10 @@ MAX_RETRIES = 0
 MAX_RESPONSE_BYTES = 25 * 1024 * 1024  # 25 MiB
 USER_AGENT_ENV_VAR = "DAYTRADE_HTTP_USER_AGENT"
 
+#: curl's own exit code for "operation timed out" and "file too large".
+CURL_TIMEOUT_EXIT_CODE = 28
+CURL_RESPONSE_TOO_LARGE_EXIT_CODE = 63
+
 SOURCE_PAGES_DIRNAME = "source_pages"
 GLOBAL_CANDIDATE_TOKEN = "GLOBAL"
 _SHA256_PREFIX_LENGTH = 16
@@ -37,6 +42,11 @@ _SHA256_PREFIX_LENGTH = 16
 _CANDIDATE_TOKEN_PATTERN = re.compile(r"^[0-9A-Z]+$")
 
 #: HTTP status -> SourceStatus. Anything not listed maps to ACCESS_FAILED.
+#:
+#: Only 404/410 are NOT_FOUND. There is deliberately no NOT_YET_AVAILABLE
+#: mapping: 503 and 425 are ordinary access failures, and inventing a
+#: "come back later" status would invite a retry loop the Request Budget
+#: forbids.
 HTTP_STATUS_TO_SOURCE_STATUS: dict[int, str] = {
     200: "FOUND",
     301: "ACCESS_FAILED",
@@ -49,11 +59,11 @@ HTTP_STATUS_TO_SOURCE_STATUS: dict[int, str] = {
     403: "ACCESS_FAILED",
     404: "NOT_FOUND",
     410: "NOT_FOUND",
-    425: "NOT_YET_AVAILABLE",
+    425: "ACCESS_FAILED",
     429: "ACCESS_FAILED",
     500: "ACCESS_FAILED",
     502: "ACCESS_FAILED",
-    503: "NOT_YET_AVAILABLE",
+    503: "ACCESS_FAILED",
     504: "ACCESS_FAILED",
 }
 
@@ -147,8 +157,14 @@ def source_page_filename(
     return f"{source_id}__{token}__{prefix}.raw"
 
 
-def curl_argv(url: str, *, user_agent_value: str) -> list[str]:
-    """The exact, fixed curl argument vector. No shell, no config, no cookies."""
+def curl_argv(url: str, *, user_agent_value: str, body_path: Path) -> list[str]:
+    """The exact, fixed curl argument vector. No shell, no config, no cookies.
+
+    The response **body** goes to ``body_path``; stdout carries *only* the
+    ``--write-out`` metadata. The two streams are never mixed, so a body
+    containing newlines, a literal ``\\n200\\ntext/html`` sequence, or arbitrary
+    binary bytes can never be mistaken for transport metadata.
+    """
     return [
         "curl",
         "--disable",              # never read curlrc
@@ -165,51 +181,94 @@ def curl_argv(url: str, *, user_agent_value: str) -> list[str]:
         "--max-time", str(TOTAL_TIMEOUT_SECONDS),
         "--max-filesize", str(MAX_RESPONSE_BYTES),
         "--user-agent", user_agent_value,
-        "--write-out", "%{http_code}\\n%{content_type}",
-        "--output", "-",
+        "--write-out", "%{http_code} %{content_type}",
+        "--output", str(body_path),
         "--url", url,
     ]
 
 
 def curl_transport(url: str) -> TransportResult:
-    """Default transport: one ``curl`` subprocess, ``shell=False``."""
-    argv = curl_argv(url, user_agent_value=user_agent())
-    completed = subprocess.run(  # noqa: S603 - fixed argv, shell=False
-        argv,
-        shell=False,
-        capture_output=True,
-        timeout=TOTAL_TIMEOUT_SECONDS + CONNECT_TIMEOUT_SECONDS,
-        env={"PATH": os.environ.get("PATH", "")},
-        check=False,
-    )
-    body, http_status, content_type = _split_write_out(completed.stdout)
-    return TransportResult(
-        exit_code=completed.returncode,
-        http_status=http_status,
-        content_type=content_type,
-        body=body,
-    )
+    """Default transport: one ``curl`` subprocess, ``shell=False``.
+
+    Body -> temp file, metadata -> stdout, then the temp file is read back as
+    raw bytes, size-checked, and deleted. Nothing about the body's content can
+    influence how the status code is read.
+    """
+    handle, temp_name = tempfile.mkstemp(prefix="daytrade-source-", suffix=".body")
+    os.close(handle)
+    body_path = Path(temp_name)
+    try:
+        argv = curl_argv(url, user_agent_value=user_agent(), body_path=body_path)
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+                argv,
+                shell=False,
+                capture_output=True,
+                timeout=TOTAL_TIMEOUT_SECONDS + CONNECT_TIMEOUT_SECONDS,
+                env={"PATH": os.environ.get("PATH", "")},
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            # A timeout is an access failure, never a parse or "not found".
+            return TransportResult(
+                exit_code=CURL_TIMEOUT_EXIT_CODE,
+                http_status=None,
+                content_type=None,
+                body=b"",
+            )
+
+        http_status, content_type = parse_write_out(completed.stdout)
+        if completed.returncode != 0:
+            return TransportResult(
+                exit_code=completed.returncode,
+                http_status=http_status,
+                content_type=content_type,
+                body=b"",
+            )
+
+        size = body_path.stat().st_size if body_path.exists() else 0
+        if size > MAX_RESPONSE_BYTES:
+            return TransportResult(
+                exit_code=CURL_RESPONSE_TOO_LARGE_EXIT_CODE,
+                http_status=http_status,
+                content_type=content_type,
+                body=b"",
+            )
+        body = body_path.read_bytes() if body_path.exists() else b""
+        return TransportResult(
+            exit_code=completed.returncode,
+            http_status=http_status,
+            content_type=content_type,
+            body=body,
+        )
+    finally:
+        body_path.unlink(missing_ok=True)
 
 
-def _split_write_out(stdout: bytes) -> tuple[bytes, int | None, str | None]:
-    """Split the trailing ``--write-out`` trailer off the response body."""
-    # The trailer is exactly the last two newline separated fields.
-    pieces = stdout.rsplit(b"\n", 2)
-    if len(pieces) != 3:
-        return stdout, None, None
-    body, status_bytes, content_type_bytes = pieces
+def parse_write_out(stdout: bytes) -> tuple[int | None, str | None]:
+    """Parse the metadata-only stdout stream: ``<http_code> <content_type>``.
+
+    This never sees response body bytes, so there is nothing to delimit and
+    nothing a hostile page can spoof.
+    """
     try:
-        http_status = int(status_bytes.decode("ascii").strip())
-    except (UnicodeDecodeError, ValueError):
-        return stdout, None, None
-    try:
-        content_type = content_type_bytes.decode("ascii").strip() or None
+        text = stdout.decode("ascii", errors="strict").strip()
     except UnicodeDecodeError:
-        content_type = None
-    return body, http_status, content_type
+        return None, None
+    if not text:
+        return None, None
+    parts = text.split(None, 1)
+    try:
+        http_status = int(parts[0])
+    except ValueError:
+        return None, None
+    if not 100 <= http_status <= 599:
+        return None, None
+    content_type = parts[1].strip() if len(parts) > 1 else ""
+    return http_status, (content_type or None)
 
 
-def fetch_source(
+def _fetch_source(
     url: str,
     *,
     source_id: str,
@@ -220,6 +279,12 @@ def fetch_source(
     transport: Callable[[str], TransportResult] = curl_transport,
 ) -> FetchResult:
     """Validate, fetch once, and persist the unmodified response bytes.
+
+    **Private, internal transport entry point.** It is deliberately not part
+    of the public API: it takes a free-form URL, and the only callers allowed
+    to construct a URL are the Stage-aware acquisition modules, which build it
+    from the Source Matrix template + ticker + the human-approved issuer
+    registry. No CLI and no agent-facing service layer may reach this.
 
     The response body is never decoded, normalized, or rewritten before it is
     hashed and written; the hash on the returned record is the hash of exactly
@@ -256,11 +321,15 @@ def fetch_source(
         )
 
     if result.exit_code != 0:
+        # A timeout is a transport-level ACCESS_FAILED; any other non-zero
+        # curl exit means the transport itself could not be executed, which
+        # is EXECUTION_FAILED (a run-infrastructure fault, not a source fact).
+        timed_out = result.exit_code == CURL_TIMEOUT_EXIT_CODE
         return FetchResult(
             url=request.url,
             source_id=source_id,
             candidate_code=candidate_code,
-            status="ACCESS_FAILED",
+            status="ACCESS_FAILED" if timed_out else "EXECUTION_FAILED",
             http_status=result.http_status,
             content_type=result.content_type,
             transport_exit_code=result.exit_code,
@@ -268,7 +337,7 @@ def fetch_source(
             source_page_sha256=None,
             source_page_size_bytes=None,
             source_page_path=None,
-            notes=("TRANSPORT_FAILED",),
+            notes=("TRANSPORT_TIMEOUT",) if timed_out else ("TRANSPORT_FAILED",),
         )
 
     if len(result.body) > MAX_RESPONSE_BYTES:

@@ -43,7 +43,12 @@ def test_shipped_matrix_is_v3_and_valid():
 def test_every_source_declares_an_acquisition_block():
     for definition in MATRIX["sources"]:
         acquisition = definition["acquisition"]
-        assert acquisition["transport"] == "HTTP_GET"
+        assert acquisition["transport"] == "CURL_GET"
+        assert acquisition["network_scope"] in {
+            "MATRIX_TEMPLATE_HOST",
+            "VERIFIED_ISSUER_DOMAIN",
+        }
+        assert acquisition["parser_id"]
         assert acquisition["mode"] in {
             "DETERMINISTIC",
             "DETERMINISTIC_THEN_AI_CLASSIFICATION",
@@ -73,13 +78,13 @@ def test_invalid_network_scope_is_rejected():
 
 def test_issuer_scope_may_not_be_claimed_by_a_non_issuer_source():
     result = validate_source_matrix(
-        _mutated("YAHOO_JP_QUOTE", network_scope="ISSUER_DOMAIN_REGISTRY")
+        _mutated("YAHOO_JP_QUOTE", network_scope="VERIFIED_ISSUER_DOMAIN")
     )
     assert not result.valid
 
 
 def test_parser_mismatch_is_rejected():
-    result = validate_source_matrix(_mutated("YAHOO_JP_QUOTE", parser="jpx.calendar"))
+    result = validate_source_matrix(_mutated("YAHOO_JP_QUOTE", parser_id="jpx.calendar"))
     assert not result.valid
     assert any("SOURCE_PARSER_MISMATCH" in error for error in result.errors)
 
@@ -108,7 +113,10 @@ def test_ai_classification_cannot_be_granted_to_a_market_data_source():
 def test_issuer_sources_use_the_registry_scope():
     definitions = source_by_id(MATRIX)
     for source_id in ISSUER_SCOPED_SOURCE_IDS:
-        assert definitions[source_id]["acquisition"]["network_scope"] == "ISSUER_DOMAIN_REGISTRY"
+        assert (
+            definitions[source_id]["acquisition"]["network_scope"]
+            == "VERIFIED_ISSUER_DOMAIN"
+        )
 
 
 def test_runtime_substitution_cannot_be_enabled():

@@ -219,3 +219,91 @@ def validate_request_url(
         scheme=scheme,
         source_id=source_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Claude Code sandbox allowlist reconciliation (FIX-001).
+#
+# The sandbox host allowlist in ``.claude/settings.json`` is *human-approved
+# security policy*. Nothing in this repository may edit it: the only supported
+# behaviour when a required host is missing is to HALT with
+# SECURITY_POLICY_CHANGE_REQUIRED and let a human make the change.
+# ---------------------------------------------------------------------------
+
+CLAUDE_SETTINGS_PATH = PROJECT_ROOT.parent / ".claude" / "settings.json"
+
+SECURITY_POLICY_CHANGE_REQUIRED = "SECURITY_POLICY_CHANGE_REQUIRED"
+
+
+def matrix_template_hosts(source_matrix: dict[str, Any]) -> tuple[str, ...]:
+    """Every fixed host that appears in a Source Matrix ``url_template``.
+
+    Issuer templates (``https://{issuer_domain}/...``) contribute no host:
+    their hosts come from the human-approved issuer domain registry.
+    """
+    hosts: set[str] = set()
+    for definition in source_matrix.get("sources", []):
+        template = str(definition.get("url_template", ""))
+        host = urlsplit(template).hostname or ""
+        if not host or "{" in host:
+            continue
+        hosts.add(host.lower())
+    return tuple(sorted(hosts))
+
+
+def required_sandbox_domains(
+    source_matrix: dict[str, Any],
+    issuer_registry: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """The exact host allowlist the sandbox must carry for this Source Matrix.
+
+    = Source Matrix template hosts + every human-approved issuer host. An
+    empty issuer registry contributes nothing, which is the current state.
+    """
+    hosts = set(matrix_template_hosts(source_matrix))
+    registry = (
+        issuer_registry
+        if issuer_registry is not None
+        else load_issuer_domain_registry()
+    )
+    for entry in registry.get("issuers", []):
+        for host in entry.get("approved_hosts", []):
+            hosts.add(str(host).lower())
+    return tuple(sorted(hosts))
+
+
+def sandbox_allowed_domains(
+    settings_path: str | Path = CLAUDE_SETTINGS_PATH,
+) -> tuple[str, ...]:
+    import json
+
+    payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+    sandbox = payload.get("sandbox") or {}
+    network = sandbox.get("network") or {}
+    return tuple(
+        sorted(str(host).lower() for host in network.get("allowedDomains", []))
+    )
+
+
+def verify_sandbox_allowlist(
+    source_matrix: dict[str, Any],
+    *,
+    issuer_registry: dict[str, Any] | None = None,
+    settings_path: str | Path = CLAUDE_SETTINGS_PATH,
+) -> tuple[str, ...]:
+    """Halt with SECURITY_POLICY_CHANGE_REQUIRED if a required host is absent.
+
+    This never edits ``settings.json``: changing the sandbox allowlist is a
+    human security decision, not an automated remediation.
+    """
+    required = required_sandbox_domains(source_matrix, issuer_registry)
+    allowed = set(sandbox_allowed_domains(settings_path))
+    missing = [host for host in required if host not in allowed]
+    if missing:
+        raise _fail(
+            SECURITY_POLICY_CHANGE_REQUIRED,
+            "the Claude Code sandbox host allowlist does not cover required "
+            "host(s): " + ", ".join(missing) + ". A HUMAN must approve and add "
+            "them to .claude/settings.json; this pipeline never edits it.",
+        )
+    return required

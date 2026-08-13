@@ -174,6 +174,19 @@ def build_parser() -> argparse.ArgumentParser:
     init_event_research_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     init_event_research_parser.add_argument("--output", required=True, type=Path)
 
+    complete_event_research_parser = subparsers.add_parser("complete-event-research")
+    complete_event_research_parser.add_argument(
+        "--event-research", required=True, type=Path
+    )
+    complete_event_research_parser.add_argument("--sources", required=True, type=Path)
+    complete_event_research_parser.add_argument(
+        "--event-gate-as-of",
+        required=True,
+        help="the run's research cutoff; attempts requested after it are invisible",
+    )
+    complete_event_research_parser.add_argument("--extraction", type=Path)
+    complete_event_research_parser.add_argument("--output", required=True, type=Path)
+
     validate_event_research_parser = subparsers.add_parser("validate-event-research")
     validate_event_research_parser.add_argument("--event-research", required=True, type=Path)
     validate_event_research_parser.add_argument("--candidate-pipeline", required=True, type=Path)
@@ -356,12 +369,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_artifacts_parser.add_argument("--output", type=Path)
 
     # --- Source Acquisition (deterministic HTTP, no AI in the numeric path) --
-    for command, needs_tickers in (
-        ("acquire-discovery", False),
-        ("acquire-stage1-sources", True),
-        ("acquire-stage2-market-sources", True),
-        ("acquire-actual-turnover", True),
-        ("acquire-event-sources", True),
+    #
+    # There is deliberately NO --ticker option on any acquisition command.
+    # Which tickers get network access is derived from the artifacts already
+    # on disk (market_research.json / candidates.json / candidate_pipeline.json),
+    # so an agent cannot inject or widen the candidate set.
+    for command in (
+        "acquire-discovery",
+        "acquire-stage1-sources",
+        "acquire-stage2-market-sources",
+        "acquire-actual-turnover",
+        "acquire-event-sources",
     ):
         acquire_parser = subparsers.add_parser(command)
         acquire_parser.add_argument("--target-date", required=True)
@@ -372,13 +390,8 @@ def build_parser() -> argparse.ArgumentParser:
         acquire_parser.add_argument(
             "--source-matrix", type=Path, default=DEFAULT_SOURCE_MATRIX_PATH
         )
-        acquire_parser.add_argument(
-            "--ticker",
-            action="append",
-            default=[],
-            required=needs_tickers,
-            help="candidate ticker; repeat for each candidate",
-        )
+        if command == "acquire-discovery":
+            acquire_parser.add_argument("--research-window", required=True, type=Path)
         acquire_parser.add_argument("--output", type=Path)
 
     merge_event_parser = subparsers.add_parser("merge-event-source-extraction")
@@ -495,6 +508,14 @@ def main(argv: list[str] | None = None) -> int:
             args.candidates,
             args.previous_trading_day,
             args.config,
+            args.output,
+        )
+    if args.command == "complete-event-research":
+        return _complete_event_research(
+            args.event_research,
+            args.sources,
+            args.event_gate_as_of,
+            args.extraction,
             args.output,
         )
     if args.command == "validate-event-research":
@@ -696,40 +717,135 @@ def main(argv: list[str] | None = None) -> int:
     raise ValueError(f"Unknown command: {args.command}")
 
 
-def _acquire_sources(stage: str, args: argparse.Namespace) -> int:
-    """Stage-aware Source Acquisition.
+def _complete_event_research(
+    event_research_path: Path,
+    sources_path: Path,
+    event_gate_as_of: str,
+    extraction_path: Path | None,
+    output_path: Path,
+) -> int:
+    """Fill in canonical attempt ids / event_gate_as_of / news classifications.
 
-    Contract: fetch the stage's sources for exactly the supplied candidate
-    tickers, store the raw evidence, parse it deterministically, and merge the
-    resulting Source Ledger v3 attempts into ``--sources``.
+    All three are derived from artifacts on disk with the same selection the
+    Event Gate itself uses; the agent supplies none of them.
+    """
+    from src.event_research_completion import complete_event_research
+    from src.event_source_extraction import staged_news_classifications
+
+    event_research = load_json_document(
+        event_research_path, "event_research.schema.json"
+    )
+    source_payload = load_json_document(sources_path, "sources.schema.json")
+    classifications: dict[str, list[dict[str, Any]]] = {}
+    if extraction_path is not None:
+        extraction = load_json_document(
+            extraction_path, "event_source_extraction.schema.json"
+        )
+        classifications = staged_news_classifications(extraction)
+
+    completed = complete_event_research(
+        event_research=event_research,
+        source_payload=source_payload,
+        event_gate_as_of=event_gate_as_of,
+        news_classifications=classifications,
+    )
+    _write_json(output_path, completed, "event_research.schema.json")
+    return 0
+
+
+def _acquire_sources(
+    stage: str,
+    args: argparse.Namespace,
+    transport: Any = None,
+) -> int:
+    """Stage-aware Source Acquisition, wired end to end.
+
+    Contract: derive the candidate set from the artifacts already on disk
+    (never from a CLI argument), fetch the stage's sources, store the raw
+    evidence, parse it deterministically, merge Source Ledger v3 attempts into
+    ``--sources`` **and** reflect the parsed values into the business artifact
+    the stage feeds (market_research.json for Discovery, market_data.json for
+    Stage1 / Stage2 / Turnover).
     """
     from src.source_acquisition import (
         acquire_stage,
+        curl_transport,
         load_ledger,
         merge_ledger,
         write_ledger,
     )
+    from src.stage_wiring import (
+        build_market_research,
+        reflect_market_data,
+        resolve_stage_candidates,
+        write_market_data,
+        write_market_research,
+    )
 
+    run_dir = Path(args.run_dir)
     source_matrix = load_source_matrix(args.source_matrix)
+    existing = load_ledger(args.sources)
+    tickers = resolve_stage_candidates(stage, run_dir)
+
     result = acquire_stage(
         stage,
         target_date=args.target_date,
         trading_date=args.trading_date,
         research_cutoff=args.research_cutoff,
-        tickers=list(args.ticker or []),
-        run_dir=args.run_dir,
+        tickers=tickers,
+        run_dir=run_dir,
         source_matrix=source_matrix,
+        existing_ledger=existing,
+        transport=transport if transport is not None else curl_transport,
     )
-    merged = merge_ledger(load_ledger(args.sources), result.as_ledger())
+
+    merged = merge_ledger(existing, result.as_ledger())
     validate_json_document(merged, "sources.schema.json")
     write_ledger(args.sources, merged)
+
+    artifact: str | None = None
+    if stage == "DISCOVERY":
+        research_window = load_json_document(
+            args.research_window, "research_window.schema.json"
+        )
+        market_research = build_market_research(
+            result,
+            research_window=research_window,
+            source_matrix=source_matrix,
+            research_executed_at=_utc_now(),
+        )
+        write_market_research(run_dir / "market_research.json", market_research)
+        artifact = "market_research.json"
+    elif stage in {"STAGE1", "STAGE2", "TURNOVER"}:
+        market_data_path = run_dir / "market_data.json"
+        current = (
+            json.loads(market_data_path.read_text(encoding="utf-8"))
+            if market_data_path.is_file()
+            else None
+        )
+        updated = reflect_market_data(
+            stage,
+            result,
+            existing=current,
+            trading_date=args.trading_date,
+        )
+        write_market_data(market_data_path, updated)
+        artifact = "market_data.json"
+
     _emit_json(
         {
             "status": result.gate_status,
             "stage": stage,
             "reason_codes": result.gate_reason_codes,
+            "candidate_count": len(tickers),
             "attempt_count": len(result.attempts),
             "value_count": len(result.values),
+            "network_request_count": sum(
+                1
+                for attempt in result.attempts
+                if attempt.get("cache_status") == "MISS"
+            ),
+            "artifact": artifact,
         },
         args.output,
     )
@@ -2290,6 +2406,12 @@ def _write_json(
     atomic_write_text(
         path,
         json.dumps(_json_ready(payload), ensure_ascii=False, indent=2) + "\n",
+    )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
     )
 
 

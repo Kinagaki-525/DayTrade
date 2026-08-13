@@ -7,7 +7,12 @@ from typing import Any
 
 from src.source_parsers.base import ParseContext, ParseResult, ParsedValue, parse_failed
 from src.source_parsers.decode import DecodeError, decode_source_page
-from src.source_parsers.html import hrefs, table_rows, values_for_label
+from src.source_parsers.html import (
+    hrefs,
+    rows_with_hrefs,
+    table_rows,
+    values_for_label,
+)
 from src.source_parsers.numeric import (
     ParseFailed,
     canonical_turnover_from_raw,
@@ -69,8 +74,49 @@ def parse_ranking(
                 trading_date=context.trading_date,
                 value=list(tickers),
             ),
+            ParsedValue(
+                field_name="ranking_rows",
+                ticker=None,
+                trading_date=context.trading_date,
+                value=_ranking_rows(page.text, tickers),
+            ),
         ),
     )
+
+
+def _ranking_rows(text: str, ordered_tickers: list[str]) -> list[dict[str, Any]]:
+    """``[{ticker, company_name, rank}]`` in published ranking order.
+
+    The ticker always comes from the canonical quote anchor, never from cell
+    text. The company name is the row's first non-empty cell that is not the
+    ticker code itself; when the page carries no display name the ticker is
+    used, so Discovery never invents one.
+    """
+    names: dict[str, str] = {}
+    for cells, row_hrefs in rows_with_hrefs(text):
+        row_tickers = {
+            match.group(1)
+            for href in row_hrefs
+            if (match := QUOTE_HREF_PATTERN.match(href)) is not None
+        }
+        if len(row_tickers) != 1:
+            continue
+        ticker = next(iter(row_tickers))
+        if ticker in names:
+            continue
+        for cell in cells:
+            if cell and cell != ticker:
+                names[ticker] = cell
+                break
+
+    return [
+        {
+            "ticker": ticker,
+            "company_name": names.get(ticker, ticker),
+            "rank": index,
+        }
+        for index, ticker in enumerate(ordered_tickers, start=1)
+    ]
 
 
 def parse_quote_turnover(

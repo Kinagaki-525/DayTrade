@@ -1,7 +1,8 @@
 """Merge Event AI Classification output into the Source Ledger.
 
 The AI classification step may only read **already fetched, local** raw pages
-for four event source ids, and may only write the temporary working artifact
+for the four AI-classifiable event source ids, and may only write the
+temporary working artifact
 ``runs/<date>/working/event_source_extraction.json``. It never edits
 ``sources.json``.
 
@@ -14,9 +15,19 @@ here against the ledger and the stored raw evidence:
 * ``ticker`` and ``trading_date`` must match the attempt (no cross
   contamination, no date drift),
 * ``source_page_sha256`` must match both the attempt and the bytes still on
-  disk.
+  disk,
+* every Event Object must be structurally valid against the shape the
+  **existing** Event Gate reads.
 
-Anything else is rejected and nothing is written.
+The validated Event Objects are written into ``source_attempts[].values`` --
+the exact place ``src.event_gate`` looks -- and the attempt's
+``coverage_status`` is set, because the gate refuses to issue a PASS from a
+page whose coverage is not COMPLETE.
+
+The staging schema is *not* a second Event Research contract: news
+classifications staged here are copied into the existing
+``event_research.json`` contract, field for field, by
+:mod:`src.event_research_completion`.
 """
 
 from __future__ import annotations
@@ -26,12 +37,10 @@ from pathlib import Path
 from typing import Any
 
 from src.contracts import validate_json_document
+from src.event_objects import validate_event_object
 from src.source_acquisition import merge_ledger, write_ledger
 from src.source_fetch import SourceFetchError, verify_source_page
 from src.source_matrix import AI_CLASSIFICATION_SOURCE_IDS
-
-
-EVENT_FIELD_NAMES = ("event_type", "event_date")
 
 
 class EventExtractionMergeError(ValueError):
@@ -45,12 +54,12 @@ def validate_extraction_document(payload: dict[str, Any]) -> None:
     validate_json_document(payload, "event_source_extraction.schema.json")
 
 
-def build_merge_values(
+def build_attempt_updates(
     extraction: dict[str, Any],
     ledger: dict[str, Any],
     run_dir: Path,
-) -> list[dict[str, Any]]:
-    """Revalidate the extraction and return the ledger value records."""
+) -> dict[str, dict[str, Any]]:
+    """Revalidate the extraction; return ``attempt_id -> attempt patch``."""
     validate_extraction_document(extraction)
 
     if extraction["target_date"] != ledger.get("target_date"):
@@ -65,7 +74,7 @@ def build_merge_values(
         if isinstance(attempt, dict)
     }
 
-    values: list[dict[str, Any]] = []
+    updates: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
     for index, item in enumerate(extraction["extractions"]):
         prefix = f"extractions[{index}]"
@@ -122,29 +131,52 @@ def build_merge_values(
             )
         seen.add(attempt_id)
 
-        for field_name in EVENT_FIELD_NAMES:
-            value = item[field_name]
-            if value is None:
-                continue
-            values.append(
-                {
-                    "source_ref": f"{attempt_id}#{field_name}",
-                    "source_id": item["source_id"],
-                    "source_role": attempt["source_role"],
-                    "information_type": attempt["information_type"],
-                    "source_status": "FOUND",
-                    "source_name": _source_name(attempt, ledger),
-                    "source_url": attempt["url"],
-                    "retrieved_at": attempt["retrieved_at"],
-                    # The Market Data trading_date, never the event_date: the
-                    # two are deliberately separate fields.
-                    "trading_date": item["trading_date"],
-                    "ticker": item["ticker"],
-                    "field_name": field_name,
-                    "value": value,
-                }
+        errors: list[str] = []
+        evidence_ids: set[str] = set()
+        for event_index, event in enumerate(item["events"]):
+            errors.extend(
+                validate_event_object(event, f"{prefix}.events[{event_index}]")
             )
-    return values
+            evidence_ids.add(str(event.get("evidence_id")))
+        if len(evidence_ids) != len(item["events"]):
+            errors.append(f"{prefix}: duplicate evidence_id within one extraction")
+        if errors:
+            raise EventExtractionMergeError(
+                "EVENT_EXTRACTION_EVENT_OBJECT_INVALID", "; ".join(errors)
+            )
+
+        # Every staged news classification must point at an Event Object this
+        # same extraction actually produced: a classification of evidence that
+        # does not exist can never become a gate decision.
+        for classification in item.get("news_classifications", []):
+            if classification["news_evidence_id"] not in evidence_ids:
+                raise EventExtractionMergeError(
+                    "EVENT_EXTRACTION_NEWS_EVIDENCE_UNKNOWN",
+                    f"{prefix}: news_evidence_id "
+                    f"{classification['news_evidence_id']} is not among this "
+                    "extraction's events",
+                )
+
+        updates[attempt_id] = {
+            "values": _merged_values(attempt, item["events"]),
+            "coverage_status": item["coverage_status"],
+        }
+    return updates
+
+
+def _merged_values(attempt: dict[str, Any], events: list[dict[str, Any]]) -> list[Any]:
+    """Deterministic parse values are kept; Event Objects are replaced.
+
+    Re-running a merge replaces the attempt's previous Event Objects instead
+    of accumulating duplicates, so the operation is idempotent.
+    """
+    existing = attempt.get("values")
+    kept = [
+        value
+        for value in (existing if isinstance(existing, list) else [])
+        if not (isinstance(value, dict) and "event_type" in value)
+    ]
+    return kept + list(events)
 
 
 def merge_event_source_extraction(
@@ -153,18 +185,64 @@ def merge_event_source_extraction(
     ledger: dict[str, Any],
     run_dir: Path,
 ) -> dict[str, Any]:
-    values = build_merge_values(extraction, ledger, run_dir)
+    updates = build_attempt_updates(extraction, ledger, run_dir)
+
+    patched_attempts: list[dict[str, Any]] = []
+    for attempt in ledger.get("source_attempts", []):
+        patch = updates.get(str(attempt.get("attempt_id")))
+        if patch is None:
+            patched_attempts.append(attempt)
+            continue
+        updated = dict(attempt)
+        updated["values"] = patch["values"]
+        updated["coverage_status"] = patch["coverage_status"]
+        updated["result_count"] = len(patch["values"])
+        patched_attempts.append(updated)
+
     merged = merge_ledger(
         ledger,
         {
             "schema_version": ledger.get("schema_version", 3),
             "target_date": ledger["target_date"],
-            "sources": values,
-            "source_attempts": [],
+            "sources": [],
+            "source_attempts": patched_attempts,
         },
     )
     validate_json_document(merged, "sources.schema.json")
     return merged
+
+
+def staged_news_classifications(
+    extraction: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """``ticker -> news_classifications`` in the *existing* contract shape.
+
+    ``source_id`` / ``source_attempt_id`` are filled in from the extraction
+    itself, so the AI never gets to claim a provenance other than the attempt
+    it actually read.
+    """
+    by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for item in extraction.get("extractions", []):
+        if item["source_id"] not in {"YAHOO_JP_NEWS", "KABUTAN_NEWS"}:
+            continue
+        for classification in item.get("news_classifications", []):
+            by_ticker.setdefault(item["ticker"], []).append(
+                {
+                    "news_evidence_id": classification["news_evidence_id"],
+                    "source_id": item["source_id"],
+                    "source_attempt_id": item["source_attempt_id"],
+                    "published_at": classification["published_at"],
+                    "signal_type": classification["signal_type"],
+                    "subject_status": classification["subject_status"],
+                    "confirmation_evidence_ids": list(
+                        classification["confirmation_evidence_ids"]
+                    ),
+                    "confirmation_source_attempt_ids": list(
+                        classification["confirmation_source_attempt_ids"]
+                    ),
+                }
+            )
+    return by_ticker
 
 
 def merge_event_source_extraction_files(
@@ -184,8 +262,11 @@ def merge_event_source_extraction_files(
     return merged
 
 
-def _source_name(attempt: dict[str, Any], ledger: dict[str, Any]) -> str:
-    for value in ledger.get("sources", []):
-        if value.get("source_id") == attempt.get("source_id"):
-            return str(value.get("source_name"))
-    return str(attempt.get("source_id"))
+__all__ = [
+    "EventExtractionMergeError",
+    "build_attempt_updates",
+    "merge_event_source_extraction",
+    "merge_event_source_extraction_files",
+    "staged_news_classifications",
+    "validate_extraction_document",
+]

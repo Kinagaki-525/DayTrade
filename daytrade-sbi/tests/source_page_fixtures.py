@@ -52,11 +52,66 @@ def kabutan_history_page(ticker: str = "7203") -> bytes:
 
 def yahoo_ranking_page(tickers: tuple[str, ...] = ("7203", "6758", "9984")) -> bytes:
     rows = "".join(
-        f'<tr><td><a href="https://finance.yahoo.co.jp/quote/{code}.T">{code}</a></td></tr>'
+        f'<tr><td><a href="https://finance.yahoo.co.jp/quote/{code}.T">{code}</a></td>'
+        f"<td>Example {code} Corporation</td></tr>"
         for code in tickers
     )
     return f"""<html><head><meta charset="utf-8"></head><body>
 <table><tbody>{rows}</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def top50_tickers(start: int = 1000) -> tuple[str, ...]:
+    """Exactly 50 canonical 4-digit ticker codes, for a full TOP50 ranking."""
+    return tuple(str(start + index) for index in range(50))
+
+
+def yahoo_top50_ranking_page(start: int = 1000) -> bytes:
+    return yahoo_ranking_page(top50_tickers(start))
+
+
+def jpx_trading_unit_page(unit: str = "100") -> bytes:
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>
+<tr><td>売買単位</td><td>{unit}</td></tr>
+</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_topix500_page(tickers: tuple[str, ...] = ()) -> bytes:
+    rows = "".join(f"<tr><td>{code}</td></tr>" for code in tickers)
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>{rows}</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_tdnet_page(entries: tuple[tuple[str, str], ...] = ()) -> bytes:
+    """A TDnet disclosure index. Empty = no disclosure published at all."""
+    rows = "".join(
+        f"<tr><td>{published}</td><td>{headline}</td></tr>"
+        for published, headline in entries
+    )
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>{rows}</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_earnings_schedule_page(rows: tuple[tuple[str, str, str], ...] = ()) -> bytes:
+    """``(ticker, date, headline)`` rows. Empty = no scheduled earnings."""
+    body = "".join(
+        f"<tr><td>{ticker}</td><td>{date}</td><td>{headline}</td></tr>"
+        for ticker, date, headline in rows
+    )
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>{body}</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def news_page(ticker: str = "7203", headlines: tuple[str, ...] = ()) -> bytes:
+    items = "".join(f"<li>{headline}</li>" for headline in headlines)
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<a href="https://finance.yahoo.co.jp/quote/{ticker}.T/news">news</a>
+<ul>{items}</ul>
 </body></html>""".encode("utf-8")
 
 

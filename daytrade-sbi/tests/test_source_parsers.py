@@ -46,7 +46,7 @@ def test_every_matrix_source_has_a_registered_parser():
 
 def test_parser_mismatch_is_a_hard_error():
     definition = dict(DEFINITIONS["YAHOO_JP_QUOTE"])
-    definition["acquisition"] = dict(definition["acquisition"], parser="jpx.calendar")
+    definition["acquisition"] = dict(definition["acquisition"], parser_id="jpx.calendar")
     with pytest.raises(ParserRegistryError) as exc_info:
         verify_source_parser_binding(definition)
     assert exc_info.value.code == "SOURCE_PARSER_MISMATCH"

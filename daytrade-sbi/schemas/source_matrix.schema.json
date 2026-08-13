@@ -141,7 +141,7 @@
         "mode",
         "transport",
         "network_scope",
-        "parser"
+        "parser_id"
       ],
       "properties": {
         "mode": {
@@ -151,15 +151,15 @@
           ]
         },
         "transport": {
-          "const": "HTTP_GET"
+          "const": "CURL_GET"
         },
         "network_scope": {
           "enum": [
-            "ALLOWED_HOSTS",
-            "ISSUER_DOMAIN_REGISTRY"
+            "MATRIX_TEMPLATE_HOST",
+            "VERIFIED_ISSUER_DOMAIN"
           ]
         },
-        "parser": {
+        "parser_id": {
           "type": "string",
           "pattern": "^[a-z_]+\\.[a-z0-9_]+$"
         },

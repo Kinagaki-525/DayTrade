@@ -145,10 +145,23 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
 
 
 #: The only source ids whose already-fetched local raw page an AI agent may
-#: read and classify. Every other source is fully deterministic.
+#: read and classify. Every other source -- JPX_TDNET included -- is fully
+#: deterministic: its disclosure index is parsed by code, never summarized.
 AI_CLASSIFICATION_SOURCE_IDS = frozenset(
     {
+        "COMPANY_IR",
+        "COMPANY_IR_DISCLOSURE",
+        "YAHOO_JP_NEWS",
+        "KABUTAN_NEWS",
+    }
+)
+
+#: Every source acquired during the EVENT stage, deterministic or otherwise.
+EVENT_SOURCE_IDS = frozenset(
+    {
         "JPX_TDNET",
+        "JPX_EARNINGS_SCHEDULE",
+        "COMPANY_IR",
         "COMPANY_IR_DISCLOSURE",
         "YAHOO_JP_NEWS",
         "KABUTAN_NEWS",
@@ -158,11 +171,16 @@ AI_CLASSIFICATION_SOURCE_IDS = frozenset(
 #: Sources whose host comes from the human-approved issuer domain registry.
 ISSUER_SCOPED_SOURCE_IDS = frozenset({"COMPANY_IR", "COMPANY_IR_DISCLOSURE"})
 
+#: The public Source Matrix v3 contract vocabulary. These strings appear
+#: verbatim in config/source_matrix.yaml and in the schema; internal Python
+#: names may differ, the YAML/schema-facing terms may not.
 ACQUISITION_MODES = frozenset(
     {"DETERMINISTIC", "DETERMINISTIC_THEN_AI_CLASSIFICATION"}
 )
-ACQUISITION_TRANSPORTS = frozenset({"HTTP_GET"})
-NETWORK_SCOPES = frozenset({"ALLOWED_HOSTS", "ISSUER_DOMAIN_REGISTRY"})
+ACQUISITION_TRANSPORTS = frozenset({"CURL_GET"})
+MATRIX_TEMPLATE_HOST_SCOPE = "MATRIX_TEMPLATE_HOST"
+VERIFIED_ISSUER_DOMAIN_SCOPE = "VERIFIED_ISSUER_DOMAIN"
+NETWORK_SCOPES = frozenset({MATRIX_TEMPLATE_HOST_SCOPE, VERIFIED_ISSUER_DOMAIN_SCOPE})
 
 
 def is_v3(payload: dict[str, Any]) -> bool:
@@ -210,7 +228,7 @@ def _acquisition_errors(payload: dict[str, Any]) -> list[str]:
         scope = acquisition.get("network_scope")
         if scope not in NETWORK_SCOPES:
             errors.append(f"{source_id}: invalid acquisition.network_scope {scope!r}")
-        elif (scope == "ISSUER_DOMAIN_REGISTRY") != (
+        elif (scope == VERIFIED_ISSUER_DOMAIN_SCOPE) != (
             source_id in ISSUER_SCOPED_SOURCE_IDS
         ):
             errors.append(
