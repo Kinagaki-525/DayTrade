@@ -143,13 +143,14 @@ def verify_production_run(
     market_payload = payloads.get("market_data.json")
     if market_payload is not None:
         try:
-            records = load_market_data(run_dir / "market_data.json")
-            market_result = validate_market_data(records)
-            report.record(
-                "market_data", market_result.valid, "; ".join(market_result.errors)
-            )
+            target_date, records = load_market_data(run_dir / "market_data.json")
+            market_errors: list[str] = []
+            for record in records:
+                outcome = validate_market_data(record)
+                market_errors.extend(outcome.errors)
+            report.record("market_data", not market_errors, "; ".join(market_errors))
             ledger_result = validate_source_ledger(
-                market_payload["target_date"],
+                target_date,
                 records,
                 source_payload,
                 load_source_matrix(source_matrix_path),
