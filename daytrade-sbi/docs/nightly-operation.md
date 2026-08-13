@@ -89,7 +89,7 @@ Ranking完了後、main agentはCLI（Case A/Bは`build-ranking-terminal-recomme
   `selection.json`の`selection_status`が`SELECTED`なら`recommendation.json`の`decision`は`TRADE`、`NO_TRADE`なら`decision`は`NO_TRADE`になる（`build-selection-recommendation`はSelectionの判定結果を機械的に転記するだけで、独自の判定は行わない）。`TRADE`の場合だけ、続けて`risk-check`へ`--selection runs/<target_date>/selection.json`を渡してRisk Engineを実行する。
 
 22. Case Cで`decision=TRADE`の場合だけ人間に保有数・当日取引数を確認し、`risk-check --selection ... --ranking ...`（両方必須。Selection駆動の`recommendation.json`はSHA256チェーンで`--selection`・`--ranking`の両方をRisk Engineへ渡さない限りHard Errorで停止する）でRisk Engineを実行して`risk_result.json`を保存
-23. Case A・Case B、またはCase Cで`decision`が`TRADE`以外の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存
+23. Case A・Case B、またはCase Cで`decision`が`TRADE`以外の場合は人間入力なしでRisk Engineの`NOT_APPLICABLE`を保存する。Case A/B（`recommendation.schema_version=1`）の場合、`risk-check`自身がRankingとその上流Artifact全体のtrust chainを独立に再検証するため、`--ranking`・`--event-gate`・`--research-window`の3つが必須になる（欠けるとHard Errorで停止し、`risk_result.json`は生成されない）
 24. `recommendation.md`と`report.md`を生成
 25. run artifact allowlist（`event_research.json`、`event_gate.json`、`ranking.json`を含む）を検証し、`trades/recommendations.csv`へ推奨履歴を追加
 26. 作成ファイル、判断理由、データ欠落、Risk Engine結果を報告

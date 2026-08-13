@@ -25,6 +25,7 @@
 - `recommendation.json`をagentが手で作成・編集しない。必ずPython CLI（Case A/Bは`build-ranking-terminal-recommendation`、Case Cは`build-selection`→`build-selection-recommendation`）が生成したものだけを使う
 - Ranking `COMPLETE`かつ`selection.enabled=false`（Case B、較正待ち）またはRanking `DATA_UNAVAILABLE`（Case A）の場合も、日次結果を口頭で記録するだけでなく必ず`build-ranking-terminal-recommendation`を実行して`recommendation.json`を生成する
 - Config v6でSelectionが有効なRecommendation（`recommendation.schema_version=2`）を`build-selection-recommendation`/`risk-check`へ渡す場合、`--ranking`・`--selection`の両方が必須であり、`ranking.json`/`selection.json`のSHA256ハッシュチェーンが実際に一致することを`build-selection-recommendation`/`risk-check`自身が再検証する。片方だけの指定や、ハッシュチェーンが崩れた状態でTRADE推奨を通すことはできない
+- Config v6のCase A/B（`recommendation.schema_version=1`、`decision`が`NO_TRADE`または`DATA_UNAVAILABLE`）も`risk-check`が独立にRankingとその上流Artifact全体のTrust Chainを再検証する。`--ranking`・`--event-gate`・`--research-window`が必須で、`ranking.input_hashes`の完全一致・Ranking Contract関数の再実行・Terminal Recommendationの決定論的再計算まで行う。agentが`recommendation.json`を手で作成して`risk-check`へそのまま渡しても、Case A/Bであれ有効な結果は得られない
 - Selection Calibrationが`ranking.json`をObservationとして採用する前に、その上流アーティファクト一式（`event_gate.json`・`candidates.json`・`market_data.json`・`sources.json`・source matrix・`strategy_snapshot.yaml`）を、Ranking CLI自身が使う実際のContract関数で完全に再検証する。コホート一致だけで内容未検証の`ranking.json`はObservationとして数えない
 
 ## Codexの役割

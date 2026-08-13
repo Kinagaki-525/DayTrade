@@ -87,7 +87,7 @@ Pythonが候補パイプラインと性能計測を保存
   ↓
 Hard Screening PASS候補と分析Featureを保存
   ↓ PythonがEvent Gate → Ranking（Rank 1決定）を実行
-  ↓ Case A/B（Selection無効時）: `build-ranking-terminal-recommendation`でRanking結果のみからrecommendation.jsonを確定（常にNO_TRADEまたはDATA_UNAVAILABLE、Selectionは一切関与しない）
+  ↓ Case A/B（Selection無効時）: `build-ranking-terminal-recommendation`がRankingの結果とその上流Artifact（Event Gate・Candidates・Market Data・Sources・Source Matrix・Config Snapshot）のTrust Chainを再検証したうえでrecommendation.jsonを確定（常にNO_TRADEまたはDATA_UNAVAILABLE、Selectionは一切関与しない）。`risk-check`も同じTrust Chainを`--ranking`/`--event-gate`/`--research-window`から独立に再検証する
   ↓ Case C（Selection有効時）: `build-selection`でRank 1のみを評価（Rank2フォールバックなし）→`build-selection-recommendation`でrecommendation.jsonを確定
   ↓ 本番設定は現在Selection無効・閾値未決定（Calibration Pending）のためCase A/Bを使用。閾値較正・有効化が完了しCase Cへ移行しても、この処理フロー自体は変わらない
 Python Risk Engineが注文案を再計算・検証
