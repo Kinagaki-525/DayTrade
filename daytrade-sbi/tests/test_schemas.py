@@ -123,6 +123,35 @@ def test_recommendation_schema_accepts_data_unavailable_without_order_values():
     )
 
 
+def test_recommendation_schema_v2_trade_is_valid():
+    payload = recommendation_payload("TRADE")
+    payload["schema_version"] = 2
+    payload["selection_sha256"] = "a" * 64
+    validate_json_document(payload, "recommendation.schema.json")
+
+
+def test_recommendation_schema_v2_no_trade_is_valid():
+    payload = recommendation_payload("NO_TRADE")
+    payload["schema_version"] = 2
+    payload["selection_sha256"] = "a" * 64
+    validate_json_document(payload, "recommendation.schema.json")
+
+
+def test_recommendation_schema_v2_data_unavailable_is_invalid():
+    payload = recommendation_payload("DATA_UNAVAILABLE")
+    payload["schema_version"] = 2
+    payload["selection_sha256"] = "a" * 64
+    with pytest.raises(ValueError, match="recommendation.schema.json"):
+        validate_json_document(payload, "recommendation.schema.json")
+
+
+def test_recommendation_schema_v2_missing_selection_sha256_is_invalid():
+    payload = recommendation_payload("TRADE")
+    payload["schema_version"] = 2
+    with pytest.raises(ValueError, match="selection_sha256"):
+        validate_json_document(payload, "recommendation.schema.json")
+
+
 def test_risk_result_schema_accepts_data_unavailable_as_not_applicable():
     config = load_strategy_config()
     validate_json_document(

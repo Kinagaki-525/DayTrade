@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "selection.schema.json",
+  "title": "Selection v1 result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "selection_version",
+    "target_date",
+    "previous_trading_day",
+    "generated_at",
+    "strategy_version",
+    "config_sha256",
+    "input_hashes",
+    "ranking_version",
+    "ranking_method",
+    "evaluated_ticker",
+    "ranking_final_rank",
+    "selection_status",
+    "selected_ticker",
+    "reason_codes",
+    "rule_evaluations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "selection_version": {"const": "selection-v1"},
+    "target_date": {"type": "string", "format": "date"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "input_hashes": {
+      "type": "object",
+      "required": ["ranking_sha256", "strategy_snapshot_sha256"],
+      "properties": {
+        "ranking_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "ranking_version": {"const": "ranking-v1"},
+    "ranking_method": {"const": "ordinal_rank_sum"},
+    "evaluated_ticker": {"type": "string", "minLength": 1},
+    "ranking_final_rank": {"const": 1},
+    "selection_status": {"enum": ["SELECTED", "NO_TRADE"]},
+    "selected_ticker": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "null"}
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "SELECTION_ALL_RULES_PASSED",
+          "SELECTION_TURNOVER_BELOW_MINIMUM",
+          "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+        ]
+      }
+    },
+    "rule_evaluations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"$ref": "#/$defs/turnoverRuleEvaluation"},
+        {"$ref": "#/$defs/relativeTickRuleEvaluation"}
+      ],
+      "items": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {"selection_status": {"const": "SELECTED"}}
+      },
+      "then": {
+        "properties": {
+          "selected_ticker": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"selection_status": {"const": "NO_TRADE"}}
+      },
+      "then": {
+        "properties": {
+          "selected_ticker": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "ratio": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "turnoverRuleEvaluation": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "operator",
+        "actual_value_yen",
+        "threshold_value_yen",
+        "result",
+        "reason_code"
+      ],
+      "properties": {
+        "rule_id": {"const": "minimum_turnover_yen"},
+        "operator": {"const": ">="},
+        "actual_value_yen": {"$ref": "#/$defs/decimal"},
+        "threshold_value_yen": {"type": "integer", "minimum": 1},
+        "result": {"enum": ["PASS", "REJECT"]},
+        "reason_code": {
+          "oneOf": [
+            {"type": "null"},
+            {"const": "SELECTION_TURNOVER_BELOW_MINIMUM"}
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"result": {"const": "PASS"}}},
+          "then": {"properties": {"reason_code": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"result": {"const": "REJECT"}}},
+          "then": {"properties": {"reason_code": {"const": "SELECTION_TURNOVER_BELOW_MINIMUM"}}}
+        }
+      ]
+    },
+    "relativeTickRuleEvaluation": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "operator",
+        "actual_ratio",
+        "threshold_ratio",
+        "result",
+        "reason_code"
+      ],
+      "properties": {
+        "rule_id": {"const": "maximum_relative_tick_size"},
+        "operator": {"const": "<="},
+        "actual_ratio": {
+          "type": "object",
+          "required": ["numerator_yen", "denominator_yen"],
+          "properties": {
+            "numerator_yen": {"$ref": "#/$defs/decimal"},
+            "denominator_yen": {"$ref": "#/$defs/decimal"}
+          },
+          "additionalProperties": false
+        },
+        "threshold_ratio": {"$ref": "#/$defs/ratio"},
+        "result": {"enum": ["PASS", "REJECT"]},
+        "reason_code": {
+          "oneOf": [
+            {"type": "null"},
+            {"const": "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"}
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"result": {"const": "PASS"}}},
+          "then": {"properties": {"reason_code": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"result": {"const": "REJECT"}}},
+          "then": {"properties": {"reason_code": {"const": "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"}}}
+        }
+      ]
+    }
+  }
+}

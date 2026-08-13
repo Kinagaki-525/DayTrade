@@ -209,7 +209,7 @@ py -B -m src.cli validate-event-research --event-research runs/YYYY-MM-DD/event_
 py -B -m src.cli build-event-gate --event-research runs/YYYY-MM-DD/event_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --candidates runs/YYYY-MM-DD/candidates.json --sources runs/YYYY-MM-DD/sources.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/event_gate.json
 ```
 
-`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない（`recommendation.json` は `NO_TRADE` か `DATA_UNAVAILABLE` とする）。
+`event_gate.json` の `ranking_ready=false`、または `event_gate_complete=false` の場合、Rankingへ進めない。この場合の`recommendation.json`生成手順は本ドキュメントの対象範囲外（Event Gateの規定に従う）。
 
 Rankingが使う実際の売買代金の調査は「Ranking用Actual Turnover Research」で `screen-market` より前に完了させる。Event Gateの工程では新たにTurnover Researchを行わない。Event Gate生成時点のInput Hashは、その後変更しない。
 
@@ -223,27 +223,42 @@ py -B -m src.cli build-ranking --event-gate runs/YYYY-MM-DD/event_gate.json --ca
 
 Ranking v1（`src/ranking.py`）はEvent Gate `PASS`候補だけを対象に、実際の売買代金（desc）と呼値/発動価格の相対比（asc）の2 FeatureだけをCompetition Rankingし、単純Rank合計（`rank_points`）で並べ替える。AI判断・Score・Weight・閾値・推定売買代金は使わない。1件でも売買代金データが揃わない候補があれば、Ranking全体を`ranking_status=DATA_UNAVAILABLE`とする（Fail Closed、部分的なRankingは行わない）。`ranking.json`は上流Artifact（`event_gate.json`、`candidates.json`、`market_data.json`、`sources.json`、`source_matrix.yaml`、`strategy_snapshot.yaml`、`candidate_pipeline.json`）を一切変更しない。
 
-## Codex比較とRecommendation
+## Selection とRecommendation
 
 - Hard Screeningでは `candidates.json` に `screening_status`、Rule評価、Source Provenance、分析Featureを保存する。
 - `candidate_pipeline.summary.ranking_complete=false` の間は、`screening_pass_count` が1件でも複数でも `TRADE` を作成しない。これは`ranking.json`の`ranking_complete`とは別のフィールドであり、`ranking.json`が`ranking_complete=true`でも`candidate_pipeline.summary.ranking_complete`は`false`のままである（Rankingの完了はTRADE可能を意味しない）。
 - `REJECTED` を候補へ戻さない。
-- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合は日次結果を `DATA_UNAVAILABLE` とする。`ranking_status=COMPLETE` の場合でも、Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは未実装のため、`NO_TRADE` とし、理由にSelection未実装を記録する。Ranking `COMPLETE` はTRADE可能を意味しない。
+- `ranking.json` の `ranking_status=DATA_UNAVAILABLE` の場合（Case A）はSelectionを実行せず、`build-ranking-terminal-recommendation` を実行して `decision=DATA_UNAVAILABLE` の `recommendation.json`（schema_version 1）を生成する。
+- `ranking_status=COMPLETE` かつ `config/strategy.yaml`（対象日の`strategy_snapshot.yaml`）の `selection.enabled` がfalse（閾値未較正、Case B）の場合もSelectionを実行せず、`build-ranking-terminal-recommendation` を実行して `decision=NO_TRADE`（理由 `SELECTION_NOT_ACTIVE_PENDING_CALIBRATION`）の `recommendation.json` を生成する。
+
+  ```powershell
+  py -B -m src.cli build-ranking-terminal-recommendation --ranking runs/YYYY-MM-DD/ranking.json --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/recommendation.json
+  ```
+
+  Case A・Case Bのいずれも `recommendation.json` を必ず生成する。手で `recommendation.json` を作成することはない。
+- `ranking_status=COMPLETE` かつ `selection.enabled` がtrueの場合（Case C）だけ、次の順でCLIを実行する。main agentはRank 1の`feature_values`（売買代金・相対呼値）を自分で読んでPASS/REJECTを判断せず、CLIの出力をそのまま報告する。
+
+  ```powershell
+  py -B -m src.cli build-selection --ranking runs/YYYY-MM-DD/ranking.json --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/selection.json
+  py -B -m src.cli build-selection-recommendation --ranking runs/YYYY-MM-DD/ranking.json --selection runs/YYYY-MM-DD/selection.json --event-gate runs/YYYY-MM-DD/event_gate.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --research-window runs/YYYY-MM-DD/research_window.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/recommendation.json
+  ```
+
+  `build-selection`・`build-selection-recommendation`はいずれも`selection.json`/`recommendation.json`自身のハッシュチェーンだけでなく、`ranking.json`をその上流アーティファクト一式に対して独立に再検証してから結果を確定する。`selection.json` の `selection_status=SELECTED` なら `recommendation.json` は `decision=TRADE`（`ticker`は`selected_ticker`、`selection_sha256`で`selection.json`とリンク）、`selection_status=NO_TRADE` なら `decision=NO_TRADE` になる。Rank 1がRank 2以下へFallbackすることはない。
 - `recommendation.json` には `research_cutoff`、`post_cutoff_information_status`、`pipeline_summary`、必要に応じて `source_statuses` を保存する。
 - `pipeline_summary` は `candidate_pipeline.summary` から転記し、推測で変更しない。
 
 ## Risk Engineとレポート
 
-`TRADE` の場合だけ、Risk Engine前に現在の保有数と当日取引数を人間へ確認する。確認できない場合は停止する。
+`TRADE` の場合だけ、Risk Engine前に現在の保有数と当日取引数を人間へ確認する。確認できない場合は停止する。Case Cの`recommendation.json`（`schema_version=2`）に対しては、`risk-check`自身がRankingの上流Trust Chain全体とSelection/Recommendationの再計算まで独立に検証するため、`--selection`・`--ranking`・`--event-gate`・`--research-window`のすべてが必須になる（欠けるとHard Errorで停止する）。
 
 ```powershell
-py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/risk_result.json --current-positions <確認済み保有数> --trades-today <確認済み当日取引数>
+py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --selection runs/YYYY-MM-DD/selection.json --ranking runs/YYYY-MM-DD/ranking.json --event-gate runs/YYYY-MM-DD/event_gate.json --research-window runs/YYYY-MM-DD/research_window.json --output runs/YYYY-MM-DD/risk_result.json --current-positions <確認済み保有数> --trades-today <確認済み当日取引数>
 ```
 
-`NO_TRADE` または `DATA_UNAVAILABLE` の場合は、保有数と当日取引数を聞かずに `NOT_APPLICABLE` を生成する。
+`NO_TRADE` または `DATA_UNAVAILABLE` の場合は、保有数と当日取引数を聞かずに `NOT_APPLICABLE` を生成する。Case A/Bの`recommendation.json`（`schema_version=1`）に対しては、`risk-check`自身がRankingとその上流Artifactのtrust chain全体を独立に再検証するため、`--ranking`・`--event-gate`・`--research-window`の3つが必須になる（欠けるとHard Errorで停止する）。Case C（`schema_version=2`）の`NO_TRADE`に対しても同様に、`--selection`・`--ranking`・`--event-gate`・`--research-window`のすべてが必須になる。
 
 ```powershell
-py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --output runs/YYYY-MM-DD/risk_result.json
+py -B -m src.cli risk-check --recommendation runs/YYYY-MM-DD/recommendation.json --candidates runs/YYYY-MM-DD/candidates.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --market-data runs/YYYY-MM-DD/market_data.json --sources runs/YYYY-MM-DD/sources.json --source-matrix config/source_matrix.yaml --market-research runs/YYYY-MM-DD/market_research.json --config runs/YYYY-MM-DD/strategy_snapshot.yaml --ranking runs/YYYY-MM-DD/ranking.json --event-gate runs/YYYY-MM-DD/event_gate.json --research-window runs/YYYY-MM-DD/research_window.json --output runs/YYYY-MM-DD/risk_result.json
 ```
 
 Risk Engine後、Markdownは構造化JSONから再生成する。途中追記、`may screen`、`order-plan preview` などの途中判断を残さない。

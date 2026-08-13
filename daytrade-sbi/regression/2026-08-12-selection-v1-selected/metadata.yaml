@@ -1,0 +1,72 @@
+target_date: 2026-08-12
+decision: SELECTED
+regression_type: MINIMAL_SELECTION_REGRESSION
+canonical_run_dir: "runs/2026-08-12"
+purpose: >
+  Minimal Selection Regression: it reproduces the Ranking -> Selection trust
+  boundary only, not the whole nightly pipeline. build_selection() is called
+  directly against a SYNTHETIC ranking.json (COMPLETE, single Rank 1
+  candidate) and a SYNTHETIC strategy_snapshot.yaml carrying a NON-NULL
+  selection threshold pair, and the resulting selection.json is compared
+  field-for-field (excluding generated_at) by
+  tests/test_selection_regression.py. This fixture proves the mechanical
+  wiring of Selection v1 (Rank-1-only, no Rank 2 fallback) against a case
+  where both rules PASS; it says nothing about what real threshold values
+  should be in production.
+
+synthetic_data_notice: >
+  SYNTHETIC. NOT MARKET DATA. Every price, turnover, tick-size and threshold
+  value in this fixture is fabricated to exercise the Selection decision
+  path. NOT PRODUCTION THRESHOLD: the selection.rules.minimum_turnover_yen
+  threshold_yen (1000000000) and maximum_relative_tick_size threshold_ratio
+  (1/500) in this fixture's strategy_snapshot.yaml are fixture-local only.
+  They must never be copied into the real config/strategy.yaml, whose
+  selection.enabled stays false and both thresholds stay null pending real
+  calibration.
+
+not_stored:
+  - artifact: runs/2026-08-12/event_gate.json
+    reason: >
+      Upstream of Ranking, never read by Selection. Selection's only inputs
+      are ranking.json and the strategy config; a Minimal Selection
+      Regression does not reproduce the Event Gate -> Ranking boundary
+      (that is covered separately by
+      regression/2026-08-12-ranking-v1-complete/).
+  - artifact: runs/2026-08-12/candidates.json
+  - artifact: runs/2026-08-12/market_data.json
+  - artifact: runs/2026-08-12/sources.json
+    reason: >
+      Upstream of Ranking, not read by build_selection(). This fixture's
+      ranking.json is a standalone COMPLETE artifact (its own
+      input_hashes.strategy_snapshot_sha256 is re-verified against the
+      sibling strategy_snapshot.yaml bytes, per validate_rank1_integrity /
+      build_selection's hash-chain check) rather than rebuilt from the full
+      candidate pipeline.
+
+# Why each artifact is kept, so the set is explicit rather than implicit.
+# Classification:
+#   DIRECT INPUT        - passed to build_selection()
+#   EXPECTED OUTPUT      - the recorded artifact the rebuild is compared to
+artifacts:
+  runs/2026-08-12/strategy_snapshot.yaml:
+    classification: DIRECT INPUT
+    note: >
+      config_schema_version 6 with a SYNTHETIC non-null selection threshold
+      pair (selection.enabled: true). This is a fixture-local variant of the
+      real config/strategy.yaml, which keeps selection.enabled false and
+      both thresholds null.
+  runs/2026-08-12/ranking.json:
+    classification: DIRECT INPUT
+    note: >
+      A SYNTHETIC ranking-v1 COMPLETE artifact carrying a single Rank 1
+      candidate (ticker 7203) whose turnover_yen (2655000000) and
+      relative_tick_size (1/901) both PASS the synthetic thresholds above.
+      Its config_sha256 and input_hashes.strategy_snapshot_sha256 are the
+      genuine sha256 of the sibling strategy_snapshot.yaml bytes, verified
+      by tests/test_selection_regression.py.
+  runs/2026-08-12/selection.json:
+    classification: EXPECTED OUTPUT
+    note: >
+      Rebuilt by build_selection() and compared field-for-field except
+      generated_at. selection_status is SELECTED with
+      reason_codes=["SELECTION_ALL_RULES_PASSED"].

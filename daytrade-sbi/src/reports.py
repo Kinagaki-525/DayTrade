@@ -63,7 +63,7 @@ def render_sbi_report(
         "Risk Engine:",
         str(risk_result.get("status", "")),
     ]
-    _append_section(lines, "Codex選定理由", reasons)
+    _append_section(lines, "選定理由", reasons)
     _append_pipeline_sections(lines, recommendation)
     _append_section(lines, "参照データ", source_urls)
     violations = _as_text_list(risk_result.get("violations"))
@@ -147,8 +147,9 @@ def render_research_report(
             "## Hard Screening",
             *_screening_summary_lines(summary),
             "",
-            "## Codexによる比較評価",
-            "- Ranking未実装のため、Hard Screening PASS候補があってもTRADEへ進めない。",
+            "## 下流選定工程",
+            "- Ranking/Selectionの結果はこのレポートの入力に含まれないため、ここでは判定しない。",
+            "- 最終的な選定・注文判断は ranking.json / selection.json / recommendation.json を参照すること。",
             "- この文書は最終構造化成果物から生成し、途中判断や注文プレビューは残さない。",
         ]
     )
@@ -331,8 +332,6 @@ def _screening_summary_lines(
         f"{prefix}Screening完了: {_yes_no(summary.get('screening_complete'))}",
         f"{prefix}Ranking完了: {_yes_no(summary.get('ranking_complete'))}",
     ]
-    if summary.get("ranking_complete") is not True:
-        lines.append(f"{prefix}Ranking未実装のためTRADE候補は確定しない。")
     return lines
 
 

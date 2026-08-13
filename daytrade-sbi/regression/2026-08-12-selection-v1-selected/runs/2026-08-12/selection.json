@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "selection_version": "selection-v1",
+  "target_date": "2026-08-12",
+  "previous_trading_day": "2026-08-10",
+  "generated_at": "2026-08-12T18:02:13.236214+00:00",
+  "strategy_version": "v1",
+  "config_sha256": "d2df76bafa2ccfbbc0014014e44833f6d7c04331e87a638e3e0af8eaa7b343f6",
+  "input_hashes": {
+    "ranking_sha256": "786b05c270a13863b25c7eb96b7937098074c2972d109cf97498389e7828875e",
+    "strategy_snapshot_sha256": "5ccd84039fea7ef0e36c61836be9eedfcc971f1651faa78eea3d280f8d0d2789"
+  },
+  "ranking_version": "ranking-v1",
+  "ranking_method": "ordinal_rank_sum",
+  "evaluated_ticker": "7203",
+  "ranking_final_rank": 1,
+  "selection_status": "SELECTED",
+  "selected_ticker": "7203",
+  "reason_codes": [
+    "SELECTION_ALL_RULES_PASSED"
+  ],
+  "rule_evaluations": [
+    {
+      "rule_id": "minimum_turnover_yen",
+      "operator": ">=",
+      "actual_value_yen": "2655000000",
+      "threshold_value_yen": 1000000000,
+      "result": "PASS",
+      "reason_code": null
+    },
+    {
+      "rule_id": "maximum_relative_tick_size",
+      "operator": "<=",
+      "actual_ratio": {
+        "numerator_yen": "1",
+        "denominator_yen": "901"
+      },
+      "threshold_ratio": {
+        "numerator": 1,
+        "denominator": 500
+      },
+      "result": "PASS",
+      "reason_code": null
+    }
+  ]
+}

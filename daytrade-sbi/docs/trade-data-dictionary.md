@@ -87,4 +87,13 @@ py -B -m src.cli calculate-metrics
 | `entry_filled` | 約定の事実を確認後に記録 |
 | `notes` | 見送り理由、拒否理由、未約定理由など |
 
+`recommendations.csv`へ`selection_sha256`カラムは追加しません（対象外）。`selection.json`と`recommendation.json`のリンクは下記のとおり`recommendation.json`内の`selection_sha256`フィールドだけで保持します。
+
+## recommendation.json の selection_sha256（Recommendation v2）
+
+`selection.enabled`が有効なSelection実行（Case C、`docs/nightly-operation.md`参照）では、`build-selection-recommendation`が生成する`recommendation.json`（`schema_version: 2`）に`selection_sha256`フィールドを保存します。値はその日の`selection.json`ファイルバイト列の実際のSHA-256です。
+
+- `selection.json`の`selection_status=SELECTED`から`decision=TRADE`になった場合も、`selection_status=NO_TRADE`から`decision=NO_TRADE`になった場合も、`selection_sha256`は必ず記録されます（Case Bのように`selection.json`自体が存在しない`NO_TRADE`では記録されません）。
+- Risk Engineが`REJECTED`と判定しても、`recommendation.json`は書き換えません。`risk_result.json`側に`REJECTED`の理由が独立して記録され、`recommendation.json`の`decision`・`selection_sha256`は変更されません。
+
 推奨履歴の実行状態をいつ・どの手順で更新するかは、[TODO.md](../TODO.md)の未決定事項です。

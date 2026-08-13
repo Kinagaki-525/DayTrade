@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+import copy
+
 from src.config import (
     SCREENING_KEYS,
     load_strategy_config,
@@ -17,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def test_current_config_keeps_screening_rules_disabled_without_thresholds():
     config = load_strategy_config()
 
-    assert config["config_schema_version"] == 5
+    assert config["config_schema_version"] == 6
     assert config["strategy_version"] == "v1"
     rules = normalize_screening_rules(config["screening"])
     assert set(rules) == set(SCREENING_KEYS)
@@ -26,6 +28,24 @@ def test_current_config_keeps_screening_rules_disabled_without_thresholds():
     assert rules["maximum_gap_percent"]["phase"] == "entry_gate"
     assert rules["maximum_spread"]["phase"] == "execution_gate"
     assert rules["exclude_earnings"]["phase"] == "event_gate"
+
+
+def test_production_config_guard_selection_disabled_and_thresholds_null():
+    """Non-negotiable: production selection stays disabled with undecided thresholds.
+
+    This test intentionally hard-codes the expectation, not a value read back
+    from the config file, so a well-intentioned edit to config/strategy.yaml
+    cannot silently flip production selection on or invent a threshold.
+    """
+    config = load_strategy_config()
+    selection = config["selection"]
+    assert selection["enabled"] is False
+    assert (
+        selection["rules"]["minimum_turnover_yen"]["threshold_yen"] is None
+    )
+    assert (
+        selection["rules"]["maximum_relative_tick_size"]["threshold_ratio"] is None
+    )
 
 
 def test_v3_config_preserves_v1_fixed_rule_values():
@@ -245,4 +265,239 @@ def test_ranking_features_require_both_features(missing_feature):
     config = load_strategy_config()
     del config["ranking"]["features"][missing_feature]
     with pytest.raises(ValueError, match="ranking|turnover|relative_tick_size"):
+        validate_strategy_config(config)
+
+
+# --- genuine v5 config compatibility (real historical snapshot, not v6) -----
+
+
+def test_genuine_v5_snapshot_loads_without_a_selection_block():
+    """tests/fixtures/strategy_v5.yaml is a real historical
+    config_schema_version=5 strategy_snapshot.yaml (copied from a genuine
+    Ranking regression run, predating the Selection v6 work), not the
+    current v6 config with a version number swapped in. load_strategy_config
+    validates via the config's own real v5 code path (_validate_ranking_config,
+    no _validate_selection_config), so a passing load proves genuine v5/Ranking
+    backward compatibility rather than merely re-testing v6."""
+    v5_config = load_strategy_config(
+        PROJECT_ROOT / "tests" / "fixtures" / "strategy_v5.yaml"
+    )
+    assert v5_config["config_schema_version"] == 5
+    assert "selection" not in v5_config
+    assert v5_config["ranking"]["enabled"] is True
+
+
+# --- Config v6 Selection validation matrix (bug fixes + full coverage) -----
+
+
+def _v6_selection_config(**overrides):
+    config = copy.deepcopy(load_strategy_config())
+    assert config["config_schema_version"] == 6
+    selection = copy.deepcopy(config["selection"])
+    selection.update(overrides)
+    config["selection"] = selection
+    return config
+
+
+def test_v6_production_default_selection_disabled_both_null_passes():
+    config = load_strategy_config()
+    validate_strategy_config(config)  # must not raise
+
+
+def test_v6_selection_enabled_both_valid_passes():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 1000},
+            },
+        },
+    )
+    validate_strategy_config(config)  # must not raise
+
+
+def test_v6_selection_disabled_both_valid_non_null_passes():
+    """Emergency Disable: previously-calibrated values kept in config while
+    selection.enabled is temporarily false."""
+    config = _v6_selection_config(
+        enabled=False,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 1000},
+            },
+        },
+    )
+    validate_strategy_config(config)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        {
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {"operator": "<=", "threshold_ratio": None},
+        },
+        {
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": None},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 1000},
+            },
+        },
+    ],
+)
+def test_v6_selection_disabled_mixed_null_fails(rules):
+    config = _v6_selection_config(enabled=False, rules=rules)
+    with pytest.raises(ValueError, match="must either both be null or both be set"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_enabled_missing_turnover_fails():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": None},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 1000},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="minimum_turnover_yen"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_enabled_missing_ratio_fails():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {"operator": "<=", "threshold_ratio": None},
+        },
+    )
+    with pytest.raises(ValueError, match="threshold_ratio"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_ratio_numerator_zero_fails():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 0, "denominator": 1000},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="numerator"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_ratio_denominator_zero_fails():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 0},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="denominator"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_ratio_not_reduced_fails():
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 2, "denominator": 2000},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="lowest terms"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_unknown_rule_name_fails():
+    config = _v6_selection_config(enabled=False)
+    config["selection"]["rules"]["unknown_rule"] = {"operator": ">=", "threshold": 1}
+    with pytest.raises(ValueError, match="unknown field"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_fallback_policy_not_none_fails():
+    config = _v6_selection_config(fallback_policy="rank2")
+    with pytest.raises(ValueError, match="fallback_policy"):
+        validate_strategy_config(config)
+
+
+def test_v6_selection_candidate_policy_not_rank1_only_fails():
+    config = _v6_selection_config(candidate_policy="rank1_and_rank2")
+    with pytest.raises(ValueError, match="candidate_policy"):
+        validate_strategy_config(config)
+
+
+@pytest.mark.parametrize(
+    "forbidden_field",
+    [
+        "score",
+        "scores",
+        "weight",
+        "weights",
+        "confidence",
+        "probability",
+        "expected_return",
+        "expected_profit",
+        "alpha",
+        "ranking_score",
+        "normalization",
+        "recommended_threshold",
+        "optimal_threshold",
+        "best_threshold",
+        "suggested_threshold",
+        "rank2",
+        "rank2_fallback",
+        "fallback_rank",
+        "fallback_candidates",
+        "ai_score",
+        "llm_score",
+    ],
+)
+def test_v6_selection_forbidden_fields_fail(forbidden_field):
+    config = _v6_selection_config(enabled=False)
+    config["selection"][forbidden_field] = 1
+    with pytest.raises(ValueError, match="must not define"):
+        validate_strategy_config(config)
+
+
+def test_v6_hard_screening_minimum_turnover_and_selection_both_enabled_fails():
+    """Bug 2 regression: the mutual-exclusion check must use the
+    NORMALIZED screening dict, not the raw/legacy-shorthand one, so a
+    Hard Screening minimum_turnover expressed in legacy scalar shorthand
+    (a bare threshold value instead of {"enabled": ..., ...}) is still
+    correctly detected."""
+    config = _v6_selection_config(
+        enabled=True,
+        rules={
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": {"numerator": 1, "denominator": 1000},
+            },
+        },
+    )
+    # Legacy shorthand: a bare positive threshold value means "enabled with
+    # this threshold" per _normalize_screening_rule.
+    config["screening"]["minimum_turnover"] = 500
+    with pytest.raises(ValueError, match="minimum_turnover.*selection"):
         validate_strategy_config(config)

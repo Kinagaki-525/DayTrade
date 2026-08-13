@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "selection_threshold_evaluation.schema.json",
+  "title": "Selection Threshold Evaluation v1 result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evaluation_version",
+    "generated_at",
+    "source_calibration_sha256",
+    "minimum_turnover_yen",
+    "maximum_relative_tick_size",
+    "observation_count",
+    "selected_count",
+    "no_trade_count",
+    "selection_rate",
+    "rejected_turnover_only_count",
+    "rejected_relative_tick_only_count",
+    "rejected_both_count",
+    "selected_observations",
+    "rejected_observations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evaluation_version": {"const": "selection-threshold-evaluation-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "source_calibration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "minimum_turnover_yen": {"type": "integer", "minimum": 1},
+    "maximum_relative_tick_size": {"$ref": "#/$defs/ratio"},
+    "observation_count": {"type": "integer", "minimum": 1},
+    "selected_count": {"type": "integer", "minimum": 0},
+    "no_trade_count": {"type": "integer", "minimum": 0},
+    "selection_rate": {"$ref": "#/$defs/rate"},
+    "rejected_turnover_only_count": {"type": "integer", "minimum": 0},
+    "rejected_relative_tick_only_count": {"type": "integer", "minimum": 0},
+    "rejected_both_count": {"type": "integer", "minimum": 0},
+    "selected_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_date", "ticker"],
+        "properties": {
+          "target_date": {"type": "string", "format": "date"},
+          "ticker": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "rejected_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_date", "ticker", "reason_codes"],
+        "properties": {
+          "target_date": {"type": "string", "format": "date"},
+          "ticker": {"type": "string", "minLength": 1},
+          "reason_codes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "SELECTION_TURNOVER_BELOW_MINIMUM",
+                "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ratio": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "rate": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 0},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

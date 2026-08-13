@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "selection_calibration.schema.json",
+  "title": "Selection Calibration v1 report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "calibration_version",
+    "generated_at",
+    "calibration_status",
+    "strategy_version",
+    "config_sha256",
+    "source_matrix_sha256",
+    "summary",
+    "observations",
+    "minimum_turnover_sensitivity",
+    "maximum_relative_tick_size_sensitivity"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "calibration_version": {"const": "selection-calibration-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "calibration_status": {"enum": ["COMPLETE", "NO_OBSERVATIONS"]},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "summary": {
+      "type": "object",
+      "required": [
+        "run_directories_scanned",
+        "ranking_artifacts_found",
+        "matching_complete_observations",
+        "ranking_data_unavailable_count",
+        "config_mismatch_count",
+        "source_matrix_mismatch_count",
+        "missing_ranking_count",
+        "ignored_non_date_entries"
+      ],
+      "properties": {
+        "run_directories_scanned": {"type": "integer", "minimum": 0},
+        "ranking_artifacts_found": {"type": "integer", "minimum": 0},
+        "matching_complete_observations": {"type": "integer", "minimum": 0},
+        "ranking_data_unavailable_count": {"type": "integer", "minimum": 0},
+        "config_mismatch_count": {"type": "integer", "minimum": 0},
+        "source_matrix_mismatch_count": {"type": "integer", "minimum": 0},
+        "missing_ranking_count": {"type": "integer", "minimum": 0},
+        "ignored_non_date_entries": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "observations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/observation"}
+    },
+    "minimum_turnover_sensitivity": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/turnoverSensitivityEntry"}
+    },
+    "maximum_relative_tick_size_sensitivity": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/tickSensitivityEntry"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "ratio": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 1},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "rate": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {"type": "integer", "minimum": 0},
+        "denominator": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": [
+        "target_date",
+        "previous_trading_day",
+        "ranking_sha256",
+        "strategy_version",
+        "config_sha256",
+        "ticker",
+        "turnover_yen",
+        "tick_size_yen",
+        "entry_trigger_yen",
+        "relative_tick_size",
+        "canonical_relative_tick_ratio"
+      ],
+      "properties": {
+        "target_date": {"type": "string", "format": "date"},
+        "previous_trading_day": {"type": "string", "format": "date"},
+        "ranking_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strategy_version": {"type": "string", "minLength": 1},
+        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "ticker": {"type": "string", "minLength": 1},
+        "turnover_yen": {"$ref": "#/$defs/decimal"},
+        "tick_size_yen": {"$ref": "#/$defs/decimal"},
+        "entry_trigger_yen": {"$ref": "#/$defs/decimal"},
+        "relative_tick_size": {
+          "type": "object",
+          "required": ["numerator_yen", "denominator_yen"],
+          "properties": {
+            "numerator_yen": {"$ref": "#/$defs/decimal"},
+            "denominator_yen": {"$ref": "#/$defs/decimal"}
+          },
+          "additionalProperties": false
+        },
+        "canonical_relative_tick_ratio": {"$ref": "#/$defs/ratio"}
+      },
+      "additionalProperties": false
+    },
+    "turnoverSensitivityEntry": {
+      "type": "object",
+      "required": ["threshold_yen", "pass_count", "reject_count", "pass_rate"],
+      "properties": {
+        "threshold_yen": {"type": "integer", "minimum": 1},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "reject_count": {"type": "integer", "minimum": 0},
+        "pass_rate": {"$ref": "#/$defs/rate"}
+      },
+      "additionalProperties": false
+    },
+    "tickSensitivityEntry": {
+      "type": "object",
+      "required": ["threshold_ratio", "pass_count", "reject_count", "pass_rate"],
+      "properties": {
+        "threshold_ratio": {"$ref": "#/$defs/ratio"},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "reject_count": {"type": "integer", "minimum": 0},
+        "pass_rate": {"$ref": "#/$defs/rate"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

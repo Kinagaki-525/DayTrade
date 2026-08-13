@@ -1,6 +1,6 @@
 # AGENTS.md
 
-このリポジトリは、日本株デイトレードについて、Codexが出典付き市場調査と候補比較を行い、Pythonが固定条件を検証し、人間がSBI証券へ手動入力するためのプロジェクトです。
+このリポジトリは、日本株デイトレードについて、CodexがWeb市場調査・出典保存・イベント分類(決算・TDnet等)を行い、PythonがValidation・Hard Screening・Event Gate・Ranking・Selection・Recommendation Builder・Risk Engineを決定論的に実行し、人間が最終的な発注判断とSBI証券への手動入力を行うプロジェクトです。CodexやPythonのどちらも候補比較や最終選定の主体ではありません。候補の順位付けと選定は`src/ranking.py`・`src/selection.py`の決定論的ロジックだけが行い、AIが独自に比較・評価して`TRADE`を作ることはありません。
 
 ## 絶対禁止
 
@@ -18,6 +18,15 @@
 - `rules/versions/`に保存済みの版ファイルを変更・削除しない
 - サブエージェントに日次成果物、設定、取引CSVを変更させない
 - 人間の明示確認前に`trades/trades.csv`へ実績を追記しない
+- SelectionはRank 1だけを見る。Rank 1がSelection RejectまたはRisk REJECTEDになった場合でも、Rank 2以下へフォールバックしない
+- `config/strategy.yaml`の`selection.enabled`、`selection.rules.minimum_turnover_yen.threshold_yen`、`selection.rules.maximum_relative_tick_size.threshold_ratio`を推測で変更しない（未決定のまま`false`/`null`を維持する）
+- Calibrationツールは`config/strategy.yaml`へ書き込まない。「最適な閾値」を推奨・自動適用しない。損益最適化を行わない
+- Calibrationツールは`regression/`・`tests/`のフィクスチャを読み取らない。出力は`runs/`・`trades/`配下に書き込まない
+- `recommendation.json`をagentが手で作成・編集しない。必ずPython CLI（Case A/Bは`build-ranking-terminal-recommendation`、Case Cは`build-selection`→`build-selection-recommendation`）が生成したものだけを使う
+- Ranking `COMPLETE`かつ`selection.enabled=false`（Case B、較正待ち）またはRanking `DATA_UNAVAILABLE`（Case A）の場合も、日次結果を口頭で記録するだけでなく必ず`build-ranking-terminal-recommendation`を実行して`recommendation.json`を生成する
+- Config v6でSelectionが有効なCase C（`build-selection`／`build-selection-recommendation`／`risk-check`）では、Selection/Recommendation自身のSHA256ハッシュチェーンが一致しているだけでは不十分。`build-selection`・`build-selection-recommendation`・`risk-check`はそれぞれ独立に、共有ヘルパー（`src/ranking_trust.py`の`load_and_verify_ranking_trust_chain`）を通じて`ranking.json`の上流Provenance（`event_gate.json`・`candidates.json`・`market_data.json`・`sources.json`・source matrix・`strategy_snapshot.yaml`）そのものを再検証してから初めてSelection/Recommendationの内容を信用する。したがって`--ranking`・`--selection`に加えて`--event-gate`・`--candidates`・`--market-data`・`--sources`・`--source-matrix`（`build-selection-recommendation`はさらに`--research-window`、`risk-check`のCase Cはさらに`--event-gate`・`--research-window`）が必須であり、agentが`ranking.json`を書き換えたうえで、その改ざん済み`ranking.json`から自己整合的な`selection.json`/`recommendation.json`を再生成しても、Case Cの有効な結果は得られない
+- Config v6のCase A/B（`recommendation.schema_version=1`、`decision`が`NO_TRADE`または`DATA_UNAVAILABLE`）も`risk-check`が独立にRankingとその上流Artifact全体のTrust Chainを再検証する。`--ranking`・`--event-gate`・`--research-window`が必須で、`ranking.input_hashes`の完全一致・Ranking Contract関数の再実行・Terminal Recommendationの決定論的再計算まで行う。agentが`recommendation.json`を手で作成して`risk-check`へそのまま渡しても、Case A/Bであれ有効な結果は得られない
+- Selection Calibrationが`ranking.json`をObservationとして採用する前に、その上流アーティファクト一式（`event_gate.json`・`candidates.json`・`market_data.json`・`sources.json`・source matrix・`strategy_snapshot.yaml`）を、Ranking CLI自身が使う実際のContract関数で完全に再検証する。コホート一致だけで内容未検証の`ranking.json`はObservationとして数えない
 
 ## Codexの役割
 
@@ -28,7 +37,7 @@
 - Discoveryは出来高ランキングと値上がり率ランキングに限定し、Discovery順位をそのままRankingへ使わない
 - RankingはPython(`src/ranking.py`)だけが実行し、AIによる順位付けやRank変更を行わない
 - `estimated_turnover`をRankingの入力に使わない。実際の売買代金だけを使う
-- Ranking `COMPLETE`はTRADE可能を意味しない。Rank 1をTRADEへ変換するSelection / Absolute Quality Gateは別途実装するまで行わない
+- Ranking `COMPLETE`だけではTRADE可能を意味しない。Rank 1をSELECTED/NO_TRADEへ変換するのはSelection（`src/selection.py`、`build-selection`）だけであり、Codex/main agentが独自に比較して`TRADE`を作ることはない。`selection.enabled`がfalse、または閾値未較正の間は`build-selection`を実行しない
 - 株価等の数値ごとに情報源、URL、取得日時、取引日、銘柄、値を保存する
 - 更新日不明、古いデータ、必須値欠落、出典矛盾を推測で解決しない
 - 確認できた事実とCodex評価を明確に分ける

@@ -41,6 +41,7 @@ RUN_ARTIFACT_ALLOWLIST = {
     "execution_result.json",
     "source_pages",
     "ranking.json",
+    "selection.json",
 }
 
 
@@ -80,8 +81,8 @@ def validate_event_research_inputs(
     candidates: dict[str, Any],
     config: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") not in (4, 5):
-        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5, 6):
+        raise ValueError("config_schema_version must be 4, 5, or 6 for event research/gate")
     if candidates.get("strategy_version") != config.get("strategy_version"):
         raise ValueError("candidates strategy_version does not match --config")
     if candidates.get("config_sha256") != strategy_config_sha256(config):
@@ -117,8 +118,8 @@ def validate_event_gate_inputs(
     config: dict[str, Any],
     input_hashes: dict[str, Any],
 ) -> None:
-    if config.get("config_schema_version") not in (4, 5):
-        raise ValueError("config_schema_version must be 4 or 5 for event research/gate")
+    if config.get("config_schema_version") not in (4, 5, 6):
+        raise ValueError("config_schema_version must be 4, 5, or 6 for event research/gate")
     _require_equal(event_research, candidate_pipeline, "target_date", "event_research/candidate_pipeline")
     _require_equal(event_research, candidates, "target_date", "event_research/candidates")
     if candidates.get("strategy_version") != config.get("strategy_version"):
@@ -203,8 +204,8 @@ def validate_ranking_preconditions(
     input_hashes: dict[str, Any],
     source_base_dir: Path | None = None,
 ) -> None:
-    if config.get("config_schema_version") != 5:
-        raise ValueError("RANKING_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 5 for build-ranking")
+    if config.get("config_schema_version") not in (5, 6):
+        raise ValueError("RANKING_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 5 or 6 for build-ranking")
     if "ranking" not in config:
         raise ValueError(
             "RANKING_CONFIG_BLOCK_MISSING: config is missing the ranking block required for build-ranking"
@@ -627,8 +628,11 @@ def validate_recommendation_pipeline_link(
         raise ValueError(
             "recommendation/candidate_pipeline pipeline_summary does not match"
         )
-    if recommendation.get("decision") == "TRADE" and summary.get("ranking_complete") is not True:
-        raise ValueError("TRADE recommendation requires ranking_complete=true")
+    # Note: candidate_pipeline.json is upstream of Ranking and its own
+    # schema always carries summary.ranking_complete == false; Ranking
+    # completion is tracked separately in ranking.json (and now
+    # selection.json), never here. A TRADE recommendation therefore does
+    # NOT require candidate_pipeline.summary.ranking_complete to be true.
 
 
 def validate_research_report_inputs(
@@ -760,6 +764,428 @@ def validate_recommendation_risk_link(
             risk_result,
             field_name,
             "recommendation/risk_result",
+        )
+
+
+def validate_selection_preconditions(
+    *,
+    ranking: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    """Preconditions checked before build_selection is invoked by the CLI.
+
+    Fixed order (each check raises a SELECTION_*-namespaced hard error, never
+    a bare KeyError/TypeError/InvalidOperation/ZeroDivisionError):
+      1. config_schema_version == 6
+      2. selection block exists in config
+      3. selection.enabled is True
+      4. input_hashes key set is exactly {ranking_sha256, strategy_snapshot_sha256}
+      5. ranking.strategy_version == config.strategy_version
+      6. ranking.config_sha256 == strategy_config_sha256(config)
+      7. ranking.input_hashes.strategy_snapshot_sha256 == input_hashes.strategy_snapshot_sha256
+      8. ranking.ranking_status == "COMPLETE"
+      9. ranking.ranking_complete is True
+     10. validate_rank1_integrity(ranking) passes
+     11. selection thresholds in config already passed config-level
+         validation -- relied upon via load_strategy_config's
+         _validate_selection_config path; not re-derived here.
+    """
+    from src.selection import validate_rank1_integrity
+
+    # 1. config_schema_version == 6.
+    if config.get("config_schema_version") != 6:
+        raise ValueError(
+            "SELECTION_CONFIG_SCHEMA_VERSION_INVALID: config_schema_version must be 6 for build-selection"
+        )
+
+    # 2. selection block exists in config.
+    selection_config = config.get("selection")
+    if not isinstance(selection_config, dict):
+        raise ValueError(
+            "SELECTION_CONFIG_BLOCK_MISSING: config is missing the selection block required for build-selection"
+        )
+
+    # 3. selection.enabled is True.
+    if selection_config.get("enabled") is not True:
+        raise ValueError(
+            "SELECTION_CONFIG_DISABLED: selection.enabled must be true to build a selection"
+        )
+
+    # 4. input_hashes key set is exactly {ranking_sha256, strategy_snapshot_sha256}.
+    if set(input_hashes) != {"ranking_sha256", "strategy_snapshot_sha256"}:
+        raise ValueError(
+            "SELECTION_INPUT_HASHES_INVALID: input_hashes must contain exactly "
+            "{ranking_sha256, strategy_snapshot_sha256}"
+        )
+
+    # 5. ranking.strategy_version == config.strategy_version.
+    if ranking.get("strategy_version") != config.get("strategy_version"):
+        raise ValueError(
+            "SELECTION_STRATEGY_VERSION_MISMATCH: ranking.strategy_version does not match --config"
+        )
+
+    # 6. ranking.config_sha256 == strategy_config_sha256(config).
+    if ranking.get("config_sha256") != strategy_config_sha256(config):
+        raise ValueError(
+            "SELECTION_CONFIG_SHA256_MISMATCH: ranking.config_sha256 does not match --config"
+        )
+
+    # 7. ranking.input_hashes.strategy_snapshot_sha256 must match the
+    #    strategy_snapshot_sha256 supplied to build-selection.
+    ranking_strategy_snapshot_sha256 = (ranking.get("input_hashes") or {}).get(
+        "strategy_snapshot_sha256"
+    )
+    if ranking_strategy_snapshot_sha256 != input_hashes.get("strategy_snapshot_sha256"):
+        raise ValueError(
+            "SELECTION_HASH_CHAIN_MISMATCH: input_hashes.strategy_snapshot_sha256 does not match "
+            "ranking.input_hashes.strategy_snapshot_sha256"
+        )
+
+    # 8. ranking.ranking_status == "COMPLETE".
+    if ranking.get("ranking_status") != "COMPLETE":
+        raise ValueError(
+            "SELECTION_RANKING_STATUS_INVALID: ranking.ranking_status must be COMPLETE for build-selection"
+        )
+
+    # 9. ranking.ranking_complete is True.
+    if ranking.get("ranking_complete") is not True:
+        raise ValueError(
+            "SELECTION_RANKING_NOT_COMPLETE: ranking.ranking_complete must be true for build-selection"
+        )
+
+    # 10. validate_rank1_integrity(ranking) passes (reused from selection.py,
+    #     never duplicated here).
+    validate_rank1_integrity(ranking)
+
+    # 11. selection thresholds in config are relied upon to have already
+    #     passed config-level validation via load_strategy_config's
+    #     _validate_selection_config path (invoked when the config was
+    #     loaded); this function trusts that path rather than re-deriving
+    #     threshold-validity checks from scratch.
+
+
+def validate_selection_output_contract(
+    *,
+    selection: dict[str, Any],
+    ranking: dict[str, Any],
+    config: dict[str, Any],
+    input_hashes: dict[str, Any],
+) -> None:
+    """Recompute selection from the same inputs and compare, excluding generated_at."""
+    from src.selection import build_selection
+
+    recomputed = build_selection(ranking=ranking, config=config, input_hashes=input_hashes)
+    left = {k: v for k, v in selection.items() if k != "generated_at"}
+    right = {k: v for k, v in recomputed.items() if k != "generated_at"}
+    if left != right:
+        raise ValueError(
+            "SELECTION_OUTPUT_CONTRACT_MISMATCH: selection.json does not match the "
+            "recomputed selection payload for the same inputs"
+        )
+
+
+def validate_selection_recommendation_preconditions(
+    *,
+    selection: dict[str, Any],
+    ranking: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Cross-artifact consistency check across ALL of
+    build-selection-recommendation's inputs, run after the P0-2
+    selection/ranking hash-chain and recompute checks
+    (validate_selection_preconditions / validate_selection_output_contract)
+    and before build_selection_recommendation() is invoked.
+
+    Every artifact this CLI reads must agree on target_date; strategy
+    identity (strategy_version/config_sha256) must be consistent across the
+    artifacts that carry it; the candidate pipeline must actually be
+    complete; and previous_trading_day must match between selection.json
+    and research_window.json. Any mismatch is a Hard Error.
+    """
+    target_dates = {
+        "selection": selection.get("target_date"),
+        "ranking": ranking.get("target_date"),
+        "candidates": candidates.get("target_date"),
+        "candidate_pipeline": candidate_pipeline.get("target_date"),
+        "market_data": market_data.get("target_date"),
+        "research_window": research_window.get("target_date"),
+        "sources": source_payload.get("target_date"),
+    }
+    if len(set(target_dates.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH: target_date does not match "
+            "across all inputs: " + ", ".join(f"{k}={v!r}" for k, v in sorted(target_dates.items()))
+        )
+
+    strategy_versions = {
+        "selection": selection.get("strategy_version"),
+        "candidates": candidates.get("strategy_version"),
+        "candidate_pipeline": candidate_pipeline.get("strategy_version"),
+        "config": config.get("strategy_version"),
+    }
+    if len(set(strategy_versions.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_STRATEGY_VERSION_MISMATCH: strategy_version does not "
+            "match across selection/candidates/candidate_pipeline/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(strategy_versions.items()))
+        )
+
+    expected_config_sha256 = strategy_config_sha256(config)
+    config_sha256s = {
+        "selection": selection.get("config_sha256"),
+        "candidates": candidates.get("config_sha256"),
+        "candidate_pipeline": candidate_pipeline.get("config_sha256"),
+        "config": expected_config_sha256,
+    }
+    if len(set(config_sha256s.values())) != 1:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_CONFIG_SHA256_MISMATCH: config_sha256 does not match "
+            "across selection/candidates/candidate_pipeline/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(config_sha256s.items()))
+        )
+
+    summary = candidate_pipeline.get("summary") or {}
+    if summary.get("pipeline_complete") is not True:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_PIPELINE_NOT_COMPLETE: "
+            "candidate_pipeline.summary.pipeline_complete must be true"
+        )
+    if summary.get("screening_complete") is not True:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_SCREENING_NOT_COMPLETE: "
+            "candidate_pipeline.summary.screening_complete must be true"
+        )
+
+    if research_window.get("previous_trading_day") != selection.get("previous_trading_day"):
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_PREVIOUS_TRADING_DAY_MISMATCH: "
+            "research_window.previous_trading_day does not match selection.previous_trading_day"
+        )
+
+
+def validate_ranking_terminal_recommendation_preconditions(
+    *,
+    ranking: dict[str, Any],
+    event_gate: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Cross-artifact consistency check for build-ranking-terminal-recommendation
+    (Case A / Case B), run after the full Ranking Contract re-verification
+    (validate_ranking_preconditions / validate_ranking_output_contract) and
+    before build_ranking_terminal_recommendation() is invoked.
+
+    Mirrors validate_selection_recommendation_preconditions's style for the
+    Case C path so both trust chains carry the same rigor.
+    """
+    target_dates = {
+        "ranking": ranking.get("target_date"),
+        "event_gate": event_gate.get("target_date"),
+        "candidates": candidates.get("target_date"),
+        "candidate_pipeline": candidate_pipeline.get("target_date"),
+        "market_data": market_data.get("target_date"),
+        "research_window": research_window.get("target_date"),
+        "sources": source_payload.get("target_date"),
+    }
+    if len(set(target_dates.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_TARGET_DATE_MISMATCH: target_date does not match "
+            "across all inputs: " + ", ".join(f"{k}={v!r}" for k, v in sorted(target_dates.items()))
+        )
+
+    previous_trading_days = {
+        "ranking": ranking.get("previous_trading_day"),
+        "event_gate": event_gate.get("previous_trading_day"),
+        "research_window": research_window.get("previous_trading_day"),
+    }
+    if len(set(previous_trading_days.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_PREVIOUS_TRADING_DAY_MISMATCH: previous_trading_day does not "
+            "match across ranking/event_gate/research_window: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(previous_trading_days.items()))
+        )
+
+    strategy_versions = {
+        "ranking": ranking.get("strategy_version"),
+        "candidates": candidates.get("strategy_version"),
+        "candidate_pipeline": candidate_pipeline.get("strategy_version"),
+        "config": config.get("strategy_version"),
+        "event_gate": event_gate.get("strategy_version"),
+    }
+    if len(set(strategy_versions.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_STRATEGY_VERSION_MISMATCH: strategy_version does not "
+            "match across ranking/candidates/candidate_pipeline/config/event_gate: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(strategy_versions.items()))
+        )
+
+    expected_config_sha256 = strategy_config_sha256(config)
+    config_sha256s = {
+        "ranking": ranking.get("config_sha256"),
+        "candidates": candidates.get("config_sha256"),
+        "candidate_pipeline": candidate_pipeline.get("config_sha256"),
+        "event_gate": event_gate.get("config_sha256"),
+        "config": expected_config_sha256,
+    }
+    if len(set(config_sha256s.values())) != 1:
+        raise ValueError(
+            "RANKING_TERMINAL_CONFIG_SHA256_MISMATCH: config_sha256 does not match "
+            "across ranking/candidates/candidate_pipeline/event_gate/config: "
+            + ", ".join(f"{k}={v!r}" for k, v in sorted(config_sha256s.items()))
+        )
+
+    summary = candidate_pipeline.get("summary") or {}
+    if summary.get("pipeline_complete") is not True:
+        raise ValueError(
+            "RANKING_TERMINAL_PIPELINE_NOT_COMPLETE: "
+            "candidate_pipeline.summary.pipeline_complete must be true"
+        )
+    if summary.get("screening_complete") is not True:
+        raise ValueError(
+            "RANKING_TERMINAL_SCREENING_NOT_COMPLETE: "
+            "candidate_pipeline.summary.screening_complete must be true"
+        )
+
+
+def validate_ranking_terminal_recommendation_output_contract(
+    *,
+    recommendation: dict[str, Any],
+    ranking: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    research_window: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Recompute the Terminal Recommendation (Case A/B) from the same
+    already-trust-chain-verified inputs and compare, full dict equality.
+
+    Mirrors validate_selection_output_contract's recompute-and-compare
+    pattern. build_ranking_terminal_recommendation() never emits a
+    generated_at-style non-deterministic field, so unlike
+    validate_selection_output_contract this is a full, unqualified dict
+    comparison. Used by both build-ranking-terminal-recommendation callers
+    and risk-check's terminal_driven_v6 trust-chain re-verification so the
+    comparison logic is never duplicated.
+    """
+    from src.ranking_terminal_recommendation import build_ranking_terminal_recommendation
+
+    recomputed = build_ranking_terminal_recommendation(
+        ranking=ranking,
+        candidate_pipeline=candidate_pipeline,
+        research_window=research_window,
+        config=config,
+    )
+    if recommendation != recomputed:
+        raise ValueError(
+            "RISK_TERMINAL_RECOMMENDATION_CONTRACT_MISMATCH: recommendation.json does not "
+            "match the recomputed Terminal Recommendation payload for the same "
+            "genuinely re-verified Ranking + upstream artifact inputs"
+        )
+
+
+def validate_selection_recommendation_output_contract(
+    *,
+    recommendation: dict[str, Any],
+    selection: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+    selection_sha256: str,
+) -> None:
+    """Recompute the Selection Recommendation (Case C) from the same
+    already-trust-chain-verified inputs and compare, full dict equality.
+
+    Mirrors validate_ranking_terminal_recommendation_output_contract's
+    recompute-and-compare pattern for the Case C path.
+    ``build_selection_recommendation()`` never emits a generated_at-style
+    non-deterministic field, so this is a full, unqualified dict comparison.
+    ``selection_sha256`` must be the ACTUAL raw SHA256 of selection.json as
+    computed by the caller -- never trusted from any embedded field.
+    """
+    from src.selection_recommendation import build_selection_recommendation
+
+    recomputed = build_selection_recommendation(
+        selection=selection,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
+        selection_sha256=selection_sha256,
+    )
+    if recommendation != recomputed:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_OUTPUT_CONTRACT_MISMATCH: recommendation.json does "
+            "not match the recomputed Selection Recommendation payload for the same "
+            "genuinely re-verified Selection + upstream artifact inputs"
+        )
+
+
+def validate_recommendation_selection_link(
+    *,
+    recommendation: dict[str, Any],
+    selection: dict[str, Any],
+    selection_sha256: str,
+) -> None:
+    """Cross-check a Recommendation v2 payload against its selection.json."""
+    if recommendation.get("schema_version") != 2:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.schema_version must be 2"
+        )
+    for field_name in ("target_date", "strategy_version", "config_sha256"):
+        _require_equal(
+            recommendation,
+            selection,
+            field_name,
+            "recommendation/selection",
+        )
+    if recommendation.get("selection_sha256") != selection_sha256:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.selection_sha256 does not "
+            "match the actual SHA256 of selection.json"
+        )
+    status = selection.get("selection_status")
+    if status == "SELECTED":
+        if recommendation.get("decision") != "TRADE":
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: SELECTED selection requires decision=TRADE"
+            )
+        if recommendation.get("ticker") != selection.get("selected_ticker"):
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: recommendation.ticker does not match "
+                "selection.selected_ticker"
+            )
+    elif status == "NO_TRADE":
+        if recommendation.get("decision") != "NO_TRADE":
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: NO_TRADE selection requires decision=NO_TRADE"
+            )
+        if recommendation.get("ticker") is not None:
+            raise ValueError(
+                "RECOMMENDATION_SELECTION_LINK: NO_TRADE selection requires ticker=null"
+            )
+    else:
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: selection.selection_status must be "
+            "SELECTED or NO_TRADE"
+        )
+    if recommendation.get("selection_reasons") != selection.get("reason_codes"):
+        raise ValueError(
+            "RECOMMENDATION_SELECTION_LINK: recommendation.selection_reasons does not "
+            "match selection.reason_codes"
         )
 
 

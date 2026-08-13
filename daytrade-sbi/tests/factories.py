@@ -380,3 +380,190 @@ def _source_url(source_id: str, field_name: str) -> str:
 
 def _attempt_url(source_id: str) -> str:
     return _source_url(source_id, "attempt")
+
+
+# ---------------------------------------------------------------------------
+# Selection v1 factories
+# ---------------------------------------------------------------------------
+
+
+def make_ranking_candidate(
+    *,
+    ticker: str = "1234",
+    turnover_yen: str = "50000000",
+    tick_size_yen: str = "1",
+    entry_trigger_yen: str = "500",
+    final_rank: int = 1,
+) -> dict[str, object]:
+    return {
+        "ticker": ticker,
+        "input_status": "VALID",
+        "reason_codes": [],
+        "provenance": {
+            "turnover_attempt_id": f"ATT-{ticker}",
+            "turnover_source_ref": "SRC-1",
+            "tick_size_source_refs": ["SRC-2"],
+        },
+        "feature_values": {
+            "turnover_yen": turnover_yen,
+            "tick_size_yen": tick_size_yen,
+            "entry_trigger_yen": entry_trigger_yen,
+            "relative_tick_size": {
+                "numerator_yen": tick_size_yen,
+                "denominator_yen": entry_trigger_yen,
+            },
+        },
+        "feature_ranks": {"turnover_rank": final_rank, "relative_tick_size_rank": final_rank},
+        "rank_points": final_rank * 2,
+        "final_rank": final_rank,
+    }
+
+
+def make_complete_ranking_payload(
+    *,
+    target_date: str = "2026-08-12",
+    previous_trading_day: str = "2026-08-11",
+    strategy_version: str = "v1",
+    config_sha256: str = "a" * 64,
+    strategy_snapshot_sha256: str = "b" * 64,
+    candidates: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    candidates = candidates if candidates is not None else [make_ranking_candidate()]
+    tickers = sorted(c["ticker"] for c in candidates)
+    top_ticker = next(c["ticker"] for c in candidates if c["final_rank"] == 1)
+    return {
+        "schema_version": 1,
+        "ranking_version": "ranking-v1",
+        "ranking_method": "ordinal_rank_sum",
+        "target_date": target_date,
+        "previous_trading_day": previous_trading_day,
+        "event_gate_as_of": "2026-08-11T21:00:00+09:00",
+        "generated_at": "2026-08-11T21:30:00+09:00",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "input_hashes": {
+            "event_gate_sha256": "c" * 64,
+            "candidates_sha256": "d" * 64,
+            "market_data_sha256": "e" * 64,
+            "sources_sha256": "f" * 64,
+            "source_matrix_sha256": "0" * 64,
+            "strategy_snapshot_sha256": strategy_snapshot_sha256,
+        },
+        "ranking_status": "COMPLETE",
+        "ranking_complete": True,
+        "reason_codes": [],
+        "input_candidate_tickers": tickers,
+        "summary": {
+            "input_count": len(candidates),
+            "valid_input_count": len(candidates),
+            "data_unavailable_count": 0,
+            "ranked_count": len(candidates),
+            "top_ranked_ticker": top_ticker,
+        },
+        "candidates": candidates,
+    }
+
+
+def make_data_unavailable_ranking_payload(
+    *,
+    target_date: str = "2026-08-12",
+    previous_trading_day: str = "2026-08-11",
+    strategy_version: str = "v1",
+    config_sha256: str = "a" * 64,
+    strategy_snapshot_sha256: str = "b" * 64,
+    ticker: str = "1234",
+    reason_codes: list[str] | None = None,
+) -> dict[str, object]:
+    reason_codes = reason_codes if reason_codes is not None else ["TURNOVER_SOURCE_NOT_FOUND"]
+    candidate = {
+        "ticker": ticker,
+        "input_status": "DATA_UNAVAILABLE",
+        "reason_codes": reason_codes,
+        "provenance": {
+            "turnover_attempt_id": None,
+            "turnover_source_ref": None,
+            "tick_size_source_refs": [],
+        },
+        "feature_values": {
+            "turnover_yen": None,
+            "tick_size_yen": None,
+            "entry_trigger_yen": None,
+            "relative_tick_size": None,
+        },
+        "feature_ranks": None,
+        "rank_points": None,
+        "final_rank": None,
+    }
+    return {
+        "schema_version": 1,
+        "ranking_version": "ranking-v1",
+        "ranking_method": "ordinal_rank_sum",
+        "target_date": target_date,
+        "previous_trading_day": previous_trading_day,
+        "event_gate_as_of": "2026-08-11T21:00:00+09:00",
+        "generated_at": "2026-08-11T21:30:00+09:00",
+        "strategy_version": strategy_version,
+        "config_sha256": config_sha256,
+        "input_hashes": {
+            "event_gate_sha256": "c" * 64,
+            "candidates_sha256": "d" * 64,
+            "market_data_sha256": "e" * 64,
+            "sources_sha256": "f" * 64,
+            "source_matrix_sha256": "0" * 64,
+            "strategy_snapshot_sha256": strategy_snapshot_sha256,
+        },
+        "ranking_status": "DATA_UNAVAILABLE",
+        "ranking_complete": False,
+        "reason_codes": reason_codes,
+        "input_candidate_tickers": [ticker],
+        "summary": {
+            "input_count": 1,
+            "valid_input_count": 0,
+            "data_unavailable_count": 1,
+            "ranked_count": 0,
+            "top_ranked_ticker": None,
+        },
+        "candidates": [candidate],
+    }
+
+
+def make_selection_config(
+    *,
+    enabled: bool = True,
+    threshold_yen: int | None = 10_000_000,
+    threshold_numerator: int | None = 1,
+    threshold_denominator: int | None = 500,
+) -> dict[str, object]:
+    return {
+        "enabled": enabled,
+        "version": "selection-v1",
+        "candidate_policy": "rank1_only",
+        "fallback_policy": "none",
+        "rule_logic": "all",
+        "missing_data_policy": "fail_closed",
+        "rules": {
+            "minimum_turnover_yen": {
+                "operator": ">=",
+                "threshold_yen": threshold_yen if enabled else None,
+            },
+            "maximum_relative_tick_size": {
+                "operator": "<=",
+                "threshold_ratio": (
+                    {"numerator": threshold_numerator, "denominator": threshold_denominator}
+                    if enabled
+                    else None
+                ),
+            },
+        },
+    }
+
+
+def make_selection_input_hashes(
+    *,
+    ranking_sha256: str = "1" * 64,
+    strategy_snapshot_sha256: str = "b" * 64,
+) -> dict[str, str]:
+    return {
+        "ranking_sha256": ranking_sha256,
+        "strategy_snapshot_sha256": strategy_snapshot_sha256,
+    }
