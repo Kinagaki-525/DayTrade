@@ -807,8 +807,6 @@ def _acquire_sources(
     )
 
     merged = merge_ledger(existing, result.as_ledger())
-    validate_json_document(merged, "sources.schema.json")
-    write_ledger(args.sources, merged)
 
     artifact: str | None = None
     if stage == "DISCOVERY":
@@ -836,8 +834,23 @@ def _acquire_sources(
             existing=current,
             trading_date=args.trading_date,
         )
+        # reflect_market_data can add traceability aliases for market_data
+        # fields whose source page parses under a different field_name (the
+        # STAGE1_FIELD_MAP renames, and the computed tick_size) -- same raw
+        # evidence, same value, only the field_name/source_ref differ. Those
+        # aliases must land in the canonical sources.json ledger too, or
+        # validate-market's "every market_data source exists in sources.json"
+        # check fails on data acquired by this very CLI.
+        ledger_values = {value["source_ref"]: value for value in merged.get("sources", [])}
+        for record in updated.get("records", []):
+            for source in record.get("sources", []):
+                ledger_values.setdefault(source["source_ref"], source)
+        merged["sources"] = list(ledger_values.values())
         write_market_data(market_data_path, updated)
         artifact = "market_data.json"
+
+    validate_json_document(merged, "sources.schema.json")
+    write_ledger(args.sources, merged)
 
     _emit_json(
         {

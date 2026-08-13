@@ -406,6 +406,259 @@ def test_turnover_updates_market_data_deterministically(tmp_path, clean_curl):
     assert clean_curl.call_count == calls
 
 
+# -------------------------------------------------------------- FIX-R2-001 ---
+#
+# previous_close / previous_high: generated deterministically from the same
+# Yahoo/Kabutan history pages as the rest of OHLCV, selecting the row for the
+# trading day immediately before ``--trading-date`` by its own parsed date
+# (never by row position, never a same-day copy of close/high). These tests
+# deliberately use the real nightly relationship target_date > trading_date,
+# not the same-day shortcut the other stage tests use.
+
+PREV_TARGET_DATE = "2026-08-13"
+PREV_TRADING_DATE = pages.TRADING_DATE  # "2026-08-12"; the fixture's previous
+# row is dated 2026-08-11, one real trading day earlier.
+
+
+def _prev_args(tmp_path):
+    return [
+        "--target-date", PREV_TARGET_DATE,
+        "--trading-date", PREV_TRADING_DATE,
+        "--research-cutoff", "2026-08-12T20:00:00+09:00",
+        "--run-dir", str(tmp_path),
+        "--sources", str(tmp_path / "sources.json"),
+    ]
+
+
+def _run_full_chain(tmp_path, args):
+    cli.main(["acquire-stage1-sources", *args])
+    cli.main(["acquire-stage2-market-sources", *args])
+    cli.main(["acquire-actual-turnover", *args])
+
+
+def _validate_market(tmp_path):
+    output = tmp_path / "market_validation.json"
+    cli.main(
+        [
+            "validate-market",
+            "--market-data", str(tmp_path / "market_data.json"),
+            "--sources", str(tmp_path / "sources.json"),
+            "--output", str(output),
+        ]
+    )
+    return json.loads(output.read_text(encoding="utf-8"))
+
+
+def test_previous_close_and_previous_high_flow_through_the_real_nightly_chain(
+    tmp_path, clean_curl
+):
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    args = _prev_args(tmp_path)
+    _run_full_chain(tmp_path, args)
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    # The fixture's previous-day row (2026-08-11): close=1,000 / high=1,010.
+    assert record["previous_close"] == "1000"
+    assert record["previous_high"] == "1010"
+    assert record["data_status"] == "VERIFIED"
+
+    provenance = {item["field_name"]: item for item in record["field_provenance"]}
+    assert provenance["previous_close"]["status"] == "VERIFIED"
+    assert provenance["previous_close"]["verified_value"] == "1000"
+    assert provenance["previous_close"]["primary_source_ref"]
+    assert provenance["previous_close"]["secondary_source_ref"]
+    assert provenance["previous_high"]["status"] == "VERIFIED"
+    assert provenance["previous_high"]["verified_value"] == "1010"
+
+    sources_ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
+    ledger_field_names = {
+        source.get("field_name") for source in sources_ledger["sources"]
+    }
+    assert {"previous_close", "previous_high"} <= ledger_field_names
+
+    validation = _validate_market(tmp_path)
+    assert validation["results"][0]["valid_for_trade"] is True
+    assert validation["results"][0]["errors"] == []
+
+
+def test_previous_close_missing_fails_validate_market(tmp_path, monkeypatch):
+    routes = fake_transport.clean_run_routes(("7203",))
+    # A history page with no earlier row at all: only today's session exists,
+    # so previous_close/previous_high cannot be derived from real evidence.
+    routes["https://finance.yahoo.co.jp/quote/7203.T/history"] = (
+        b"""<html><head><meta charset="utf-8"></head><body>
+<a href="https://finance.yahoo.co.jp/quote/7203.T/history">history</a>
+<table><tbody>
+<tr><td>2026\xe5\xb9\xb48\xe6\x9c\x8812\xe6\x97\xa5</td><td>1,000</td><td>1,100</td>
+<td>990</td><td>1,050</td><td>2,345,600</td></tr>
+</tbody></table>
+</body></html>"""
+    )
+    routes["https://kabutan.jp/stock/kabuka?code=7203"] = (
+        b"""<html><head><meta charset="utf-8"></head><body>
+<span>code=7203</span>
+<table><tbody>
+<tr><td>2026-08-12</td><td>1,000</td><td>1,100</td><td>990</td><td>1,050</td><td>2,345,600</td></tr>
+</tbody></table>
+</body></html>"""
+    )
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    _run_full_chain(tmp_path, _prev_args(tmp_path))
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["data_status"] == "DATA_UNAVAILABLE"
+
+    validation = _validate_market(tmp_path)
+    result = validation["results"][0]
+    assert result["valid_for_trade"] is False
+    assert "Missing required market data: previous_close" in result["errors"]
+
+
+def test_previous_high_missing_fails_validate_market(tmp_path, monkeypatch):
+    routes = fake_transport.clean_run_routes(("7203",))
+    no_previous_day_yahoo = pages.yahoo_history_page().replace(
+        b"<tr><td>2026\xe5\xb9\xb48\xe6\x9c\x8811\xe6\x97\xa5</td>"
+        b"<td>980</td><td>1,010</td><td>975</td><td>1,000</td><td>1,111,100</td></tr>",
+        b"",
+    )
+    no_previous_day_kabutan = pages.kabutan_history_page().replace(
+        b"<tr><td>2026-08-11</td><td>980</td><td>1,010</td>"
+        b"<td>975</td><td>1,000</td><td>1,111,100</td></tr>",
+        b"",
+    )
+    routes["https://finance.yahoo.co.jp/quote/7203.T/history"] = no_previous_day_yahoo
+    routes["https://kabutan.jp/stock/kabuka?code=7203"] = no_previous_day_kabutan
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    _run_full_chain(tmp_path, _prev_args(tmp_path))
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["previous_high"] is None
+    assert record["data_status"] == "DATA_UNAVAILABLE"
+
+    validation = _validate_market(tmp_path)
+    result = validation["results"][0]
+    assert result["valid_for_trade"] is False
+    assert "Missing required market data: previous_close" in result["errors"]
+    assert "Missing required market data: previous_high" in result["errors"]
+
+
+def test_previous_close_conflict_between_primary_and_secondary_fails(
+    tmp_path, monkeypatch
+):
+    routes = fake_transport.clean_run_routes(("7203",))
+    # Kabutan disagrees with Yahoo on the previous day's close (1,000 vs 1,999).
+    routes["https://kabutan.jp/stock/kabuka?code=7203"] = (
+        b'<html><head><meta charset="utf-8"></head><body><span>code=7203</span>'
+        b"<table><tbody>"
+        b"<tr><td>2026-08-12</td><td>1,000</td><td>1,100</td><td>990</td><td>1,050</td>"
+        b"<td>2,345,600</td></tr>"
+        b"<tr><td>2026-08-11</td><td>980</td><td>1,010</td><td>975</td><td>1,999</td>"
+        b"<td>1,111,100</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    _run_full_chain(tmp_path, _prev_args(tmp_path))
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["data_status"] == "CONFLICT"
+    # previous_high (1,010 both sides) is unaffected by the previous_close conflict.
+    assert record["previous_high"] == "1010"
+
+    validation = _validate_market(tmp_path)
+    result = validation["results"][0]
+    assert result["valid_for_trade"] is False
+
+
+def test_previous_high_conflict_between_primary_and_secondary_fails(
+    tmp_path, monkeypatch
+):
+    routes = fake_transport.clean_run_routes(("7203",))
+    # Kabutan disagrees with Yahoo on the previous day's high (1,010 vs 1,999).
+    routes["https://kabutan.jp/stock/kabuka?code=7203"] = (
+        b'<html><head><meta charset="utf-8"></head><body><span>code=7203</span>'
+        b"<table><tbody>"
+        b"<tr><td>2026-08-12</td><td>1,000</td><td>1,100</td><td>990</td><td>1,050</td>"
+        b"<td>2,345,600</td></tr>"
+        b"<tr><td>2026-08-11</td><td>980</td><td>1,999</td><td>975</td><td>1,000</td>"
+        b"<td>1,111,100</td></tr>"
+        b"</tbody></table></body></html>"
+    )
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    _run_full_chain(tmp_path, _prev_args(tmp_path))
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_high"] is None
+    assert record["data_status"] == "CONFLICT"
+    assert record["previous_close"] == "1000"
+
+    validation = _validate_market(tmp_path)
+    result = validation["results"][0]
+    assert result["valid_for_trade"] is False
+
+
+def test_previous_day_row_selected_by_date_not_a_wrong_adjacent_row(
+    tmp_path, monkeypatch
+):
+    """A page whose row order or wording would defeat a positional guess
+    ("row 2 = yesterday") must still resolve the correct previous session,
+    because the row is chosen by its own explicitly parsed date."""
+    routes = fake_transport.clean_run_routes(("7203",))
+    # Extra non-adjacent, older row inserted *between* today's row and the
+    # true previous session, and the physical row order does not put the
+    # true previous day immediately after today's row.
+    routes["https://finance.yahoo.co.jp/quote/7203.T/history"] = (
+        b"""<html><head><meta charset="utf-8"></head><body>
+<a href="https://finance.yahoo.co.jp/quote/7203.T/history">history</a>
+<table><tbody>
+<tr><td>2026\xe5\xb9\xb48\xe6\x9c\x8812\xe6\x97\xa5</td><td>1,000</td><td>1,100</td>
+<td>990</td><td>1,050</td><td>2,345,600</td></tr>
+<tr><td>2026\xe5\xb9\xb48\xe6\x9c\x888\xe6\x97\xa5</td><td>900</td><td>950</td>
+<td>880</td><td>905</td><td>500,000</td></tr>
+<tr><td>2026\xe5\xb9\xb48\xe6\x9c\x8811\xe6\x97\xa5</td><td>980</td><td>1,010</td>
+<td>975</td><td>1,000</td><td>1,111,100</td></tr>
+</tbody></table>
+</body></html>"""
+    )
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    _run_full_chain(tmp_path, _prev_args(tmp_path))
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    # The nearer date (2026-08-11), not the row adjacent to today's in the
+    # document, and not the older (2026-08-08) row either.
+    assert record["previous_close"] == "1000"
+    assert record["previous_high"] == "1010"
+
+
 def test_agent_cannot_hand_edit_market_data_through_the_cli():
     """There is no CLI surface that writes a caller-supplied market_data value."""
     parser = cli.build_parser()

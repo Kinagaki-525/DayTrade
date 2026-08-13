@@ -41,6 +41,15 @@ DISCOVERY_TOP_N = 50
 
 OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
 
+#: previous_close / previous_high come off the same Yahoo/Kabutan history
+#: pages as OHLCV_FIELDS (the trading day immediately before the record's
+#: own trading_date), so they cross-check under the identical primary /
+#: secondary policy. They are deliberately kept out of OHLCV_FIELDS: that
+#: tuple also drives market._validate_ohlcv_source_policy's stricter
+#: mandatory-dual-source rule, which is unchanged and only applies to the
+#: five classic OHLCV fields.
+PREVIOUS_DAY_FIELDS = ("previous_close", "previous_high")
+
 #: OHLCV cross-check policy. Unchanged from the existing Source Ledger policy:
 #: Yahoo is PRIMARY, Kabutan is SECONDARY, and a disagreement is a CONFLICT
 #: rather than a silent preference for either side.
@@ -448,6 +457,27 @@ def _set_provenance(record: dict[str, Any], entry: dict[str, Any]) -> None:
     record["field_provenance"] = provenance
 
 
+def _alias_source_value(source_value: dict[str, Any], field_name: str) -> dict[str, Any]:
+    """A traceable copy of ``source_value`` under a different ``field_name``.
+
+    Some market_data fields (the STAGE1_FIELD_MAP renames, and the computed
+    ``tick_size``) are derived from a source page whose own parsed field_name
+    differs from the market_data field it fills. ``market.validate_market_data``
+    requires every SOURCED_* field to have a source record whose field_name
+    matches the market_data field exactly, so the raw parsed record is kept
+    (for the page's own semantics) and this alias is merged in alongside it --
+    same raw evidence, same value, same source_id/url/retrieved_at, only the
+    field_name and source_ref (so it does not collide in the source ledger)
+    change. Nothing here changes *what value* ends up in market_data; it only
+    makes the already-computed value traceable under the name the Market
+    Contract validates against.
+    """
+    alias = dict(source_value)
+    alias["field_name"] = field_name
+    alias["source_ref"] = f"{source_value['source_ref']}->{field_name}"
+    return alias
+
+
 def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[str, Any]]) -> None:
     for source_field, market_field in STAGE1_FIELD_MAP.items():
         found = [
@@ -459,13 +489,15 @@ def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[st
             continue
         primary = found[0]
         record[market_field] = primary["value"]
+        alias = _alias_source_value(primary, market_field)
+        _merge_sources(record, [alias])
         _set_provenance(
             record,
             _provenance(
                 market_field,
                 status="VERIFIED",
                 verified_value=primary["value"],
-                primary=primary,
+                primary=alias,
                 secondary=None,
                 verified_at=primary.get("retrieved_at"),
             ),
@@ -473,9 +505,9 @@ def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[st
 
 
 def _apply_stage2(record: dict[str, Any], indexed: dict[tuple[str, str], dict[str, Any]]) -> None:
-    """OHLCV via the existing primary/secondary cross-check policy."""
+    """OHLCV (+ previous_close / previous_high) via the primary/secondary policy."""
     conflicts: list[str] = []
-    for field_name in OHLCV_FIELDS:
+    for field_name in OHLCV_FIELDS + PREVIOUS_DAY_FIELDS:
         primary = indexed.get((OHLCV_PRIMARY_SOURCE_ID, field_name))
         secondary = indexed.get((OHLCV_SECONDARY_SOURCE_ID, field_name))
         if primary is None and secondary is None:
@@ -555,13 +587,18 @@ def _apply_tick_size(
         return
 
     record["tick_size"] = str(tick)
+    tick_alias = dict(table_value)
+    tick_alias["field_name"] = "tick_size"
+    tick_alias["value"] = str(tick)
+    tick_alias["source_ref"] = f"{table_value['source_ref']}->tick_size"
+    _merge_sources(record, [tick_alias])
     _set_provenance(
         record,
         _provenance(
             "tick_size",
             status="VERIFIED",
             verified_value=str(tick),
-            primary=table_value,
+            primary=tick_alias,
             secondary=membership,
             extra_refs=(str(price["source_ref"]),),
             verified_at=table_value.get("retrieved_at"),
@@ -666,7 +703,16 @@ def reflect_market_data(
 
 def _record_data_status(record: dict[str, Any]) -> str:
     """VERIFIED only once every tradable field is present and verified."""
-    required = ("open", "high", "low", "close", "volume", "tick_size")
+    required = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "previous_close",
+        "previous_high",
+        "tick_size",
+    )
     provenance = {
         item["field_name"]: item.get("status")
         for item in record.get("field_provenance", [])

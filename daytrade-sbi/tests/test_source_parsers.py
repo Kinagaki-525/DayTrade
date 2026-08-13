@@ -149,10 +149,19 @@ def test_history_parses_only_the_requested_trading_date():
         "low",
         "close",
         "volume",
+        "previous_close",
+        "previous_high",
     }
     assert all(value.trading_date == TRADING_DATE for value in result.values)
     close = next(v for v in result.values if v.field_name == "close")
     assert close.value == "1050"
+    # previous_close/previous_high come from the row for the trading day
+    # immediately before TRADING_DATE (2026-08-11 in the fixture), selected
+    # by its own parsed date -- never by row position.
+    previous_close = next(v for v in result.values if v.field_name == "previous_close")
+    previous_high = next(v for v in result.values if v.field_name == "previous_high")
+    assert previous_close.value == "1000"
+    assert previous_high.value == "1010"
 
 
 def test_history_missing_trading_date_is_not_found():
@@ -186,6 +195,8 @@ def test_kabutan_history_parses_the_requested_date():
     )
     assert result.status == "FOUND"
     assert next(v for v in result.values if v.field_name == "high").value == "1100"
+    assert next(v for v in result.values if v.field_name == "previous_close").value == "1000"
+    assert next(v for v in result.values if v.field_name == "previous_high").value == "1010"
 
 
 # -------------------------------------------------------------------- jpx ----

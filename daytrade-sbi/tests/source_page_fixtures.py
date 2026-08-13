@@ -46,6 +46,7 @@ def kabutan_history_page(ticker: str = "7203") -> bytes:
 <span>code={ticker}</span>
 <table><tbody>
 <tr><td>2026-08-12</td><td>1,000</td><td>1,100</td><td>990</td><td>1,050</td><td>2,345,600</td></tr>
+<tr><td>2026-08-11</td><td>980</td><td>1,010</td><td>975</td><td>1,000</td><td>1,111,100</td></tr>
 </tbody></table>
 </body></html>""".encode("utf-8")
 
