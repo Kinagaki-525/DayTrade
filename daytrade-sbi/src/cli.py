@@ -57,6 +57,7 @@ from src.market import (
 from src.metrics import DEFAULT_TRADES_PATH, calculate_metrics_from_csv
 from src.performance import build_performance_payload
 from src.ranking import build_ranking
+from src.ranking_trust import load_and_verify_ranking_trust_chain
 from src.selection import build_selection
 from src.recommendations import append_recommendation, recommendation_to_row
 from src.reports import render_daily_report, render_research_report, render_sbi_report
@@ -202,6 +203,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     selection_parser = subparsers.add_parser("build-selection")
     selection_parser.add_argument("--ranking", required=True, type=Path)
+    selection_parser.add_argument("--event-gate", required=True, type=Path)
+    selection_parser.add_argument("--candidates", required=True, type=Path)
+    selection_parser.add_argument("--market-data", required=True, type=Path)
+    selection_parser.add_argument("--sources", required=True, type=Path)
+    selection_parser.add_argument("--source-matrix", required=True, type=Path)
     selection_parser.add_argument("--config", required=True, type=Path)
     selection_parser.add_argument("--output", required=True, type=Path)
 
@@ -440,6 +446,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build-selection":
         return _build_selection(
             args.ranking,
+            args.event_gate,
+            args.candidates,
+            args.market_data,
+            args.sources,
+            args.source_matrix,
             args.config,
             args.output,
         )
@@ -1592,29 +1603,55 @@ def _build_ranking(
 
 def _build_selection(
     ranking_path: Path,
+    event_gate_path: Path,
+    candidates_path: Path,
+    market_data_path: Path,
+    sources_path: Path,
+    source_matrix_path: Path,
     config_path: Path,
     output_path: Path,
 ) -> int:
-    # Fixed 10-step processing order:
-    #  1. hash ranking.json and the config snapshot bytes
-    #  2. load+schema-validate ranking.json
-    #  3. load+validate the strategy config
-    #  4. validate_selection_preconditions (config schema v6, selection block present, hash key set)
-    #  5. build_selection (Rank-1-only, no fallback)
-    #  6. schema-validate the resulting payload
-    #  7. validate_selection_output_contract (recompute-and-compare)
-    #  8. atomic write only on full success
+    # Fixed processing order:
+    #  1. hash ranking.json's raw bytes (this is Selection's own
+    #     input_hashes.ranking_sha256 -- logically separate from the
+    #     Ranking-input-hash-chain re-verified in step 2)
+    #  2. load_and_verify_ranking_trust_chain(): full re-verification that
+    #     ranking.json was genuinely produced from its own claimed upstream
+    #     artifacts (raw-byte hashes, schema-validating loads,
+    #     validate_ranking_preconditions, validate_ranking_output_contract).
+    #     Any failure here is a Hard Error -- selection.json is never
+    #     written past this point.
+    #  3. hash the strategy config snapshot bytes (reused from the bundle)
+    #  4. build Selection's input_hashes = {ranking_sha256, strategy_snapshot_sha256}
+    #     (unchanged 2-key shape -- no new keys added)
+    #  5. validate_selection_preconditions (config schema v6, selection block present, hash key set)
+    #  6. build_selection (Rank-1-only, no fallback)
+    #  7. schema-validate the resulting payload
+    #  8. validate_selection_output_contract (recompute-and-compare)
+    #  9. atomic write only on full success
     #
     # Selection-disabled nightly runs never reach build_selection's success
     # path (SelectionHardError SELECTION_CONFIG_DISABLED aborts first) and
     # therefore never produce a selection.json file.
+    ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
+
+    bundle = load_and_verify_ranking_trust_chain(
+        ranking_path=ranking_path,
+        event_gate_path=event_gate_path,
+        candidates_path=candidates_path,
+        market_data_path=market_data_path,
+        sources_path=sources_path,
+        source_matrix_path=source_matrix_path,
+        config_path=config_path,
+    )
+
     input_hashes = {
-        "ranking_sha256": _sha256_bytes(ranking_path.read_bytes()),
-        "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+        "ranking_sha256": ranking_sha256,
+        "strategy_snapshot_sha256": bundle.actual_ranking_input_hashes["strategy_snapshot_sha256"],
     }
 
-    ranking = load_json_document(ranking_path, "ranking.schema.json")
-    config = load_strategy_config(config_path)
+    ranking = bundle.ranking
+    config = bundle.config
 
     validate_selection_preconditions(
         ranking=ranking,

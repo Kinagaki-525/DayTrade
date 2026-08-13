@@ -12,7 +12,6 @@ from src.config import DEFAULT_CONFIG_PATH, load_strategy_config, strategy_confi
 from src.contracts import RUN_ARTIFACT_ALLOWLIST
 from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
 
-from tests.factories import make_complete_ranking_payload
 from tests.test_cli import complete_pipeline_summary
 from tests.test_ranking import (
     PREVIOUS_TRADING_DAY,
@@ -41,7 +40,7 @@ def _write_json_file(path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _enabled_selection_config_path(tmp_path):
+def _enabled_selection_config_path(tmp_path, *, minimum_turnover_yen=1000):
     config = copy.deepcopy(load_strategy_config())
     config["selection"] = {
         "enabled": True,
@@ -51,7 +50,7 @@ def _enabled_selection_config_path(tmp_path):
         "rule_logic": "all",
         "missing_data_policy": "fail_closed",
         "rules": {
-            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": 1000},
+            "minimum_turnover_yen": {"operator": ">=", "threshold_yen": minimum_turnover_yen},
             "maximum_relative_tick_size": {
                 "operator": "<=",
                 "threshold_ratio": {"numerator": 1, "denominator": 1},
@@ -63,28 +62,82 @@ def _enabled_selection_config_path(tmp_path):
     return path, config
 
 
-def test_cli_build_selection_selected(tmp_path):
-    config_path, config = _enabled_selection_config_path(tmp_path)
-    ranking = make_complete_ranking_payload(
-        strategy_version=config["strategy_version"],
-        config_sha256=strategy_config_sha256(config),
-        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+def _build_real_ranking_chain(tmp_path, config_path, config, specs):
+    """Build a genuine, hash-consistent ranking.json via the real
+    build-ranking CLI (not a hand-forged ranking payload),
+    so build-selection's Ranking Trust Chain re-verification has real
+    upstream artifacts to check against. Returns a dict of all the paths
+    involved, ready to be passed straight into a build-selection argv."""
+    event_gate, candidates, market_data, sources = _full_case_for_config(config, config_path, specs)
+    event_gate_path, candidates_path, market_data_path, sources_path = _write_ranking_inputs(
+        tmp_path, event_gate, candidates, market_data, sources
     )
     ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
+    assert (
+        cli.main(
+            [
+                "build-ranking",
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(config_path),
+                "--output",
+                str(ranking_path),
+            ]
+        )
+        == 0
+    )
+    return {
+        "ranking_path": ranking_path,
+        "event_gate_path": event_gate_path,
+        "candidates_path": candidates_path,
+        "market_data_path": market_data_path,
+        "sources_path": sources_path,
+        "config_path": config_path,
+    }
+
+
+def _build_selection_argv(paths, output_path, *, ranking_path=None, source_matrix_path=None, config_path=None):
+    return [
+        "build-selection",
+        "--ranking",
+        str(ranking_path or paths["ranking_path"]),
+        "--event-gate",
+        str(paths["event_gate_path"]),
+        "--candidates",
+        str(paths["candidates_path"]),
+        "--market-data",
+        str(paths["market_data_path"]),
+        "--sources",
+        str(paths["sources_path"]),
+        "--source-matrix",
+        str(source_matrix_path or DEFAULT_SOURCE_MATRIX_PATH),
+        "--config",
+        str(config_path or paths["config_path"]),
+        "--output",
+        str(output_path),
+    ]
+
+
+def test_cli_build_selection_selected(tmp_path):
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
     output_path = tmp_path / "selection.json"
 
-    result = cli.main(
-        [
-            "build-selection",
-            "--ranking",
-            str(ranking_path),
-            "--config",
-            str(config_path),
-            "--output",
-            str(output_path),
-        ]
-    )
+    result = cli.main(_build_selection_argv(paths, output_path))
 
     assert result == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
@@ -94,28 +147,18 @@ def test_cli_build_selection_selected(tmp_path):
 
 
 def test_cli_build_selection_disabled_config_produces_no_output(tmp_path):
-    ranking = make_complete_ranking_payload(
-        strategy_version=load_strategy_config()["strategy_version"],
-        config_sha256=strategy_config_sha256(load_strategy_config()),
-        strategy_snapshot_sha256=hashlib.sha256(DEFAULT_CONFIG_PATH.read_bytes()).hexdigest(),
+    config = load_strategy_config()
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        DEFAULT_CONFIG_PATH,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
     )
-    ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
     output_path = tmp_path / "selection.json"
 
     raised = False
     try:
-        cli.main(
-            [
-                "build-selection",
-                "--ranking",
-                str(ranking_path),
-                "--config",
-                str(DEFAULT_CONFIG_PATH),
-                "--output",
-                str(output_path),
-            ]
-        )
+        cli.main(_build_selection_argv(paths, output_path))
     except ValueError as exc:
         raised = True
         assert "SELECTION_CONFIG_DISABLED" in str(exc)
@@ -124,31 +167,29 @@ def test_cli_build_selection_disabled_config_produces_no_output(tmp_path):
 
 
 def test_cli_build_selection_no_partial_output_on_hard_error(tmp_path):
+    """A schema-valid but hand-tampered ranking.json (raw SHA256 no longer
+    matching ranking.input_hashes.strategy_snapshot_sha256) must Hard Error
+    via the Ranking Trust Chain re-verification -- selection.json must not
+    be produced."""
     config_path, config = _enabled_selection_config_path(tmp_path)
-    ranking = make_complete_ranking_payload(
-        strategy_version=config["strategy_version"],
-        config_sha256="0" * 64,  # wrong: will trigger hash chain / config mismatch
-        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
     )
-    ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
+    ranking = json.loads(paths["ranking_path"].read_text(encoding="utf-8"))
+    ranking["input_hashes"]["strategy_snapshot_sha256"] = "0" * 64
+    tampered_ranking_path = tmp_path / "tampered_ranking.json"
+    _write_json_file(tampered_ranking_path, ranking)
     output_path = tmp_path / "selection.json"
 
     raised = False
     try:
-        cli.main(
-            [
-                "build-selection",
-                "--ranking",
-                str(ranking_path),
-                "--config",
-                str(config_path),
-                "--output",
-                str(output_path),
-            ]
-        )
-    except ValueError:
+        cli.main(_build_selection_argv(paths, output_path, ranking_path=tampered_ranking_path))
+    except ValueError as exc:
         raised = True
+        assert "RANKING_INPUT_HASHES_MISMATCH" in str(exc)
     assert raised
     assert not output_path.exists()
 
@@ -157,29 +198,22 @@ def test_cli_build_selection_no_partial_overwrite_on_hard_error(tmp_path):
     """A Hard Error must never overwrite (even partially) a pre-existing
     output file: byte-for-byte, not just 'file still exists'."""
     config_path, config = _enabled_selection_config_path(tmp_path)
-    ranking = make_complete_ranking_payload(
-        strategy_version=config["strategy_version"],
-        config_sha256="0" * 64,  # wrong: will trigger config sha256 mismatch
-        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
     )
-    ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
+    ranking = json.loads(paths["ranking_path"].read_text(encoding="utf-8"))
+    ranking["input_hashes"]["strategy_snapshot_sha256"] = "0" * 64
+    tampered_ranking_path = tmp_path / "tampered_ranking.json"
+    _write_json_file(tampered_ranking_path, ranking)
     output_path = tmp_path / "selection.json"
     sentinel_bytes = b"SENTINEL: pre-existing selection.json content, must survive untouched\n"
     output_path.write_bytes(sentinel_bytes)
 
     with pytest.raises(ValueError):
-        cli.main(
-            [
-                "build-selection",
-                "--ranking",
-                str(ranking_path),
-                "--config",
-                str(config_path),
-                "--output",
-                str(output_path),
-            ]
-        )
+        cli.main(_build_selection_argv(paths, output_path, ranking_path=tampered_ranking_path))
     assert output_path.read_bytes() == sentinel_bytes
 
 
@@ -234,6 +268,16 @@ def _full_v6_chain(tmp_path, *, ticker: str = "AA01"):
                 "build-selection",
                 "--ranking",
                 str(ranking_path),
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
@@ -336,60 +380,24 @@ def test_cli_build_selection_recommendation_forged_selection_is_hard_error(tmp_p
     self-consistent input_hashes/reason_codes. build-selection-recommendation
     must raise a Hard Error via validate_selection_output_contract rather
     than ever producing a TRADE recommendation."""
-    config_path, config = _enabled_selection_config_path(tmp_path)
-    # Turnover far below the configured threshold_yen (1000) -> real
-    # Selection rules legitimately reject Rank 1.
-    ranking = make_complete_ranking_payload(
-        strategy_version=config["strategy_version"],
-        config_sha256=strategy_config_sha256(config),
-        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
-        candidates=[
-            {
-                "ticker": "1234",
-                "input_status": "VALID",
-                "reason_codes": [],
-                "provenance": {
-                    "turnover_attempt_id": "ATT-1234",
-                    "turnover_source_ref": "SRC-1",
-                    "tick_size_source_refs": ["SRC-2"],
-                },
-                "feature_values": {
-                    "turnover_yen": "1",
-                    "tick_size_yen": "1",
-                    "entry_trigger_yen": "500",
-                    "relative_tick_size": {
-                        "numerator_yen": "1",
-                        "denominator_yen": "500",
-                    },
-                },
-                "feature_ranks": {"turnover_rank": 1, "relative_tick_size_rank": 1},
-                "rank_points": 2,
-                "final_rank": 1,
-            }
-        ],
+    # Turnover (raw_value "1" thousand-yen -> 1000 yen canonical) far below
+    # the configured threshold_yen -> real Selection rules legitimately
+    # reject Rank 1.
+    config_path, config = _enabled_selection_config_path(tmp_path, minimum_turnover_yen=1_000_000)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "1"}],
     )
-    ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
+    ranking_path = paths["ranking_path"]
 
     ranking_sha256 = hashlib.sha256(ranking_path.read_bytes()).hexdigest()
     strategy_snapshot_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
 
     # Ground truth: what Selection would really produce for this ranking.
     real_selection_path = tmp_path / "real_selection.json"
-    assert (
-        cli.main(
-            [
-                "build-selection",
-                "--ranking",
-                str(ranking_path),
-                "--config",
-                str(config_path),
-                "--output",
-                str(real_selection_path),
-            ]
-        )
-        == 0
-    )
+    assert cli.main(_build_selection_argv(paths, real_selection_path)) == 0
     real_selection = json.loads(real_selection_path.read_text(encoding="utf-8"))
     assert real_selection["selection_status"] == "NO_TRADE"
 
@@ -441,29 +449,16 @@ def test_cli_build_selection_recommendation_forged_selection_is_hard_error(tmp_p
 
 def test_cli_build_selection_recommendation_input_hashes_mismatch_is_hard_error(tmp_path):
     config_path, config = _enabled_selection_config_path(tmp_path)
-    ranking = make_complete_ranking_payload(
-        strategy_version=config["strategy_version"],
-        config_sha256=strategy_config_sha256(config),
-        strategy_snapshot_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
     )
-    ranking_path = tmp_path / "ranking.json"
-    _write_json_file(ranking_path, ranking)
+    ranking_path = paths["ranking_path"]
 
     real_selection_path = tmp_path / "real_selection.json"
-    assert (
-        cli.main(
-            [
-                "build-selection",
-                "--ranking",
-                str(ranking_path),
-                "--config",
-                str(config_path),
-                "--output",
-                str(real_selection_path),
-            ]
-        )
-        == 0
-    )
+    assert cli.main(_build_selection_argv(paths, real_selection_path)) == 0
     tampered = json.loads(real_selection_path.read_text(encoding="utf-8"))
     tampered["input_hashes"]["ranking_sha256"] = "9" * 64
     tampered_path = tmp_path / "selection.json"
@@ -842,6 +837,16 @@ def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
                 "build-selection",
                 "--ranking",
                 str(ranking_path),
+                "--event-gate",
+                str(event_gate_path),
+                "--candidates",
+                str(candidates_path),
+                "--market-data",
+                str(market_data_path),
+                "--sources",
+                str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
