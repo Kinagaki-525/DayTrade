@@ -1425,3 +1425,111 @@ def test_risk_check_case_c_no_trade_full_chain_reaches_not_applicable(tmp_path):
     risk_result = json.loads(output_path.read_text(encoding="utf-8"))
     assert risk_result["decision"] == "NO_TRADE"
     assert risk_result["status"] == "NOT_APPLICABLE"
+
+
+@pytest.mark.parametrize(
+    "target_file",
+    ["event_gate", "candidates", "market_data", "sources", "source_matrix", "config"],
+)
+def test_selection_recommendation_upstream_mutation_is_hard_error(tmp_path, target_file):
+    """After a valid selection.json exists, raw-byte-mutating (in a
+    schema-valid way) one of event_gate/candidates/market_data/sources/
+    source_matrix/strategy_snapshot before running
+    build-selection-recommendation must Hard Error, even though
+    selection.json's own hash chain still 'looks' self-consistent -- proving
+    load_and_verify_ranking_trust_chain() is genuinely re-checked here too."""
+    chain = _full_v6_chain(tmp_path)
+
+    if target_file == "source_matrix":
+        target_path = tmp_path / "source_matrix_mutated.yaml"
+        target_path.write_bytes(DEFAULT_SOURCE_MATRIX_PATH.read_bytes())
+        override_flag = "--source-matrix"
+    else:
+        path_key = "config_path" if target_file == "config" else f"{target_file}_path"
+        target_path = chain[path_key]
+        override_flag = "--config" if target_file == "config" else f"--{target_file.replace('_', '-')}"
+
+    original_bytes = target_path.read_bytes()
+    if target_file in ("config", "source_matrix"):
+        mutated_bytes = original_bytes + b"\n# mutated for test\n"
+    else:
+        payload = json.loads(original_bytes.decode("utf-8"))
+        if "generated_at" in payload:
+            payload["generated_at"] = "2099-01-01T00:00:00+00:00"
+        mutated_bytes = (json.dumps(payload, ensure_ascii=False, indent=4) + "\n").encode("utf-8")
+        assert mutated_bytes != original_bytes
+
+    if target_file == "source_matrix":
+        target_path.write_bytes(mutated_bytes)
+        overrides = {override_flag: target_path}
+    else:
+        # config is YAML, not JSON -- write bytes directly to a sibling copy.
+        mutated_path = tmp_path / f"mutated_{target_file}"
+        mutated_path.write_bytes(mutated_bytes)
+        overrides = {override_flag: mutated_path}
+
+    output_path = tmp_path / "recommendation_mutated.json"
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH|SELECTION_RECOMMENDATION_INPUT_HASHES_MISMATCH"):
+        _run_selection_recommendation(chain, tmp_path, overrides=overrides, output_name="recommendation_mutated.json")
+    assert not output_path.exists()
+
+
+@pytest.mark.parametrize(
+    "target_flag",
+    ["--candidates", "--candidate-pipeline", "--market-data", "--sources", "--ranking", "--event-gate"],
+)
+def test_risk_check_case_c_upstream_mutation_is_hard_error(tmp_path, target_flag):
+    """After a valid Recommendation v2 exists, mutating one upstream file
+    before risk-check must Hard Error, and risk_result.json must not be
+    written."""
+    chain = _full_v6_chain(tmp_path)
+    key = {
+        "--candidates": "candidates_path",
+        "--candidate-pipeline": "candidate_pipeline_path",
+        "--market-data": "market_data_path",
+        "--sources": "sources_path",
+        "--ranking": "ranking_path",
+        "--event-gate": "event_gate_path",
+    }[target_flag]
+    target_path = chain[key]
+    payload = json.loads(target_path.read_text(encoding="utf-8"))
+    payload["target_date"] = "2099-01-01"
+    mutated_path = tmp_path / f"mutated_{key}.json"
+    _write_json_file(mutated_path, payload)
+
+    output_path = tmp_path / "risk_result_mutated.json"
+    argv = [
+        "risk-check",
+        "--recommendation",
+        str(chain["recommendation_path"]),
+        "--candidates",
+        str(chain["candidates_path"]),
+        "--candidate-pipeline",
+        str(chain["candidate_pipeline_path"]),
+        "--market-data",
+        str(chain["market_data_path"]),
+        "--sources",
+        str(chain["sources_path"]),
+        "--config",
+        str(chain["config_path"]),
+        "--output",
+        str(output_path),
+        "--current-positions",
+        "0",
+        "--trades-today",
+        "0",
+        "--selection",
+        str(chain["selection_path"]),
+        "--ranking",
+        str(chain["ranking_path"]),
+        "--event-gate",
+        str(chain["event_gate_path"]),
+        "--research-window",
+        str(chain["research_window_path"]),
+    ]
+    flag_index = argv.index(target_flag)
+    argv[flag_index + 1] = str(mutated_path)
+
+    with pytest.raises(ValueError):
+        cli.main(argv)
+    assert not output_path.exists()
