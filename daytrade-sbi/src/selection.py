@@ -352,15 +352,44 @@ def build_selection(
     """Build the Selection v1 decision payload.
 
     Fixed processing order:
+      0. Defensive type/shape guards for direct (non-CLI) callers -- the
+         normal CLI path already validated these via
+         contracts.validate_selection_preconditions(), but build_selection()
+         is a public pure function and must never raise a bare Python
+         exception (TypeError/AttributeError/KeyError/InvalidOperation) when
+         called directly with malformed input.
       1. selection.enabled must be True.
       2. Validate ranking integrity and extract Rank 1.
       3. Validate/chain input_hashes against ranking.
       4. Evaluate both rules (no short-circuit).
       5. Determine status and build the payload.
     """
+    # 0a. config must be a dict, schema_version 6, and pass the shared
+    # config-level validation (reused from src.config, never duplicated).
+    if not isinstance(config, dict):
+        _hard_error("SELECTION_CONFIG_INVALID", "config must be an object")
+    if config.get("config_schema_version") != 6:
+        _hard_error(
+            "SELECTION_CONFIG_SCHEMA_VERSION_INVALID",
+            "config_schema_version must be 6 for build_selection",
+        )
+    from src.config import validate_strategy_config
+
+    try:
+        validate_strategy_config(config)
+    except ValueError as exc:
+        _hard_error("SELECTION_CONFIG_INVALID", str(exc))
+
     selection_config = config.get("selection")
     if not isinstance(selection_config, dict) or selection_config.get("enabled") is not True:
         _hard_error("SELECTION_CONFIG_DISABLED", "selection.enabled must be true to build a selection")
+
+    # 0b. ranking / input_hashes must be dicts before any further
+    # destructuring is attempted.
+    if not isinstance(ranking, dict):
+        _hard_error("SELECTION_RANKING_HEADER_INVALID", "ranking must be an object")
+    if not isinstance(input_hashes, dict):
+        _hard_error("SELECTION_INPUT_HASHES_INVALID", "input_hashes must be an object")
 
     rank1 = validate_rank1_integrity(ranking)
 

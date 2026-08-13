@@ -465,3 +465,86 @@ def test_validate_selection_preconditions_rejects_rank1_integrity_violation():
     args["ranking"]["summary"]["top_ranked_ticker"] = "9999"
     with pytest.raises(SelectionHardError, match="SELECTION_TOP_RANKED_TICKER_MISMATCH"):
         validate_selection_preconditions(**args)
+
+
+# --- Gap A: build_selection() defensive hardening for direct invocation ----
+# These call build_selection() directly (bypassing the CLI's
+# validate_selection_preconditions()/load_strategy_config() layer) with
+# malformed input, to guarantee a public pure function never leaks a bare
+# Python exception across its boundary.
+
+
+def test_build_selection_direct_rejects_non_dict_config():
+    ranking = _ranking_for(_config_with_selection())
+    hashes = make_selection_input_hashes()
+    with pytest.raises(SelectionHardError, match="SELECTION_"):
+        build_selection(ranking=ranking, config=None, input_hashes=hashes)
+    with pytest.raises(SelectionHardError, match="SELECTION_"):
+        build_selection(ranking=ranking, config="not-a-dict", input_hashes=hashes)
+    with pytest.raises(SelectionHardError, match="SELECTION_"):
+        build_selection(ranking=ranking, config=[], input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_wrong_config_schema_version():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    config["config_schema_version"] = 5
+    with pytest.raises(SelectionHardError, match="SELECTION_CONFIG_SCHEMA_VERSION_INVALID"):
+        build_selection(ranking=ranking, config=config, input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_missing_selection_block():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    del config["selection"]
+    with pytest.raises(SelectionHardError, match="SELECTION_CONFIG_"):
+        build_selection(ranking=ranking, config=config, input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_selection_disabled():
+    config = _config_with_selection(enabled=False)
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    with pytest.raises(SelectionHardError, match="SELECTION_CONFIG_DISABLED"):
+        build_selection(ranking=ranking, config=config, input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_invalid_threshold_types():
+    # Float threshold_yen -- selection thresholds must be ints/exact ratios,
+    # never floats. Validated solely by src.config.validate_strategy_config,
+    # never re-derived inside selection.py. The ranking is built from a
+    # valid config snapshot first (ranking-building must not itself trip
+    # over the later-mutated invalid config).
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    config["selection"]["rules"]["minimum_turnover_yen"]["threshold_yen"] = 1000.0
+    with pytest.raises(SelectionHardError, match="SELECTION_CONFIG_INVALID"):
+        build_selection(ranking=ranking, config=config, input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_negative_threshold_yen():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    hashes = make_selection_input_hashes()
+    config["selection"]["rules"]["minimum_turnover_yen"]["threshold_yen"] = -1
+    with pytest.raises(SelectionHardError, match="SELECTION_CONFIG_INVALID"):
+        build_selection(ranking=ranking, config=config, input_hashes=hashes)
+
+
+def test_build_selection_direct_rejects_non_dict_input_hashes():
+    config = _config_with_selection()
+    ranking = _ranking_for(config)
+    for bad_hashes in (None, [], "not-a-dict"):
+        with pytest.raises(SelectionHardError, match="SELECTION_INPUT_HASHES_INVALID"):
+            build_selection(ranking=ranking, config=config, input_hashes=bad_hashes)
+
+
+def test_build_selection_direct_rejects_non_dict_ranking():
+    config = _config_with_selection()
+    hashes = make_selection_input_hashes()
+    for bad_ranking in (None, []):
+        with pytest.raises(SelectionHardError, match="SELECTION_"):
+            build_selection(ranking=bad_ranking, config=config, input_hashes=hashes)
