@@ -28,6 +28,22 @@ def test_custom_subagents_are_project_scoped_and_read_only():
     assert all(agent["sandbox_mode"] == "read-only" for agent in agents)
 
 
+def test_no_subagent_is_told_to_fetch_market_data():
+    """Numbers reach the pipeline only through the deterministic acquisition
+    CLIs. A subagent that believes it may browse for a price is exactly the
+    failure mode the Phase I rework removed."""
+    agent_dir = REPOSITORY_ROOT / ".codex" / "agents"
+    paths = sorted(agent_dir.glob("*.toml"))
+    assert paths
+    for path in paths:
+        agent = tomllib.loads(path.read_text(encoding="utf-8"))
+        instructions = agent["developer_instructions"]
+        assert "You do not fetch market data." in instructions, path.name
+        assert "acquire-" in instructions, path.name
+        for forbidden in ("WebFetch", "WebSearch"):
+            assert forbidden not in instructions, f"{path.name} mentions {forbidden}"
+
+
 def test_daytrade_skills_require_explicit_invocation():
     skill_root = REPOSITORY_ROOT / ".agents" / "skills"
 

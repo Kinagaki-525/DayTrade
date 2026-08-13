@@ -19,7 +19,7 @@
 - `prompts/nightly_research.md` と `docs/nightly-operation.md` の運用手順
 - 日次設定スナップショット、JSON Schema実行時検証、出典台帳と成果物間の整合性検証
 - `$prepare-daytrade-plan`と`$record-daytrade-result`による明示起動の運用手順
-- 読み取り専用の市場調査・出典監査サブエージェント
+- 読み取り専用の出典監査サブエージェント（市場データの取得は`acquire-*` CLIのみ）
 - 完全約定・当日決済済み取引に限定した実績Schema、プレビュー、重複防止付きCSV追記
 
 これらの実装を理由に、P0・P1・P2・P3の意思決定済みとは扱わない。
@@ -468,7 +468,7 @@ exit_slippage
 
 ただし現時点では証券口座への自動発注は行わない。
 
-v2ではCodex用nightly prompt、市場データSchema、固定条件スクリーニング、Risk Engine、レポート生成までの技術基盤を準備した。銘柄選定の閾値、データ取得元、ランキング基準は未決定のまま。
+v2ではAgent（Codex / Claude Code）共通のnightly prompt、決定論的Source取得（curl GET → 生バイト保存 → 決定論的Parser）、市場データSchema、固定条件スクリーニング、Event Gate、Ranking、Selection、Risk Engine、レポート生成までの技術基盤を準備した。銘柄選定の閾値、データ取得元、ランキング基準は未決定のまま。
 
 ---
 

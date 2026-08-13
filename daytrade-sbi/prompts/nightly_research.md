@@ -5,15 +5,45 @@
 ## 基本ルール
 
 1. 最初に `AGENTS.md`、`config/strategy.yaml`、`TODO.md` を読む。
-2. PythonからWeb取得、LLM API、外部市場データAPIを呼ばない。Web調査はCodexまたは読み取り専用subagentが行い、Pythonは検証、計算、レンダリングを担当する。
+2. PythonからLLM APIや外部市場データAPIを呼ばない。**市場データの取得はPythonの`acquire-*` CLI（curl GET）だけが行う**。Agent（Codex / Claude Code）はCLIをCanonical CLI Pipeline Orderどおりに実行し、既に取得済みのローカル生ページに対するEvent AI Classificationだけを担当する。AgentがWebから株価を取得することはない。
 3. `config/source_matrix.yaml` に定義された Source ID、role、criticality、information_type だけを使う。実行時に代替サイトを採用しない。
 4. Discovery経路、売買ルール、資金100,000円、100株固定、Weekend Cutoff、`previous_day_high_breakout` は変更しない。
 5. Discovery順位や表示値は候補発見理由として保存するだけで、最終Rankingの評価値として使わない。
 6. 未取得値、日付不明、更新時刻不明、根拠不足は推測で埋めない。`NOT_STARTED`、`DEPENDENCY_NOT_READY`、`EXECUTION_FAILED`、`DATA_UNAVAILABLE`、`CONFLICT`、`SINGLE_SOURCE_ONLY` などで明示する。
 7. `DATA_UNAVAILABLE` は、必要Source checkを試行済みで外部要因が記録されている場合だけ使う。未実施や未mergeは `PIPELINE_INCOMPLETE` として扱う。
-8. `screening` の `enabled: false` や `threshold: null` をCodex判断で補完しない。
+8. `screening` の `enabled: false` や `threshold: null` をAgent判断で補完しない。
 9. SBI証券へのログイン、画面操作、注文、送信は行わない。
-10. dependentなCLIは必ず逐次実行する。並列化してよいのは、互いに独立したWeb調査の読み取りだけ。
+10. dependentなCLIは必ずCanonical CLI Pipeline Orderで逐次実行する。並列化してよいのは、互いに独立したローカル読み取りだけ。
+
+## Canonical CLI Pipeline Order
+
+夜間実行はこの順序で逐次実行します（正本: [docs/canonical-pipeline.md](../docs/canonical-pipeline.md)）。
+
+1. `snapshot-config`
+2. `validate-source-matrix`
+3. `resolve-research-window`
+4. `acquire-discovery`
+5. `init-candidate-research`
+6. `acquire-stage1-sources`
+7. market_data Stage1 reflect
+8. `apply-stage1`
+9. TSE Listing Batch Gate
+10. `plan-stage2-batches`
+11. `acquire-stage2-market-sources`
+12. market_data Stage2 reflect
+13. `acquire-actual-turnover`
+14. market_data turnover reflect
+15. `validate-market`
+16. `screen-market`
+17. `build-candidate-pipeline`
+18. `acquire-event-sources`
+19. Event AI Classification (local only)
+20. `merge-event-source-extraction`
+21. `init/complete event-research`
+22. `validate-event-research`
+23. `build-event-gate`
+24. `build-ranking`
+25. Case A/B/C
 
 ## 保存先
 

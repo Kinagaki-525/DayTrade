@@ -2,11 +2,11 @@
 
 ## 開始方法
 
-毎晩、VS Code上のCodexへ次のように依頼します。
+毎晩、Codex または Claude Code へ次のように依頼します。どちらでも同じリポジトリCLIパイプラインが動きます。
 
 > `$prepare-daytrade-plan`
 
-Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントが全体を統括し、市場調査と出典監査だけを読み取り専用サブエージェントへ委譲します。
+Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントはCanonical CLI Pipeline Order（[canonical-pipeline.md](canonical-pipeline.md)）どおりにCLIを逐次実行します。市場データの取得は`acquire-*` CLIだけが行い、サブエージェントへ委譲できるのは読み取り専用の出典監査だけです。
 
 実行前にPython依存関係を導入し、テストが成功することを確認します。
 
@@ -15,7 +15,37 @@ py -m pip install -r requirements-dev.txt
 py -B -m pytest
 ```
 
-## Codexが行う処理
+## Canonical CLI Pipeline Order
+
+夜間実行はこの順序で逐次実行します（正本: [docs/canonical-pipeline.md](canonical-pipeline.md)）。
+
+1. `snapshot-config`
+2. `validate-source-matrix`
+3. `resolve-research-window`
+4. `acquire-discovery`
+5. `init-candidate-research`
+6. `acquire-stage1-sources`
+7. market_data Stage1 reflect
+8. `apply-stage1`
+9. TSE Listing Batch Gate
+10. `plan-stage2-batches`
+11. `acquire-stage2-market-sources`
+12. market_data Stage2 reflect
+13. `acquire-actual-turnover`
+14. market_data turnover reflect
+15. `validate-market`
+16. `screen-market`
+17. `build-candidate-pipeline`
+18. `acquire-event-sources`
+19. Event AI Classification (local only)
+20. `merge-event-source-extraction`
+21. `init/complete event-research`
+22. `validate-event-research`
+23. `build-event-gate`
+24. `build-ranking`
+25. Case A/B/C
+
+## Agentが行う処理（Canonical CLI Pipeline Orderの実行）
 
 1. `AGENTS.md`を確認
 2. `config/strategy.yaml`を確認
@@ -24,16 +54,16 @@ py -B -m pytest
 5. `config/strategy.yaml`を対象日ディレクトリへスナップショット保存
 6. `config/source_matrix.yaml`を検証
 7. PythonでTDnet調査期間を確定し、`research_window.json`を保存
-8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
+8. `acquire-discovery`を実行する。Yahoo!ファイナンス2ランキングをcurl GETで取得し、生ページをSHA256付きで保存し、決定論的にParseしてTOP50を確認し、`market_research.json`のDiscovery Candidateを作成する。Agentが候補を手で書かない
 9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
-10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
+10. `acquire-stage1-sources`を実行する。候補集合は`market_research.json`の`discovery_candidates`から導出され、Agentが銘柄を渡すことはない。Stage 1の値は`sources.json`と`market_data.json`へ自動反映される。続けて`apply-stage1`で売買単位・資金条件を分類
 11. Stage 2着手前のTSE上場確認（Fail Closed、全件一括ゲート）: `apply-stage1`の直後、`plan-stage2-batches`を実行する前に、Stage 1 `PASS`候補**全件**について、検証済みSource Evidenceから東京証券取引所上場であると確認できるかを一括で判定する。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`.T`（東証）Suffix固定でDiscoveryは`ALL_MARKETS`のため、確認できない候補が混ざり得る。**1件でも確認できない候補があれば`plan-stage2-batches`を実行せず、Stage 2 Candidate Research・Turnover Research・Event Research・Rankingを含む以降の全ステージを開始せず、夜間実行全体をこの時点で停止する。** 個別候補をStage 1 `PASS`集合から除外・スキップして残りだけ進めることはしない
 12. Stage 1 `PASS`候補全件のTSE上場確認が成功した場合のみ`plan-stage2-batches`でStage 2調査対象をbatch化し、全候補についてCandidate Researchを実施・merge
-13. Ranking用Actual Turnover Research: Stage 2 Candidate Researchのmerge完了後、**`screen-market`を実行する前に**、（TSE上場確認は手順11で全件一括ゲート済みの）Stage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
+13. `acquire-actual-turnover`: Stage 2完了後、**`screen-market`を実行する前に**、（TSE上場確認は手順11で全件一括ゲート済みの）Stage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
 14. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
 15. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
 16. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
-17. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+17. Event: `acquire-event-sources`を実行する。候補集合は`candidates.json` / `candidate_pipeline.json`の`status=ELIGIBLE`かつ`screening_status=PASS`から導出される。6つのEvent Source（`JPX_TDNET` / `JPX_EARNINGS_SCHEDULE` / `COMPANY_IR` / `COMPANY_IR_DISCLOSURE` / `YAHOO_JP_NEWS` / `KABUTAN_NEWS`）を取得し、共有ページは1回のGETで候補ごとのSource Attemptを作る。次にEvent AI Classificationが**ローカル保存済み生ページだけ**を読んで一時作業ファイルを書き、`merge-event-source-extraction`が全項目を再検証して`sources.json`へ反映する。最後に`init-event-research`→`complete-event-research`で`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を確定する。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
 18. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
 19. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
 20. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
