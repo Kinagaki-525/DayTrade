@@ -77,6 +77,43 @@ def _is_iso_date(name: str) -> bool:
     return True
 
 
+def _validate_calibration_date_range(
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[str | None, str | None]:
+    """Fail-closed validation of the --start-date/--end-date pair (spec
+    section: Date Range must Fail Closed on invalid ISO dates).
+
+    Both must be given together (or neither), both must parse as valid ISO
+    dates via ``date.fromisoformat``, and ``start`` must not be after
+    ``end`` -- all violations are a Hard Error
+    ``CALIBRATION_DATE_RANGE_INVALID``. Returns the validated ISO-date
+    strings (never raw, unvalidated caller input) for downstream
+    ``start_date <= target_date <= end_date`` filtering.
+    """
+    if (start_date is None) != (end_date is None):
+        _hard_error(
+            "CALIBRATION_DATE_RANGE_INVALID",
+            "--start-date and --end-date must both be given together, or neither given",
+        )
+    if start_date is None:
+        return None, None
+    try:
+        parsed_start = date.fromisoformat(start_date)
+        parsed_end = date.fromisoformat(end_date)
+    except ValueError as exc:
+        _hard_error(
+            "CALIBRATION_DATE_RANGE_INVALID",
+            f"--start-date/--end-date must be valid ISO dates: {exc}",
+        )
+    if parsed_start > parsed_end:
+        _hard_error(
+            "CALIBRATION_DATE_RANGE_INVALID",
+            f"--start-date ({start_date}) must not be after --end-date ({end_date})",
+        )
+    return parsed_start.isoformat(), parsed_end.isoformat()
+
+
 def collect_run_dates(runs_dir: Path) -> tuple[list[str], int]:
     """Return (sorted ISO-date directory names, ignored_non_date_entries).
 
@@ -570,15 +607,12 @@ def build_selection_calibration_report(
     from src.ranking_trust import load_and_verify_ranking_trust_chain
     from src.source_matrix import load_source_matrix, validate_source_matrix
 
-    if (start_date is None) != (end_date is None):
+    start_date, end_date = _validate_calibration_date_range(start_date, end_date)
+
+    if source_matrix_registry_dir is not None and not source_matrix_registry_dir.is_dir():
         _hard_error(
-            "CALIBRATION_DATE_RANGE_INVALID",
-            "--start-date and --end-date must both be given together, or neither given",
-        )
-    if start_date is not None and end_date is not None and start_date > end_date:
-        _hard_error(
-            "CALIBRATION_DATE_RANGE_INVALID",
-            f"--start-date ({start_date}) must not be after --end-date ({end_date})",
+            "CALIBRATION_SOURCE_MATRIX_REGISTRY_INVALID",
+            f"--source-matrix-registry is not a directory: {source_matrix_registry_dir}",
         )
 
     # --- Target Cohort construction (spec section 10) ----------------------
@@ -708,17 +742,6 @@ def build_selection_calibration_report(
 
         verified_ranking = bundle.ranking
 
-        # ranking_status determined
-        if verified_ranking.get("ranking_status") == "DATA_UNAVAILABLE":
-            excluded_observations.append(
-                {
-                    "target_date": target_date,
-                    "disposition": "TRUSTED_NOT_ELIGIBLE",
-                    "reason_code": "RANKING_DATA_UNAVAILABLE",
-                }
-            )
-            continue
-
         run_ranking_version = verified_ranking.get("ranking_version")
         run_ranking_schema_version = verified_ranking.get("schema_version")
         if run_ranking_version != "ranking-v1" or run_ranking_schema_version != 1:
@@ -730,8 +753,15 @@ def build_selection_calibration_report(
                 f"schema_version={run_ranking_schema_version!r}",
             )
 
-        # Calibration Context generated -> Cohort ID generated (only for a
-        # Trust-verified run)
+        # Calibration Context generated -> Cohort ID generated. This is
+        # computed unconditionally once Trust has succeeded, REGARDLESS of
+        # ranking_status -- bundle.config and the verified Source Matrix
+        # bytes are available whether the run is DATA_UNAVAILABLE or
+        # COMPLETE, and Cohort classification must happen BEFORE
+        # DATA_UNAVAILABLE eligibility classification (spec: Trust-before-
+        # Cohort ordering). Otherwise a DATA_UNAVAILABLE ranking from a
+        # completely unrelated cohort would be misclassified as
+        # TRUSTED_NOT_ELIGIBLE instead of OUT_OF_COHORT.
         run_config = bundle.config
         run_strategy_version = run_config["strategy_version"]
         run_selection_version = run_config["selection"]["version"]
@@ -754,6 +784,19 @@ def build_selection_calibration_report(
                     "target_date": target_date,
                     "disposition": "OUT_OF_COHORT",
                     "reason_code": "COHORT_IDENTITY_MISMATCH",
+                }
+            )
+            continue
+
+        # Same-cohort eligibility classification: only now, after Cohort
+        # comparison has already passed, does ranking_status determine
+        # eligibility.
+        if verified_ranking.get("ranking_status") == "DATA_UNAVAILABLE":
+            excluded_observations.append(
+                {
+                    "target_date": target_date,
+                    "disposition": "TRUSTED_NOT_ELIGIBLE",
+                    "reason_code": "RANKING_DATA_UNAVAILABLE",
                 }
             )
             continue

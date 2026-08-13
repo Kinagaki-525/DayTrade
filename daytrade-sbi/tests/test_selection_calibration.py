@@ -551,6 +551,259 @@ def test_evaluate_calibration_against_thresholds_rejects_non_positive_threshold(
         )
 
 
+# --- Date Range fail-closed validation --------------------------------------
+
+
+def test_date_range_start_only_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    with pytest.raises(SelectionCalibrationHardError, match="CALIBRATION_DATE_RANGE_INVALID"):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            start_date="2026-08-01",
+        )
+
+
+def test_date_range_end_only_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    with pytest.raises(SelectionCalibrationHardError, match="CALIBRATION_DATE_RANGE_INVALID"):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            end_date="2026-08-01",
+        )
+
+
+def test_date_range_invalid_start_date_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    with pytest.raises(SelectionCalibrationHardError, match="CALIBRATION_DATE_RANGE_INVALID"):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            start_date="not-a-date",
+            end_date="2026-08-01",
+        )
+
+
+def test_date_range_invalid_end_date_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    with pytest.raises(SelectionCalibrationHardError, match="CALIBRATION_DATE_RANGE_INVALID"):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            start_date="2026-08-01",
+            end_date="2026-99-99",
+        )
+
+
+def test_date_range_start_after_end_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    with pytest.raises(SelectionCalibrationHardError, match="CALIBRATION_DATE_RANGE_INVALID"):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            start_date="2026-08-10",
+            end_date="2026-08-01",
+        )
+
+
+def test_date_range_start_equal_end_is_valid(tmp_path):
+    runs_dir = tmp_path / "runs"
+    _build_calibration_run_dir(
+        runs_dir,
+        [{"ticker": "MM01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        start_date="2026-08-08",
+        end_date="2026-08-08",
+    )
+    assert report["dataset"]["start_date"] == "2026-08-08"
+    assert report["dataset"]["end_date"] == "2026-08-08"
+
+
+def test_date_range_valid_inclusive_range_includes_both_endpoints(tmp_path):
+    runs_dir = tmp_path / "runs"
+    from tests.test_ranking import TARGET_DATE
+
+    _build_calibration_run_dir(
+        runs_dir,
+        [{"ticker": "NN01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        start_date=TARGET_DATE,
+        end_date=TARGET_DATE,
+    )
+    assert report["dataset"]["observation_count"] == 1
+
+
+# --- Source Matrix Registry Path startup validation -------------------------
+
+
+def test_source_matrix_registry_none_is_valid(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        source_matrix_registry_dir=None,
+    )
+    assert report["calibration_status"] == "DATA_UNAVAILABLE"
+
+
+def test_source_matrix_registry_existing_directory_is_valid(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        source_matrix_registry_dir=registry_dir,
+    )
+    assert report["calibration_status"] == "DATA_UNAVAILABLE"
+
+
+def test_source_matrix_registry_nonexistent_path_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    registry_dir = tmp_path / "does-not-exist"
+    with pytest.raises(
+        SelectionCalibrationHardError, match="CALIBRATION_SOURCE_MATRIX_REGISTRY_INVALID"
+    ):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            source_matrix_registry_dir=registry_dir,
+        )
+
+
+def test_source_matrix_registry_regular_file_is_hard_error(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(
+        SelectionCalibrationHardError, match="CALIBRATION_SOURCE_MATRIX_REGISTRY_INVALID"
+    ):
+        build_selection_calibration_report(
+            runs_dir=runs_dir,
+            config_path=DEFAULT_CONFIG_PATH,
+            source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+            source_matrix_registry_dir=registry_path,
+        )
+
+
+def test_source_matrix_registry_missing_historical_sha_is_unverified_not_hard_error(tmp_path):
+    # Build a run whose ranking references a source_matrix_sha256 that the
+    # (valid, existing) registry directory does not contain.
+    other_source_matrix_path = tmp_path / "other_source_matrix.yaml"
+    payload = yaml.safe_load(DEFAULT_SOURCE_MATRIX_PATH.read_text(encoding="utf-8"))
+    payload["sources"][0]["source_name"] = payload["sources"][0]["source_name"] + " (missing-sha)"
+    other_source_matrix_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    runs_dir2 = tmp_path / "runs2"
+    _build_calibration_run_dir(
+        runs_dir2,
+        [{"ticker": "PP01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+        source_matrix_path=other_source_matrix_path,
+    )
+
+    registry_dir = tmp_path / "empty_registry"
+    registry_dir.mkdir()
+
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir2,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        source_matrix_registry_dir=registry_dir,
+    )
+    dataset = report["dataset"]
+    assert dataset["observation_count"] == 0
+    assert dataset["excluded_count"] == 1
+    excluded = dataset["excluded_observations"][0]
+    assert excluded["disposition"] == "UNVERIFIED"
+    assert excluded["reason_code"] == "SOURCE_MATRIX_BYTES_UNAVAILABLE"
+
+
+# --- Cohort classification must precede DATA_UNAVAILABLE eligibility --------
+
+
+def test_same_cohort_data_unavailable_is_trusted_not_eligible(tmp_path):
+    runs_dir = tmp_path / "runs"
+    _build_calibration_run_dir(
+        runs_dir,
+        [{"ticker": "QQ01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+        data_unavailable=True,
+    )
+
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+    )
+    excluded = report["dataset"]["excluded_observations"][0]
+    assert excluded["disposition"] == "TRUSTED_NOT_ELIGIBLE"
+    assert excluded["reason_code"] == "RANKING_DATA_UNAVAILABLE"
+
+
+def test_genuinely_different_cohort_data_unavailable_is_out_of_cohort(tmp_path):
+    """A genuinely different cohort (a different, genuinely-used Source
+    Matrix) whose ranking_status is DATA_UNAVAILABLE must still be
+    classified OUT_OF_COHORT, not TRUSTED_NOT_ELIGIBLE -- Cohort
+    classification must happen before DATA_UNAVAILABLE eligibility
+    classification."""
+    other_source_matrix_path = tmp_path / "other_source_matrix.yaml"
+    payload = yaml.safe_load(DEFAULT_SOURCE_MATRIX_PATH.read_text(encoding="utf-8"))
+    payload["sources"][0]["source_name"] = payload["sources"][0]["source_name"] + " (other cohort du)"
+    other_source_matrix_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    runs_dir = tmp_path / "runs"
+    _build_calibration_run_dir(
+        runs_dir,
+        [{"ticker": "RR01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+        source_matrix_path=other_source_matrix_path,
+        data_unavailable=True,
+    )
+
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    registry_dir.joinpath(
+        sha256_raw_bytes(other_source_matrix_path.read_bytes()) + ".yaml"
+    ).write_bytes(other_source_matrix_path.read_bytes())
+
+    report = build_selection_calibration_report(
+        runs_dir=runs_dir,
+        config_path=DEFAULT_CONFIG_PATH,
+        source_matrix_path=DEFAULT_SOURCE_MATRIX_PATH,
+        source_matrix_registry_dir=registry_dir,
+    )
+    dataset = report["dataset"]
+    assert dataset["observation_count"] == 0
+    assert dataset["excluded_count"] == 1
+    excluded = dataset["excluded_observations"][0]
+    assert excluded["disposition"] == "OUT_OF_COHORT"
+    assert excluded["reason_code"] == "COHORT_IDENTITY_MISMATCH"
+
+
 def _snapshot_output(tmp_path):
     output_path = tmp_path / "calibration.json"
     return output_path.read_bytes() if output_path.is_file() else None
