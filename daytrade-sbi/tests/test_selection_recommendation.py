@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.contracts import validate_recommendation_selection_link
+from src.contracts import validate_json_document, validate_recommendation_selection_link
 from src.selection_recommendation import (
     SelectionRecommendationHardError,
     build_selection_recommendation,
+)
+from tests.selection_recommendation_fixtures import (
+    make_valid_no_trade_kwargs,
+    make_valid_selected_kwargs,
 )
 
 STRATEGY_VERSION = "sv-1"
@@ -40,6 +44,19 @@ def _pipeline_summary():
         "screening_rule_counts": [],
         "ranking_complete": False,
     }
+
+
+# _base_selected()/_base_no_trade() below build deliberately simplified
+# (not necessarily schema-valid) fixture dicts. They exist only to feed the
+# negative/unit tests of build_selection_recommendation()'s own input
+# guards (missing candidate, missing source URLs, invalid status, tamper
+# detection) further down this file -- the point of those tests is
+# malformed-input handling, so simplified fixtures are intentional and
+# should NOT be forced into schema-valid form.
+#
+# Genuinely schema-valid fixtures for the happy-path (SELECTED->TRADE /
+# NO_TRADE) tests live in tests/selection_recommendation_fixtures.py and are
+# used by test_build_trade_recommendation_* / test_build_no_trade_* below.
 
 
 def _base_selected():
@@ -117,7 +134,20 @@ def _base_no_trade():
 
 
 def test_build_trade_recommendation_copies_order_plan_verbatim():
-    payload = build_selection_recommendation(**_base_selected())
+    # Happy path: fixtures are genuine, schema-valid production-shaped
+    # documents (validated below), not simplified stand-ins.
+    kwargs = make_valid_selected_kwargs()
+    for schema_name, document in (
+        ("selection.schema.json", kwargs["selection"]),
+        ("candidates.schema.json", kwargs["candidates"]),
+        ("candidate_pipeline.schema.json", kwargs["candidate_pipeline"]),
+        ("market_data.schema.json", kwargs["market_data"]),
+        ("research_window.schema.json", kwargs["research_window"]),
+        ("sources.schema.json", kwargs["source_payload"]),
+    ):
+        validate_json_document(document, schema_name)
+
+    payload = build_selection_recommendation(**kwargs)
     assert payload["decision"] == "TRADE"
     assert payload["ticker"] == "1234"
     assert payload["strategy_type"] == "previous_day_high_breakout"
@@ -127,14 +157,27 @@ def test_build_trade_recommendation_copies_order_plan_verbatim():
     assert payload["stop_loss"] == "397"
     assert payload["shares"] == 100
     assert payload["source_urls"] == ["https://example.test/a", "https://example.test/b"]
-    assert payload["selection_sha256"] == SEL_SHA
+    assert payload["selection_sha256"] == kwargs["selection_sha256"]
     assert payload["schema_version"] == 2
     # candidate_pipeline.ranking_complete stays false, never rewritten.
     assert payload["pipeline_summary"]["ranking_complete"] is False
 
 
 def test_build_no_trade_recommendation_has_all_null_trade_fields():
-    payload = build_selection_recommendation(**_base_no_trade())
+    # Happy path: fixtures are genuine, schema-valid production-shaped
+    # documents (validated below), not simplified stand-ins.
+    kwargs = make_valid_no_trade_kwargs()
+    for schema_name, document in (
+        ("selection.schema.json", kwargs["selection"]),
+        ("candidates.schema.json", kwargs["candidates"]),
+        ("candidate_pipeline.schema.json", kwargs["candidate_pipeline"]),
+        ("market_data.schema.json", kwargs["market_data"]),
+        ("research_window.schema.json", kwargs["research_window"]),
+        ("sources.schema.json", kwargs["source_payload"]),
+    ):
+        validate_json_document(document, schema_name)
+
+    payload = build_selection_recommendation(**kwargs)
     assert payload["decision"] == "NO_TRADE"
     for field in (
         "strategy_type",
@@ -150,7 +193,31 @@ def test_build_no_trade_recommendation_has_all_null_trade_fields():
     ):
         assert payload[field] is None
     assert payload["source_urls"] == []
-    assert payload["selection_sha256"] == SEL_SHA
+    assert payload["selection_sha256"] == kwargs["selection_sha256"]
+
+
+def test_build_trade_recommendation_source_urls_matched_by_ticker_not_candidate_code():
+    # Regression guard: sources[] entries carry `ticker`, never
+    # `candidate_code` (that field belongs solely to source_attempts[]).
+    # This asserts source_urls is derived by matching sources[].ticker
+    # against the selected ticker, guarding against reintroducing a
+    # previously-fixed bug where sources[] was wrongly matched by
+    # candidate_code instead.
+    kwargs = make_valid_selected_kwargs(ticker="1234", other_ticker="9999")
+    sources_doc = kwargs["source_payload"]
+    validate_json_document(sources_doc, "sources.schema.json")
+
+    # Sanity-check the fixture's shape: sources[] entries have no
+    # candidate_code field at all, and source_attempts[]'s candidate_code
+    # values deliberately do not equal the plain ticker string.
+    for source in sources_doc["sources"]:
+        assert "candidate_code" not in source
+    for attempt in sources_doc["source_attempts"]:
+        assert attempt["candidate_code"] != "1234"
+
+    payload = build_selection_recommendation(**kwargs)
+    assert payload["decision"] == "TRADE"
+    assert payload["source_urls"] == ["https://example.test/a", "https://example.test/b"]
 
 
 def test_missing_matching_candidate_is_hard_error():
