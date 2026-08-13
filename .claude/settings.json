@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "deny": [
+      "WebSearch",
+      "WebFetch",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(powershell:*)",
+      "Bash(pwsh:*)",
+      "Bash(gh:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(python -c:*)",
+      "Bash(node -e:*)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": [
+        "www.jpx.co.jp",
+        "finance.yahoo.co.jp",
+        "kabutan.jp",
+        "www.release.tdnet.info"
+      ]
+    }
+  },
+  "disableBypassPermissionsMode": "disable",
+  "disableAutoMode": "disable",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/network_guard.py"
+          }
+        ]
+      }
+    ]
+  }
+}

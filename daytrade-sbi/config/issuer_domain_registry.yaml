@@ -1,0 +1,13 @@
+# Issuer domain registry.
+#
+# COMPANY_IR / COMPANY_IR_DISCLOSURE fetches are only permitted against hosts
+# listed here. Entries are added by a human reviewer ONLY. There is no
+# auto-discovery: an unregistered ticker fails with ISSUER_DOMAIN_NOT_APPROVED,
+# and the corresponding source attempt is recorded as a failure rather than
+# being fetched from a guessed domain.
+registry_schema_version: 1
+approval_policy:
+  human_approved_only: true
+  auto_discovery_allowed: false
+
+issuers: []

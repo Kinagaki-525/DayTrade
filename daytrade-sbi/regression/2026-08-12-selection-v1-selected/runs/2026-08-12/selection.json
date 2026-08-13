@@ -7,7 +7,7 @@
   "strategy_version": "v1",
   "config_sha256": "d2df76bafa2ccfbbc0014014e44833f6d7c04331e87a638e3e0af8eaa7b343f6",
   "input_hashes": {
-    "ranking_sha256": "786b05c270a13863b25c7eb96b7937098074c2972d109cf97498389e7828875e",
+    "ranking_sha256": "5dbc8423ddf14df6541f052a1a1d01e68c359b3e5fb33bed4ec840d72fde42bf",
     "strategy_snapshot_sha256": "5ccd84039fea7ef0e36c61836be9eedfcc971f1651faa78eea3d280f8d0d2789"
   },
   "ranking_version": "ranking-v1",

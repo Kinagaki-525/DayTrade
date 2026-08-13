@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "issuer_domain_registry.schema.json",
+  "title": "Human-approved issuer domain registry",
+  "type": "object",
+  "required": ["registry_schema_version", "approval_policy", "issuers"],
+  "properties": {
+    "registry_schema_version": {"const": 1},
+    "approval_policy": {
+      "type": "object",
+      "required": ["human_approved_only", "auto_discovery_allowed"],
+      "properties": {
+        "human_approved_only": {"const": true},
+        "auto_discovery_allowed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "issuers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/issuerEntry"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "issuerEntry": {
+      "type": "object",
+      "required": ["ticker", "issuer_name", "approved_hosts", "approved_by", "approved_at"],
+      "properties": {
+        "ticker": {"type": "string", "pattern": "^[0-9A-Z]{4}$"},
+        "issuer_name": {"type": "string", "minLength": 1},
+        "approved_hosts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+          }
+        },
+        "approved_by": {"type": "string", "minLength": 1},
+        "approved_at": {"type": "string", "format": "date"},
+        "notes": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

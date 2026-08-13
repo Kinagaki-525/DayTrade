@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "source_matrix.schema.json",
-  "title": "Market research source matrix",
+  "title": "Market research source matrix (v2/v3)",
   "type": "object",
   "required": [
     "source_matrix_schema_version",
@@ -13,14 +13,28 @@
     "sources"
   ],
   "properties": {
-    "source_matrix_schema_version": {"const": 2},
-    "market_research_version": {"const": "market-research-v2"},
+    "source_matrix_schema_version": {
+      "enum": [
+        2,
+        3
+      ]
+    },
+    "market_research_version": {
+      "const": "market-research-v2"
+    },
     "default_research_cutoff_time": {
       "type": "string",
       "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$"
     },
-    "tdnet_bootstrap_lookback_days": {"const": 1},
-    "default_discovery_market_filter": {"enum": ["ALL_MARKETS", "TSE_ONLY"]},
+    "tdnet_bootstrap_lookback_days": {
+      "const": 1
+    },
+    "default_discovery_market_filter": {
+      "enum": [
+        "ALL_MARKETS",
+        "TSE_ONLY"
+      ]
+    },
     "source_change_policy": {
       "type": "object",
       "required": [
@@ -28,15 +42,21 @@
         "runtime_substitution_allowed"
       ],
       "properties": {
-        "managed_as_research_method_change": {"const": true},
-        "runtime_substitution_allowed": {"const": false}
+        "managed_as_research_method_change": {
+          "const": true
+        },
+        "runtime_substitution_allowed": {
+          "const": false
+        }
       },
       "additionalProperties": false
     },
     "sources": {
       "type": "array",
       "minItems": 1,
-      "items": {"$ref": "#/$defs/sourceDefinition"}
+      "items": {
+        "$ref": "#/$defs/sourceDefinition"
+      }
     }
   },
   "additionalProperties": false,
@@ -76,7 +96,12 @@
           ]
         },
         "role": {
-          "enum": ["PRIMARY", "SECONDARY", "AUDIT", "CONTEXT"]
+          "enum": [
+            "PRIMARY",
+            "SECONDARY",
+            "AUDIT",
+            "CONTEXT"
+          ]
         },
         "criticality": {
           "enum": [
@@ -86,13 +111,95 @@
             "CONTEXT"
           ]
         },
-        "source_name": {"type": "string", "minLength": 1},
-        "url_template": {"type": "string", "pattern": "^https?://"},
-        "update_timing": {"type": "string", "minLength": 1},
-        "zero_results_are_found": {"type": "boolean"},
-        "notes": {"type": "string"}
+        "source_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url_template": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "update_timing": {
+          "type": "string",
+          "minLength": 1
+        },
+        "zero_results_are_found": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "acquisition": {
+          "$ref": "#/$defs/acquisition"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acquisition": {
+      "type": "object",
+      "required": [
+        "mode",
+        "transport",
+        "network_scope",
+        "parser"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "DETERMINISTIC",
+            "DETERMINISTIC_THEN_AI_CLASSIFICATION"
+          ]
+        },
+        "transport": {
+          "const": "HTTP_GET"
+        },
+        "network_scope": {
+          "enum": [
+            "ALLOWED_HOSTS",
+            "ISSUER_DOMAIN_REGISTRY"
+          ]
+        },
+        "parser": {
+          "type": "string",
+          "pattern": "^[a-z_]+\\.[a-z0-9_]+$"
+        },
+        "stage": {
+          "enum": [
+            "DISCOVERY",
+            "STAGE1",
+            "STAGE2",
+            "TURNOVER",
+            "EVENT"
+          ]
+        }
       },
       "additionalProperties": false
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source_matrix_schema_version": {
+            "const": 3
+          }
+        },
+        "required": [
+          "source_matrix_schema_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "required": [
+                "acquisition"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }
