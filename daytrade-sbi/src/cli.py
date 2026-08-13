@@ -921,6 +921,24 @@ def _risk_check(
         selection_market_data = load_json_document(market_data_path, "market_data.schema.json")
         selection_source_payload = load_json_document(sources_path, "sources.schema.json")
 
+        # Broad cross-artifact consistency check across ALL of
+        # build-selection-recommendation's inputs (not just what feeds the
+        # recompute-and-compare below): catches mismatches like
+        # research_window.previous_trading_day/target_date not matching
+        # selection.json, or a candidate_pipeline that is not actually
+        # complete -- fields build_selection_recommendation() itself never
+        # consumes, so the recompute-and-compare check below cannot see them.
+        validate_selection_recommendation_preconditions(
+            selection=selection,
+            ranking=ranking,
+            candidates=selection_candidates,
+            candidate_pipeline=selection_candidate_pipeline,
+            market_data=selection_market_data,
+            research_window=research_window,
+            source_payload=selection_source_payload,
+            config=config,
+        )
+
         # Recompute-and-compare the entire Selection Recommendation itself:
         # catches a Recommendation whose Selection-link fields are each
         # individually correct but where some OTHER field (notes,

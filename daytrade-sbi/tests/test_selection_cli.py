@@ -981,7 +981,150 @@ def test_risk_check_full_chain_proceeds_to_risk_rules(tmp_path):
     assert result == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["decision"] == "TRADE"
-    assert payload["status"] in ("PASS", "REJECTED")
+    # This fixture is fully deterministic (fixed turnover/tick-size/position
+    # inputs, no wall-clock dependence), so it must produce exactly one real
+    # Risk outcome -- verified by actually running it, not guessed from
+    # reading src/risk.py.
+    assert payload["status"] == "PASS"
+    assert payload["violations"] == []
+
+
+def test_risk_check_selection_recommendation_preconditions_previous_trading_day_mismatch_is_hard_error_and_atomic(
+    tmp_path,
+):
+    """P1-4 (validate_selection_recommendation_preconditions) must run in
+    Case C's risk-check path too: research_window.previous_trading_day not
+    matching selection.previous_trading_day is invisible to the
+    recompute-and-compare output-contract check (build_selection_recommendation
+    never reflects previous_trading_day in the Recommendation's own output
+    fields), so only the dedicated preconditions check catches it. This test
+    also doubles as the atomic-write proof: the pre-seeded output file must
+    be untouched, byte for byte, after the Hard Error."""
+    chain = _full_v6_chain(tmp_path)
+    tampered_research_window = _tamper_json_file(
+        chain["research_window_path"],
+        tmp_path,
+        "risk_bad_research_window_ptd.json",
+        lambda p: p.__setitem__("previous_trading_day", "2020-01-01"),
+    )
+
+    output_path = tmp_path / "risk_result.json"
+    sentinel = b"SENTINEL-NOT-A-REAL-RISK-RESULT"
+    output_path.write_bytes(sentinel)
+
+    argv = [
+        "risk-check",
+        "--recommendation",
+        str(chain["recommendation_path"]),
+        "--candidates",
+        str(chain["candidates_path"]),
+        "--candidate-pipeline",
+        str(chain["candidate_pipeline_path"]),
+        "--market-data",
+        str(chain["market_data_path"]),
+        "--sources",
+        str(chain["sources_path"]),
+        "--config",
+        str(chain["config_path"]),
+        "--output",
+        str(output_path),
+        "--current-positions",
+        "0",
+        "--trades-today",
+        "0",
+        "--selection",
+        str(chain["selection_path"]),
+        "--ranking",
+        str(chain["ranking_path"]),
+        "--event-gate",
+        str(chain["event_gate_path"]),
+        "--research-window",
+        str(tampered_research_window),
+    ]
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_PREVIOUS_TRADING_DAY_MISMATCH"):
+        cli.main(argv)
+
+    assert output_path.read_bytes() == sentinel
+
+
+def test_risk_check_selection_recommendation_preconditions_target_date_mismatch_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    tampered_research_window = _tamper_json_file(
+        chain["research_window_path"],
+        tmp_path,
+        "risk_bad_research_window_td.json",
+        lambda p: p.__setitem__("target_date", "2099-01-01"),
+    )
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+        _run_risk_check(chain, tmp_path, research_window_path=tampered_research_window)
+
+
+def test_risk_check_selection_recommendation_preconditions_screening_not_complete_is_hard_error(tmp_path):
+    """A self-consistent attack: candidate_pipeline.summary.screening_complete
+    is flipped to False, and recommendation.pipeline_summary is updated to
+    match it exactly, so the earlier validate_recommendation_pipeline_link
+    check (which merely compares the two for equality) does NOT catch this
+    on its own. Only the new validate_selection_recommendation_preconditions
+    call -- which inspects screening_complete's actual value, not just
+    cross-artifact equality -- can catch it."""
+    chain = _full_v6_chain(tmp_path)
+
+    candidate_pipeline = json.loads(chain["candidate_pipeline_path"].read_text(encoding="utf-8"))
+    candidate_pipeline["summary"]["screening_complete"] = False
+    assert candidate_pipeline["summary"]["pipeline_complete"] is True
+    tampered_pipeline_path = tmp_path / "risk_bad_pipeline_screening.json"
+    _write_json_file(tampered_pipeline_path, candidate_pipeline)
+
+    recommendation = json.loads(chain["recommendation_path"].read_text(encoding="utf-8"))
+    recommendation["pipeline_summary"] = copy.deepcopy(candidate_pipeline["summary"])
+    tampered_recommendation_path = tmp_path / "risk_bad_recommendation_screening.json"
+    _write_json_file(tampered_recommendation_path, recommendation)
+
+    # Confirm the mutated recommendation.json is still schema-valid on its
+    # own terms, so a schema failure can't accidentally make this test pass
+    # for the wrong reason.
+    from src.contracts import validate_json_document
+
+    validate_json_document(recommendation, "recommendation.schema.json")
+
+    # Confirm this attack artifact really is self-consistent with the
+    # earlier, weaker link check: it alone must NOT raise.
+    from src.contracts import validate_recommendation_pipeline_link
+
+    validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+
+    output_path = tmp_path / "risk_result.json"
+    argv = [
+        "risk-check",
+        "--recommendation",
+        str(tampered_recommendation_path),
+        "--candidates",
+        str(chain["candidates_path"]),
+        "--candidate-pipeline",
+        str(tampered_pipeline_path),
+        "--market-data",
+        str(chain["market_data_path"]),
+        "--sources",
+        str(chain["sources_path"]),
+        "--config",
+        str(chain["config_path"]),
+        "--output",
+        str(output_path),
+        "--current-positions",
+        "0",
+        "--trades-today",
+        "0",
+        "--selection",
+        str(chain["selection_path"]),
+        "--ranking",
+        str(chain["ranking_path"]),
+        "--event-gate",
+        str(chain["event_gate_path"]),
+        "--research-window",
+        str(chain["research_window_path"]),
+    ]
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_SCREENING_NOT_COMPLETE"):
+        cli.main(argv)
 
 
 def test_risk_check_v6_v2_without_selection_is_hard_error(tmp_path):
