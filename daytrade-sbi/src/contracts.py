@@ -1057,6 +1057,41 @@ def validate_ranking_terminal_recommendation_preconditions(
         )
 
 
+def validate_ranking_terminal_recommendation_output_contract(
+    *,
+    recommendation: dict[str, Any],
+    ranking: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    research_window: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Recompute the Terminal Recommendation (Case A/B) from the same
+    already-trust-chain-verified inputs and compare, full dict equality.
+
+    Mirrors validate_selection_output_contract's recompute-and-compare
+    pattern. build_ranking_terminal_recommendation() never emits a
+    generated_at-style non-deterministic field, so unlike
+    validate_selection_output_contract this is a full, unqualified dict
+    comparison. Used by both build-ranking-terminal-recommendation callers
+    and risk-check's terminal_driven_v6 trust-chain re-verification so the
+    comparison logic is never duplicated.
+    """
+    from src.ranking_terminal_recommendation import build_ranking_terminal_recommendation
+
+    recomputed = build_ranking_terminal_recommendation(
+        ranking=ranking,
+        candidate_pipeline=candidate_pipeline,
+        research_window=research_window,
+        config=config,
+    )
+    if recommendation != recomputed:
+        raise ValueError(
+            "RISK_TERMINAL_RECOMMENDATION_CONTRACT_MISMATCH: recommendation.json does not "
+            "match the recomputed Terminal Recommendation payload for the same "
+            "genuinely re-verified Ranking + upstream artifact inputs"
+        )
+
+
 def validate_recommendation_selection_link(
     *,
     recommendation: dict[str, Any],

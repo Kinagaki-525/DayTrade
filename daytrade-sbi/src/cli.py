@@ -31,6 +31,7 @@ from src.contracts import (
     validate_performance_inputs,
     validate_ranking_output_contract,
     validate_ranking_preconditions,
+    validate_ranking_terminal_recommendation_output_contract,
     validate_ranking_terminal_recommendation_preconditions,
     validate_recommendation_candidate_link,
     validate_recommendation_pipeline_link,
@@ -277,6 +278,8 @@ def build_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument("--trades-today", type=int)
     risk_parser.add_argument("--selection", type=Path)
     risk_parser.add_argument("--ranking", type=Path)
+    risk_parser.add_argument("--event-gate", type=Path)
+    risk_parser.add_argument("--research-window", type=Path)
 
     audit_parser = subparsers.add_parser("audit-official-ohlcv")
     audit_parser.add_argument("--market-data", required=True, type=Path)
@@ -503,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
             args.market_research,
             args.selection,
             args.ranking,
+            args.event_gate,
+            args.research_window,
         )
     if args.command == "audit-official-ohlcv":
         return _audit_official_ohlcv(
@@ -762,6 +767,8 @@ def _risk_check(
     market_research_path: Path | None,
     selection_path: Path | None = None,
     ranking_path: Path | None = None,
+    event_gate_path: Path | None = None,
+    research_window_path: Path | None = None,
 ) -> int:
     recommendation = load_json_document(
         recommendation_path,
@@ -883,6 +890,111 @@ def _risk_check(
                 raise ValueError(
                     "RISK_SELECTION_STATUS_MISMATCH: --selection is SELECTED but recommendation decision is not TRADE"
                 )
+
+    # Config v6 Case A/B (Terminal Recommendation) trust chain: a v6
+    # recommendation.schema_version == 1 whose decision is NO_TRADE or
+    # DATA_UNAVAILABLE was produced by build-ranking-terminal-recommendation,
+    # NOT the Selection-driven Case C path. Risk independently re-derives and
+    # re-verifies the ENTIRE Ranking trust chain here -- raw-byte hashes of
+    # every upstream artifact, the same Ranking Contract functions
+    # build-ranking/build-ranking-terminal-recommendation themselves call,
+    # and a deterministic recomputation of the Terminal Recommendation itself
+    # -- so a hand-written, merely schema-valid recommendation.json can never
+    # bypass Risk without a genuine Ranking -> Terminal-Builder chain having
+    # actually run. Mirrors build-ranking-terminal-recommendation's exact
+    # fixed processing order.
+    terminal_driven_v6 = (
+        config_schema_version == 6
+        and recommendation_schema_version == 1
+        and decision in ("NO_TRADE", "DATA_UNAVAILABLE")
+    )
+    if terminal_driven_v6:
+        if ranking_path is None:
+            raise ValueError(
+                "RISK_TERMINAL_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
+                "Terminal (Case A/B, recommendation.schema_version == 1, "
+                "decision in {NO_TRADE, DATA_UNAVAILABLE}) recommendation"
+            )
+        if event_gate_path is None:
+            raise ValueError(
+                "RISK_TERMINAL_EVENT_GATE_REQUIRED: --event-gate is required for a config_schema_version 6 "
+                "Terminal (Case A/B) recommendation"
+            )
+        if research_window_path is None:
+            raise ValueError(
+                "RISK_TERMINAL_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
+                "config_schema_version 6 Terminal (Case A/B) recommendation"
+            )
+
+        actual_ranking_input_hashes = {
+            "event_gate_sha256": _sha256_bytes(event_gate_path.read_bytes()),
+            "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
+            "market_data_sha256": _sha256_bytes(market_data_path.read_bytes()),
+            "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
+            "source_matrix_sha256": _sha256_bytes(source_matrix_path.read_bytes()),
+            "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
+        }
+
+        ranking = load_json_document(ranking_path, "ranking.schema.json")
+        event_gate = load_json_document(event_gate_path, "event_gate.schema.json")
+        terminal_market_data = load_json_document(market_data_path, "market_data.schema.json")
+        research_window = load_json_document(
+            research_window_path, "research_window.schema.json"
+        )
+        terminal_source_payload = load_json_document(sources_path, "sources.schema.json")
+        terminal_source_matrix = load_source_matrix(source_matrix_path)
+        validate_source_matrix(terminal_source_matrix)
+
+        if ranking.get("input_hashes") != actual_ranking_input_hashes:
+            mismatched_keys = sorted(
+                key
+                for key in set(actual_ranking_input_hashes)
+                | set(ranking.get("input_hashes") or {})
+                if (ranking.get("input_hashes") or {}).get(key)
+                != actual_ranking_input_hashes.get(key)
+            )
+            raise ValueError(
+                "RISK_TERMINAL_INPUT_HASHES_MISMATCH: ranking.input_hashes does not match the "
+                "actual SHA256 of the --event-gate/--candidates/--market-data/--sources/"
+                "--source-matrix/--config files supplied here; mismatched keys: "
+                + ", ".join(mismatched_keys)
+            )
+
+        validate_ranking_preconditions(
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=terminal_market_data,
+            source_payload=terminal_source_payload,
+            source_matrix=terminal_source_matrix,
+            config=config,
+            input_hashes=actual_ranking_input_hashes,
+            source_base_dir=sources_path.parent,
+        )
+        validate_ranking_output_contract(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            market_data=terminal_market_data,
+            source_payload=terminal_source_payload,
+            config=config,
+        )
+        validate_ranking_terminal_recommendation_preconditions(
+            ranking=ranking,
+            event_gate=event_gate,
+            candidates=candidates,
+            candidate_pipeline=candidate_pipeline,
+            market_data=terminal_market_data,
+            research_window=research_window,
+            source_payload=terminal_source_payload,
+            config=config,
+        )
+        validate_ranking_terminal_recommendation_output_contract(
+            recommendation=recommendation,
+            ranking=ranking,
+            candidate_pipeline=candidate_pipeline,
+            research_window=research_window,
+            config=config,
+        )
 
     (
         market_target_date,

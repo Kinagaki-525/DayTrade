@@ -864,94 +864,84 @@ def test_validate_market_research_command_rejects_unrecorded_stage1_source_ref(m
     assert any("source-backed stage1_checks" in error for error in captured["errors"])
 
 
-def test_risk_check_treats_data_unavailable_as_not_applicable(monkeypatch):
-    captured = {}
-    strategy_version, config_sha256 = config_metadata()
-    recommendation = {
-        "schema_version": 1,
-        "target_date": "2026-08-10",
-        "strategy_version": strategy_version,
-        "config_sha256": config_sha256,
-        "decision": "DATA_UNAVAILABLE",
-        "ticker": None,
-        "company_name": None,
-        "strategy_type": None,
-        "previous_high": None,
-        "tick_size": None,
-        "entry_trigger": None,
-        "entry_limit": None,
-        "take_profit": None,
-        "stop_loss": None,
-        "shares": None,
-        "selection_reasons": ["secondary OHLCV source missing"],
-        "source_urls": [],
-        "notes": None,
-    }
-    candidates = {
-        "target_date": "2026-08-10",
-        "strategy_version": strategy_version,
-        "config_sha256": config_sha256,
-        "candidates": [{"ticker": "1234", "status": "DATA_UNAVAILABLE"}],
-    }
-    candidate_pipeline = complete_candidate_pipeline(
-        strategy_version,
-        config_sha256,
-        research_complete=0,
-        data_unavailable=1,
-        screened=0,
-        eligible=0,
-        stage2_completed_count=0,
-        stage2_unavailable_count=1,
+def test_risk_check_treats_data_unavailable_as_not_applicable(tmp_path):
+    # Config v6 Case A (DATA_UNAVAILABLE) is now terminal_driven_v6: risk-check
+    # requires the genuine, hash-consistent Ranking + upstream chain (built via
+    # the real build-ranking / build-ranking-terminal-recommendation CLIs) and
+    # only then treats the recomputed, non-TRADE decision as NOT_APPLICABLE.
+    from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
+    from tests.ranking_terminal_recommendation_fixtures import (
+        build_terminal_recommendation_run_dir,
     )
-    recommendation["pipeline_summary"] = candidate_pipeline["summary"]
 
-    def load_document(path, schema):
-        if schema == "recommendation.schema.json":
-            return recommendation
-        if schema == "candidate_pipeline.schema.json":
-            return candidate_pipeline
-        return candidates
-
-    monkeypatch.setattr(
-        cli,
-        "load_json_document",
-        load_document,
+    specs = [{"ticker": "AA01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}]
+    run_dir = build_terminal_recommendation_run_dir(
+        tmp_path / "runs", specs, data_unavailable=True
     )
-    monkeypatch.setattr(
-        cli,
-        "_load_market_bundle",
-        lambda market, sources, source_matrix: (
-            "2026-08-10",
-            [],
-            SourceLedgerValidationResult(True, ()),
-            {"target_date": "2026-08-10", "sources": []},
-            load_source_matrix(),
-        ),
+    recommendation_path = tmp_path / "recommendation.json"
+    assert (
+        cli.main(
+            [
+                "build-ranking-terminal-recommendation",
+                "--ranking",
+                str(run_dir / "ranking.json"),
+                "--event-gate",
+                str(run_dir / "event_gate.json"),
+                "--candidates",
+                str(run_dir / "candidates.json"),
+                "--candidate-pipeline",
+                str(run_dir / "candidate_pipeline.json"),
+                "--market-data",
+                str(run_dir / "market_data.json"),
+                "--research-window",
+                str(run_dir / "research_window.json"),
+                "--sources",
+                str(run_dir / "sources.json"),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(run_dir / "strategy_snapshot.yaml"),
+                "--output",
+                str(recommendation_path),
+            ]
+        )
+        == 0
     )
-    monkeypatch.setattr(cli, "_write_json", capture_validated_payload(captured))
 
+    output_path = tmp_path / "risk_result.json"
     result = cli.main(
         [
             "risk-check",
             "--recommendation",
-            "recommendation.json",
+            str(recommendation_path),
             "--candidates",
-            "candidates.json",
+            str(run_dir / "candidates.json"),
             "--candidate-pipeline",
-            "candidate_pipeline.json",
+            str(run_dir / "candidate_pipeline.json"),
             "--market-data",
-            "market_data.json",
+            str(run_dir / "market_data.json"),
             "--sources",
-            "sources.json",
+            str(run_dir / "sources.json"),
+            "--source-matrix",
+            str(DEFAULT_SOURCE_MATRIX_PATH),
+            "--config",
+            str(run_dir / "strategy_snapshot.yaml"),
+            "--ranking",
+            str(run_dir / "ranking.json"),
+            "--event-gate",
+            str(run_dir / "event_gate.json"),
+            "--research-window",
+            str(run_dir / "research_window.json"),
             "--output",
-            "risk_result.json",
+            str(output_path),
         ]
     )
 
     assert result == 0
-    assert captured["decision"] == "DATA_UNAVAILABLE"
-    assert captured["status"] == "NOT_APPLICABLE"
-    assert captured["ticker"] is None
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["decision"] == "DATA_UNAVAILABLE"
+    assert payload["status"] == "NOT_APPLICABLE"
+    assert payload["ticker"] is None
 
 
 def test_risk_check_rejects_incomplete_candidate_pipeline(monkeypatch):
