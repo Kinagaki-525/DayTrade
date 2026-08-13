@@ -74,10 +74,28 @@ def _fail(code: str, message: str) -> NetworkPolicyError:
     return NetworkPolicyError(code, message)
 
 
+#: Environment override for the registry *location* only. It selects which
+#: human-approved file to read; it can never introduce an approval, because
+#: the file it points at is still schema-validated and still requires explicit
+#: human approval metadata per entry.
+ISSUER_DOMAIN_REGISTRY_PATH_ENV_VAR = "DAYTRADE_ISSUER_DOMAIN_REGISTRY"
+
+
+def issuer_domain_registry_path() -> Path:
+    import os
+
+    override = os.environ.get(ISSUER_DOMAIN_REGISTRY_PATH_ENV_VAR)
+    if override and override.strip():
+        return Path(override.strip())
+    return DEFAULT_ISSUER_DOMAIN_REGISTRY_PATH
+
+
 def load_issuer_domain_registry(
-    path: str | Path = DEFAULT_ISSUER_DOMAIN_REGISTRY_PATH,
+    path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Load and schema-validate the human-approved issuer domain registry."""
+    if path is None:
+        path = issuer_domain_registry_path()
     payload = load_yaml(path)
     validate_json_document(payload, "issuer_domain_registry.schema.json")
     entries = payload["issuers"]

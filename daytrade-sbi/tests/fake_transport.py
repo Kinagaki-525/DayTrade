@@ -100,6 +100,10 @@ def clean_run_routes(
         f"{listing_rows}</tbody></table></body></html>"
     ).encode("utf-8")
 
+    # The issuer IR page. COMPANY_IR and COMPANY_IR_DISCLOSURE share this one
+    # URL, so it is fetched once and reused for both source attempts.
+    routes["https://ir.example-issuer.co.jp/ir/"] = pages.news_page()
+
     for code in tickers:
         routes[f"https://finance.yahoo.co.jp/quote/{code}.T/history"] = (
             pages.yahoo_history_page(code)
