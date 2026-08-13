@@ -223,10 +223,12 @@ def test_pair_id_deterministic_and_sensitive_to_ratio():
 def _obs(target_date, turnover_yen, num, den):
     return {
         "target_date": target_date,
-        "ticker": "1234",
-        "turnover_yen": str(turnover_yen),
-        "relative_tick_size": {"numerator_yen": "1", "denominator_yen": "1000"},
-        "canonical_relative_tick_ratio": {"numerator": num, "denominator": den},
+        "observation_id": f"obs-{target_date}-{turnover_yen}-{num}-{den}",
+        "rank1": {
+            "ticker": "1234",
+            "turnover_yen": turnover_yen,
+            "relative_tick_size": {"numerator": num, "denominator": den},
+        },
     }
 
 

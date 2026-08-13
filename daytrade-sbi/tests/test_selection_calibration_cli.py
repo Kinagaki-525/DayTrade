@@ -37,14 +37,14 @@ def test_cli_build_selection_calibration_writes_report(tmp_path):
 
     assert result == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
     assert payload["calibration_status"] == "COMPLETE"
-    assert payload["summary"]["matching_complete_observations"] == 1
-    assert payload["summary"]["ignored_non_date_entries"] == 1
-    assert payload["summary"]["source_matrix_mismatch_count"] == 0
+    assert payload["dataset"]["observation_count"] == 1
+    assert "generated_at" not in payload
     assert "selection_calibration.json" not in RUN_ARTIFACT_ALLOWLIST
 
 
-def test_cli_build_selection_calibration_reports_source_matrix_mismatch_count(tmp_path):
+def test_cli_build_selection_calibration_source_matrix_header_poisoning_is_unverified(tmp_path):
     import yaml
 
     runs_dir = tmp_path / "runs"
@@ -75,9 +75,10 @@ def test_cli_build_selection_calibration_reports_source_matrix_mismatch_count(tm
 
     assert result == 0
     report = json.loads(output_path.read_text(encoding="utf-8"))
-    assert report["summary"]["source_matrix_mismatch_count"] == 1
-    assert report["summary"]["matching_complete_observations"] == 0
-    assert report["calibration_status"] == "NO_OBSERVATIONS"
+    assert report["dataset"]["excluded_count"] == 1
+    assert report["dataset"]["excluded_observations"][0]["disposition"] == "UNVERIFIED"
+    assert report["dataset"]["observation_count"] == 0
+    assert report["calibration_status"] == "DATA_UNAVAILABLE"
 
 
 def test_cli_build_selection_calibration_invalid_source_matrix_hard_errors_before_scanning(tmp_path):
@@ -261,3 +262,60 @@ def test_cli_evaluate_selection_thresholds_never_writes_config_and_has_no_apply_
     }
     forbidden = {"--apply", "--update-config", "--write-threshold"}
     assert not (forbidden & option_strings)
+
+
+def test_cli_build_selection_calibration_has_no_forbidden_flags():
+    """Spec section 58: build-selection-calibration must never grow flags
+    that write config, activate selection, or auto-select a threshold."""
+    parser = cli.build_parser()
+    subparsers_actions = [
+        action
+        for action in parser._subparsers._group_actions  # type: ignore[attr-defined]
+        if hasattr(action, "choices")
+    ]
+    build_parser_obj = None
+    for action in subparsers_actions:
+        if "build-selection-calibration" in action.choices:
+            build_parser_obj = action.choices["build-selection-calibration"]
+    assert build_parser_obj is not None
+    option_strings = {
+        option
+        for action in build_parser_obj._actions  # type: ignore[attr-defined]
+        for option in action.option_strings
+    }
+    forbidden = {
+        "--apply",
+        "--activate",
+        "--write-config",
+        "--write-threshold",
+        "--enable-selection",
+        "--recommend",
+        "--best",
+        "--optimize",
+        "--auto-select",
+    }
+    assert not (forbidden & option_strings)
+    assert "--source-matrix-registry" in option_strings
+
+
+def test_cli_build_selection_calibration_date_range_requires_both(tmp_path):
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    output_path = tmp_path / "calibration.json"
+    with pytest.raises(Exception, match="CALIBRATION_DATE_RANGE_INVALID"):
+        cli.main(
+            [
+                "build-selection-calibration",
+                "--runs-dir",
+                str(runs_dir),
+                "--config",
+                str(DEFAULT_CONFIG_PATH),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--start-date",
+                "2026-08-01",
+                "--output",
+                str(output_path),
+            ]
+        )
+    assert not output_path.exists()
