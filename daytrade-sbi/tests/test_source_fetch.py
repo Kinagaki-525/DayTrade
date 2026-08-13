@@ -315,3 +315,49 @@ def test_verify_source_page_rejects_paths_escaping_the_run_dir(tmp_path):
     with pytest.raises(SourceFetchError) as exc_info:
         verify_source_page(tmp_path, "../outside.raw", "0" * 64)
     assert exc_info.value.code == "SOURCE_PAGE_PATH_ESCAPES_RUN_DIR"
+
+
+# --------------------------------- FIX-004: the free-form URL boundary ---
+
+
+def test_no_public_api_accepts_a_free_form_url():
+    """A caller may name a ``source_id`` and a context. It may never name a URL.
+
+    URL construction happens internally from the Source Matrix template + the
+    ticker + the human-approved issuer registry. A public
+    ``fetch_source(url, ...)`` would reopen exactly the hole the Source Matrix
+    exists to close, so the low-level transport entry point is private.
+    """
+    assert not hasattr(source_fetch, "fetch_source")
+    assert source_fetch._fetch_source.__name__.startswith("_")
+    assert "fetch_source" not in getattr(source_fetch, "__all__", [])
+
+
+def test_acquisition_module_exports_no_url_taking_entry_point():
+    from src import source_acquisition
+
+    exported = set(getattr(source_acquisition, "__all__", []))
+    assert "_fetch_source" not in exported
+    assert "fetch_source" not in exported
+    # resolve_url is fine: it takes a Source Matrix *definition*, not a URL.
+    import inspect
+
+    signature = inspect.signature(source_acquisition.resolve_url)
+    assert "url" not in signature.parameters
+    assert "definition" in signature.parameters
+
+
+def test_no_cli_command_accepts_a_url():
+    """No CLI surface anywhere lets an operator or agent name a URL."""
+    from src import cli
+
+    parser = cli.build_parser()
+    choices = parser._subparsers._group_actions[0].choices  # noqa: SLF001
+    for name, subparser in choices.items():
+        options = {
+            option
+            for action in subparser._actions
+            for option in action.option_strings
+        }
+        for forbidden in ("--url", "--source-url", "--endpoint", "--host"):
+            assert forbidden not in options, f"{name} exposes {forbidden}"
