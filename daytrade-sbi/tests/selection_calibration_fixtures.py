@@ -20,7 +20,9 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def build_calibration_run_dir(runs_dir, specs, *, data_unavailable: bool = False):
+def build_calibration_run_dir(
+    runs_dir, specs, *, data_unavailable: bool = False, source_matrix_path=None
+):
     """Build runs_dir/<TARGET_DATE>/ containing strategy_snapshot.yaml,
     event_gate.json, candidates.json, market_data.json, sources.json, and
     ranking.json, all genuinely hash-consistent (produced by the real
@@ -67,7 +69,7 @@ def build_calibration_run_dir(runs_dir, specs, *, data_unavailable: bool = False
             "--sources",
             str(sources_path),
             "--source-matrix",
-            str(DEFAULT_SOURCE_MATRIX_PATH),
+            str(source_matrix_path or DEFAULT_SOURCE_MATRIX_PATH),
             "--config",
             str(strategy_snapshot_path),
             "--output",

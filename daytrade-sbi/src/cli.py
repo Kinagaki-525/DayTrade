@@ -216,6 +216,19 @@ def build_parser() -> argparse.ArgumentParser:
     selection_calibration_parser.add_argument("--runs-dir", required=True, type=Path)
     selection_calibration_parser.add_argument("--config", required=True, type=Path)
     selection_calibration_parser.add_argument("--source-matrix", required=True, type=Path)
+    selection_calibration_parser.add_argument(
+        "--source-matrix-registry",
+        required=False,
+        type=Path,
+        default=None,
+        help=(
+            "Immutable historical Source Matrix storage directory, used to "
+            "re-verify old rankings' Trust Chains when --source-matrix's "
+            "current bytes no longer match a historical run's recorded SHA."
+        ),
+    )
+    selection_calibration_parser.add_argument("--start-date", required=False, type=str, default=None)
+    selection_calibration_parser.add_argument("--end-date", required=False, type=str, default=None)
     selection_calibration_parser.add_argument("--output", required=True, type=Path)
 
     threshold_evaluation_parser = subparsers.add_parser("evaluate-selection-thresholds")
@@ -462,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
             args.runs_dir,
             args.config,
             args.source_matrix,
+            args.source_matrix_registry,
+            args.start_date,
+            args.end_date,
             args.output,
         )
     if args.command == "evaluate-selection-thresholds":
@@ -1760,6 +1776,9 @@ def _build_selection_calibration(
     runs_dir: Path,
     config_path: Path,
     source_matrix_path: Path,
+    source_matrix_registry_dir: Path | None,
+    start_date: str | None,
+    end_date: str | None,
     output_path: Path,
 ) -> int:
     from src.selection_calibration import build_selection_calibration_report
@@ -1775,6 +1794,9 @@ def _build_selection_calibration(
         runs_dir=runs_dir,
         config_path=config_path,
         source_matrix_path=source_matrix_path,
+        source_matrix_registry_dir=source_matrix_registry_dir,
+        start_date=start_date,
+        end_date=end_date,
     )
     _write_json(output_path, payload, "selection_calibration.schema.json")
     return 0

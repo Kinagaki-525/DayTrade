@@ -1,71 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "selection_calibration.schema.json",
-  "title": "Selection Calibration v1 report",
+  "title": "Selection Calibration v1 report (Schema v2)",
   "type": "object",
   "required": [
     "schema_version",
     "calibration_version",
-    "generated_at",
     "calibration_status",
-    "strategy_version",
-    "config_sha256",
-    "source_matrix_sha256",
-    "summary",
-    "observations",
-    "minimum_turnover_sensitivity",
-    "maximum_relative_tick_size_sensitivity"
+    "status_reason_codes",
+    "cohort",
+    "dataset",
+    "readiness",
+    "candidate_space",
+    "evaluated_threshold_pairs",
+    "calibration_policy"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "calibration_version": {"const": "selection-calibration-v1"},
-    "generated_at": {"type": "string", "format": "date-time"},
-    "calibration_status": {"enum": ["COMPLETE", "NO_OBSERVATIONS"]},
-    "strategy_version": {"type": "string", "minLength": 1},
-    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "source_matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "summary": {
-      "type": "object",
-      "required": [
-        "run_directories_scanned",
-        "ranking_artifacts_found",
-        "matching_complete_observations",
-        "ranking_data_unavailable_count",
-        "config_mismatch_count",
-        "source_matrix_mismatch_count",
-        "missing_ranking_count",
-        "ignored_non_date_entries"
-      ],
-      "properties": {
-        "run_directories_scanned": {"type": "integer", "minimum": 0},
-        "ranking_artifacts_found": {"type": "integer", "minimum": 0},
-        "matching_complete_observations": {"type": "integer", "minimum": 0},
-        "ranking_data_unavailable_count": {"type": "integer", "minimum": 0},
-        "config_mismatch_count": {"type": "integer", "minimum": 0},
-        "source_matrix_mismatch_count": {"type": "integer", "minimum": 0},
-        "missing_ranking_count": {"type": "integer", "minimum": 0},
-        "ignored_non_date_entries": {"type": "integer", "minimum": 0}
-      },
-      "additionalProperties": false
-    },
-    "observations": {
+    "calibration_status": {"enum": ["COMPLETE", "DATA_UNAVAILABLE"]},
+    "status_reason_codes": {
       "type": "array",
-      "items": {"$ref": "#/$defs/observation"}
+      "items": {"type": "string", "minLength": 1}
     },
-    "minimum_turnover_sensitivity": {
+    "cohort": {"$ref": "#/$defs/cohort"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "readiness": {"$ref": "#/$defs/readiness"},
+    "candidate_space": {"$ref": "#/$defs/candidateSpace"},
+    "evaluated_threshold_pairs": {
       "type": "array",
-      "items": {"$ref": "#/$defs/turnoverSensitivityEntry"}
+      "items": {"$ref": "#/$defs/evaluatedThresholdPair"}
     },
-    "maximum_relative_tick_size_sensitivity": {
-      "type": "array",
-      "items": {"$ref": "#/$defs/tickSensitivityEntry"}
-    }
+    "calibration_policy": {"$ref": "#/$defs/calibrationPolicy"}
   },
   "additionalProperties": false,
   "$defs": {
-    "decimal": {
+    "sha256": {
       "type": "string",
-      "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$"
+      "pattern": "^[0-9a-f]{64}$"
     },
     "ratio": {
       "type": "object",
@@ -85,63 +57,204 @@
       },
       "additionalProperties": false
     },
+    "cohort": {
+      "type": "object",
+      "required": [
+        "cohort_id",
+        "strategy_version",
+        "ranking_version",
+        "ranking_schema_version",
+        "selection_version",
+        "calibration_context_sha256",
+        "source_matrix_raw_sha256"
+      ],
+      "properties": {
+        "cohort_id": {"$ref": "#/$defs/sha256"},
+        "strategy_version": {"type": "string", "minLength": 1},
+        "ranking_version": {"const": "ranking-v1"},
+        "ranking_schema_version": {"const": 1},
+        "selection_version": {"type": "string", "minLength": 1},
+        "calibration_context_sha256": {"$ref": "#/$defs/sha256"},
+        "source_matrix_raw_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["observation_count", "excluded_count", "observations", "excluded_observations"],
+      "properties": {
+        "observation_count": {"type": "integer", "minimum": 0},
+        "excluded_count": {"type": "integer", "minimum": 0},
+        "start_date": {"type": "string", "format": "date"},
+        "end_date": {"type": "string", "format": "date"},
+        "observations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/observation"}
+        },
+        "excluded_observations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/excludedObservation"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["status", "policy_version"],
+      "properties": {
+        "status": {"const": "NOT_ASSESSED"},
+        "policy_version": {"const": null}
+      },
+      "additionalProperties": false
+    },
+    "candidateSpace": {
+      "type": "object",
+      "required": [
+        "turnover_candidate_count",
+        "relative_tick_candidate_count",
+        "evaluated_pair_count",
+        "minimum_turnover_yen",
+        "maximum_relative_tick_size"
+      ],
+      "properties": {
+        "turnover_candidate_count": {"type": "integer", "minimum": 0},
+        "relative_tick_candidate_count": {"type": "integer", "minimum": 0},
+        "evaluated_pair_count": {"type": "integer", "minimum": 0},
+        "minimum_turnover_yen": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 1}
+        },
+        "maximum_relative_tick_size": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ratio"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "calibrationPolicy": {
+      "type": "object",
+      "required": [
+        "candidate_policy",
+        "fallback_policy",
+        "rule_logic",
+        "candidate_generation",
+        "performance_objective",
+        "automatic_threshold_selection"
+      ],
+      "properties": {
+        "candidate_policy": {"const": "rank1_only"},
+        "fallback_policy": {"const": "none"},
+        "rule_logic": {"const": "all"},
+        "candidate_generation": {"const": "observed_breakpoints"},
+        "performance_objective": {"const": "none"},
+        "automatic_threshold_selection": {"const": false}
+      },
+      "additionalProperties": false
+    },
     "observation": {
       "type": "object",
       "required": [
+        "observation_id",
         "target_date",
         "previous_trading_day",
-        "ranking_sha256",
-        "strategy_version",
-        "config_sha256",
-        "ticker",
-        "turnover_yen",
-        "tick_size_yen",
-        "entry_trigger_yen",
-        "relative_tick_size",
-        "canonical_relative_tick_ratio"
+        "rank1",
+        "ranking_identity",
+        "provenance",
+        "cohort_id"
       ],
       "properties": {
+        "observation_id": {"$ref": "#/$defs/sha256"},
         "target_date": {"type": "string", "format": "date"},
         "previous_trading_day": {"type": "string", "format": "date"},
-        "ranking_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "strategy_version": {"type": "string", "minLength": 1},
-        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "ticker": {"type": "string", "minLength": 1},
-        "turnover_yen": {"$ref": "#/$defs/decimal"},
-        "tick_size_yen": {"$ref": "#/$defs/decimal"},
-        "entry_trigger_yen": {"$ref": "#/$defs/decimal"},
-        "relative_tick_size": {
+        "rank1": {
           "type": "object",
-          "required": ["numerator_yen", "denominator_yen"],
+          "required": ["ticker", "turnover_yen", "relative_tick_size"],
           "properties": {
-            "numerator_yen": {"$ref": "#/$defs/decimal"},
-            "denominator_yen": {"$ref": "#/$defs/decimal"}
+            "ticker": {"type": "string", "minLength": 1},
+            "turnover_yen": {"type": "integer", "minimum": 0},
+            "relative_tick_size": {"$ref": "#/$defs/ratio"}
           },
           "additionalProperties": false
         },
-        "canonical_relative_tick_ratio": {"$ref": "#/$defs/ratio"}
+        "ranking_identity": {
+          "type": "object",
+          "required": [
+            "ranking_schema_version",
+            "ranking_version",
+            "strategy_version",
+            "config_sha256"
+          ],
+          "properties": {
+            "ranking_schema_version": {"const": 1},
+            "ranking_version": {"const": "ranking-v1"},
+            "strategy_version": {"type": "string", "minLength": 1},
+            "config_sha256": {"$ref": "#/$defs/sha256"}
+          },
+          "additionalProperties": false
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "ranking_raw_sha256",
+            "event_gate_raw_sha256",
+            "candidates_raw_sha256",
+            "market_data_raw_sha256",
+            "sources_raw_sha256",
+            "source_matrix_raw_sha256",
+            "strategy_snapshot_raw_sha256"
+          ],
+          "properties": {
+            "ranking_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "event_gate_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "candidates_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "market_data_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "sources_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "source_matrix_raw_sha256": {"$ref": "#/$defs/sha256"},
+            "strategy_snapshot_raw_sha256": {"$ref": "#/$defs/sha256"}
+          },
+          "additionalProperties": false
+        },
+        "cohort_id": {"$ref": "#/$defs/sha256"}
       },
       "additionalProperties": false
     },
-    "turnoverSensitivityEntry": {
+    "excludedObservation": {
       "type": "object",
-      "required": ["threshold_yen", "pass_count", "reject_count", "pass_rate"],
+      "required": ["target_date", "disposition", "reason_code"],
       "properties": {
-        "threshold_yen": {"type": "integer", "minimum": 1},
-        "pass_count": {"type": "integer", "minimum": 0},
-        "reject_count": {"type": "integer", "minimum": 0},
-        "pass_rate": {"$ref": "#/$defs/rate"}
+        "target_date": {"type": "string", "format": "date"},
+        "disposition": {"enum": ["TRUSTED_NOT_ELIGIBLE", "UNVERIFIED", "OUT_OF_COHORT"]},
+        "reason_code": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false
     },
-    "tickSensitivityEntry": {
+    "evaluatedThresholdPair": {
       "type": "object",
-      "required": ["threshold_ratio", "pass_count", "reject_count", "pass_rate"],
+      "required": [
+        "pair_id",
+        "minimum_turnover_yen",
+        "maximum_relative_tick_size",
+        "observation_count",
+        "selected_count",
+        "rejected_count",
+        "selection_rate",
+        "rejected_turnover_only_count",
+        "rejected_relative_tick_only_count",
+        "rejected_both_count",
+        "outcome_signature_sha256"
+      ],
       "properties": {
-        "threshold_ratio": {"$ref": "#/$defs/ratio"},
-        "pass_count": {"type": "integer", "minimum": 0},
-        "reject_count": {"type": "integer", "minimum": 0},
-        "pass_rate": {"$ref": "#/$defs/rate"}
+        "pair_id": {"$ref": "#/$defs/sha256"},
+        "minimum_turnover_yen": {"type": "integer", "minimum": 1},
+        "maximum_relative_tick_size": {"$ref": "#/$defs/ratio"},
+        "observation_count": {"type": "integer", "minimum": 1},
+        "selected_count": {"type": "integer", "minimum": 0},
+        "rejected_count": {"type": "integer", "minimum": 0},
+        "selection_rate": {"$ref": "#/$defs/rate"},
+        "rejected_turnover_only_count": {"type": "integer", "minimum": 0},
+        "rejected_relative_tick_only_count": {"type": "integer", "minimum": 0},
+        "rejected_both_count": {"type": "integer", "minimum": 0},
+        "outcome_signature_sha256": {"$ref": "#/$defs/sha256"}
       },
       "additionalProperties": false
     }
