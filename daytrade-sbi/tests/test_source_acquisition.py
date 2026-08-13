@@ -239,3 +239,63 @@ def test_not_found_status_produces_no_values(tmp_path):
     assert attempt["status"] == "NOT_FOUND"
     assert attempt["values"] is None
     assert result.values == []
+
+
+# ------------------------------------------------ FIX-012: keep evidence ---
+
+
+def test_parse_failure_keeps_the_raw_evidence(tmp_path):
+    """HTTP 2xx + raw page stored + parser fails => PARSE_FAILED, and every
+    transport/evidence field STAYS on the attempt.
+
+    Stripping them would destroy the audit trail for exactly the failures that
+    most need one: we would know a parse failed but not what bytes it failed
+    on.
+    """
+    # A page that is served fine but carries no turnover the parser can read.
+    result = _stage("TURNOVER", tmp_path, b"<html><body>7203.T</body></html>")
+    attempt = result.attempts[0]
+
+    assert attempt["status"] == "PARSE_FAILED"
+    assert attempt["values"] is None
+    assert attempt["result_count"] is None
+
+    for kept in (
+        "acquisition_method",
+        "http_status",
+        "content_type",
+        "transport_exit_code",
+        "source_page_path",
+        "source_page_sha256",
+        "source_page_size_bytes",
+    ):
+        assert kept in attempt, f"{kept} must survive a parse failure"
+
+    assert attempt["http_status"] == 200
+    assert attempt["acquisition_method"] == "HTTP_GET"
+    # The evidence is genuinely on disk and still hashes to what was recorded.
+    stored = tmp_path / attempt["source_page_path"]
+    assert stored.is_file()
+    import hashlib
+
+    assert hashlib.sha256(stored.read_bytes()).hexdigest() == attempt[
+        "source_page_sha256"
+    ]
+
+
+def test_schema_v3_allows_found_shaped_fields_with_parse_failed(tmp_path):
+    """Schema v3 must permit the FOUND-shaped evidence fields alongside
+    status=PARSE_FAILED -- otherwise FIX-012 would be unrepresentable."""
+    result = _stage("TURNOVER", tmp_path, b"<html><body>7203.T</body></html>")
+    ledger = result.as_ledger()
+    assert ledger["source_attempts"][0]["status"] == "PARSE_FAILED"
+    validate_json_document(ledger, "sources.schema.json")
+
+
+def test_access_failure_records_no_evidence(tmp_path):
+    """The converse: nothing was stored, so no evidence field is invented."""
+    result = _stage("TURNOVER", tmp_path, b"", status=500)
+    attempt = result.attempts[0]
+    assert attempt["status"] == "ACCESS_FAILED"
+    for absent in ("source_page_path", "source_page_sha256", "source_page_size_bytes"):
+        assert absent not in attempt
