@@ -218,6 +218,148 @@ def test_cli_build_selection_no_partial_overwrite_on_hard_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Case C Ranking Trust Chain: build-selection must fully re-verify
+# ranking.json's provenance before ever calling build_selection().
+# ---------------------------------------------------------------------------
+
+
+def test_cli_build_selection_full_chain_matches_real_selection_rules(tmp_path):
+    """Full happy path: real build-ranking -> real build-selection. Asserts
+    evaluated_ticker is the genuine Rank1 ticker and selected_ticker /
+    selection_status match what the Selection rules legitimately produce
+    for that Rank1's real feature values."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [
+            {"ticker": "AA01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"},
+            {"ticker": "AA02", "previous_high": "400", "tick_size": "1", "raw_value": "10,000"},
+        ],
+    )
+    ranking = json.loads(paths["ranking_path"].read_text(encoding="utf-8"))
+    rank1_ticker = next(c["ticker"] for c in ranking["candidates"] if c["final_rank"] == 1)
+
+    output_path = tmp_path / "selection.json"
+    assert cli.main(_build_selection_argv(paths, output_path)) == 0
+    selection = json.loads(output_path.read_text(encoding="utf-8"))
+    assert selection["evaluated_ticker"] == rank1_ticker
+    assert selection["selection_status"] == "SELECTED"
+    assert selection["selected_ticker"] == rank1_ticker
+
+
+@pytest.mark.parametrize(
+    "target_file",
+    ["event_gate", "candidates", "market_data", "sources", "source_matrix", "config"],
+)
+def test_cli_build_selection_upstream_schema_valid_mutation_is_hard_error(tmp_path, target_file):
+    """Raw-byte-mutating (in a schema-valid way) exactly one of the six
+    claimed Ranking inputs, after ranking.json was generated, must Hard
+    Error via the hash check -- proving the check is real, not a no-op --
+    and must not produce selection.json."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+
+    if target_file == "source_matrix":
+        # Can't mutate the real repo config/source_matrix.yaml in place;
+        # copy it locally and point the argv at the mutated copy instead.
+        target_path = tmp_path / "source_matrix_mutated.yaml"
+        target_path.write_bytes(DEFAULT_SOURCE_MATRIX_PATH.read_bytes())
+    else:
+        path_key = "config_path" if target_file == "config" else f"{target_file}_path"
+        target_path = paths[path_key]
+
+    original_bytes = target_path.read_bytes()
+    if target_file == "config":
+        # A schema-valid mutation: append a harmless trailing comment line.
+        mutated_bytes = original_bytes + b"\n# mutated for test\n"
+    elif target_file == "source_matrix":
+        mutated_bytes = original_bytes + b"\n# mutated for test\n"
+    else:
+        payload = json.loads(original_bytes.decode("utf-8"))
+        # Any schema-valid mutation that changes raw bytes: bump generated_at
+        # if present, else fall back to a comment-safe JSON round-trip with
+        # different key ordering (still changes raw bytes).
+        if "generated_at" in payload:
+            payload["generated_at"] = "2099-01-01T00:00:00+00:00"
+        mutated_bytes = (json.dumps(payload, ensure_ascii=False, indent=4) + "\n").encode("utf-8")
+        assert mutated_bytes != original_bytes
+
+    target_path.write_bytes(mutated_bytes)
+
+    output_path = tmp_path / "selection.json"
+    argv_paths = dict(paths)
+    source_matrix_arg = target_path if target_file == "source_matrix" else None
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH"):
+        cli.main(_build_selection_argv(argv_paths, output_path, source_matrix_path=source_matrix_arg))
+    assert not output_path.exists()
+
+
+def test_cli_build_selection_semantic_equivalent_raw_byte_mutation_is_hard_error(tmp_path):
+    """A raw-byte change (trailing whitespace) that does NOT change the
+    parsed/semantic content of an upstream file must still Hard Error via
+    the hash mismatch -- proving hash verification is byte-provenance-based,
+    not semantic-equivalence-based."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+    market_data_path = paths["market_data_path"]
+    original_bytes = market_data_path.read_bytes()
+    # Trailing whitespace: json.loads() parses this identically to the
+    # original, so the *semantic* content is unchanged, but the raw bytes
+    # (and therefore the SHA256) differ.
+    market_data_path.write_bytes(original_bytes + b"   \n")
+    assert json.loads(market_data_path.read_text(encoding="utf-8")) == json.loads(
+        original_bytes.decode("utf-8")
+    )
+
+    output_path = tmp_path / "selection.json"
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH"):
+        cli.main(_build_selection_argv(paths, output_path))
+    assert not output_path.exists()
+
+
+def test_cli_build_selection_forged_ranking_is_hard_error(tmp_path):
+    """A schema-valid but hand-tampered ranking.json (a field the existing
+    Ranking Contract functions will catch) must Hard Error via
+    validate_ranking_preconditions/validate_ranking_output_contract even
+    though the upstream artifacts are left completely untouched -- proving
+    build-selection never trusts ranking.json's own claims about the world
+    without re-deriving them."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+    ranking = json.loads(paths["ranking_path"].read_text(encoding="utf-8"))
+    # Flip the real Rank1's final_rank so it no longer matches what the
+    # (untouched) upstream artifacts actually justify.
+    for candidate in ranking["candidates"]:
+        if candidate["final_rank"] == 1:
+            candidate["final_rank"] = 2
+    ranking["summary"]["top_ranked_ticker"] = "DOES_NOT_EXIST"
+    tampered_ranking_path = tmp_path / "forged_ranking.json"
+    _write_json_file(tampered_ranking_path, ranking)
+
+    output_path = tmp_path / "selection.json"
+    with pytest.raises(ValueError):
+        cli.main(_build_selection_argv(paths, output_path, ranking_path=tampered_ranking_path))
+    assert not output_path.exists()
+
+
+# ---------------------------------------------------------------------------
 # P0-2 / P0-3: build-selection-recommendation trust-chain tests.
 # ---------------------------------------------------------------------------
 
