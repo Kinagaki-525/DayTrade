@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-08-14",
+  "previous_trading_day": "2026-08-13",
+  "research_cutoff": "2026-08-13T20:00:00+09:00",
+  "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
+  "research_window": {
+    "run_type": "FIRST_RUN",
+    "window_start": "2026-08-12T20:00:00+09:00",
+    "window_end": "2026-08-13T20:00:00+09:00",
+    "previous_research_cutoff": null,
+    "previous_run_date": null,
+    "bootstrap_lookback_days": 1
+  }
+}
