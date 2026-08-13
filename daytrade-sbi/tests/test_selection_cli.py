@@ -647,6 +647,90 @@ def test_cli_build_selection_recommendation_input_hashes_mismatch_is_hard_error(
     assert not output_path.exists()
 
 
+def test_cli_build_selection_recommendation_forged_ranking_with_self_consistent_selection_hash_is_hard_error(
+    tmp_path,
+):
+    """The single highest-value negative test in this slice: an attacker
+    tampers ranking.json's business content (flips Rank 1's final_rank) AND
+    also 'fixes up' selection.json's input_hashes.ranking_sha256 to match the
+    tampered ranking's new actual SHA256, so Selection's own hash chain looks
+    perfectly self-consistent. build-selection-recommendation must still
+    Hard Error, because load_and_verify_ranking_trust_chain() re-verifies
+    ranking.json against its OWN claimed upstream artifacts (event_gate/
+    candidates/market_data/sources/source_matrix/config) BEFORE Selection's
+    hash chain is even examined -- proving 'attacker made everything
+    downstream self-consistent' is not sufficient."""
+    config_path, config = _enabled_selection_config_path(tmp_path)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}],
+    )
+    ranking_path = paths["ranking_path"]
+
+    real_selection_path = tmp_path / "real_selection.json"
+    assert cli.main(_build_selection_argv(paths, real_selection_path)) == 0
+    real_selection = json.loads(real_selection_path.read_text(encoding="utf-8"))
+
+    # Tamper ranking.json's business content (never touching the upstream
+    # event_gate/candidates/market_data/sources/config files themselves).
+    forged_ranking = json.loads(ranking_path.read_text(encoding="utf-8"))
+    for candidate in forged_ranking["candidates"]:
+        if candidate["final_rank"] == 1:
+            candidate["final_rank"] = 2
+    forged_ranking["summary"]["top_ranked_ticker"] = "DOES_NOT_EXIST"
+    forged_ranking_path = tmp_path / "forged_ranking.json"
+    _write_json_file(forged_ranking_path, forged_ranking)
+    forged_ranking_sha256 = hashlib.sha256(forged_ranking_path.read_bytes()).hexdigest()
+    assert forged_ranking_sha256 != hashlib.sha256(ranking_path.read_bytes()).hexdigest()
+
+    # Attacker also "fixes up" selection.json's ranking_sha256 to match the
+    # forged ranking.json's new actual hash, so Selection's own hash chain
+    # remains self-consistent with the forged ranking.
+    forged_selection = copy.deepcopy(real_selection)
+    forged_selection["input_hashes"]["ranking_sha256"] = forged_ranking_sha256
+    forged_selection_path = tmp_path / "selection.json"
+    _write_json_file(forged_selection_path, forged_selection)
+
+    output_path = tmp_path / "recommendation.json"
+    with pytest.raises(ValueError) as exc_info:
+        cli.main(
+            [
+                "build-selection-recommendation",
+                "--ranking",
+                str(forged_ranking_path),
+                "--selection",
+                str(forged_selection_path),
+                "--event-gate",
+                str(paths["event_gate_path"]),
+                "--candidates",
+                str(paths["candidates_path"]),
+                "--candidate-pipeline",
+                str(tmp_path / "candidate_pipeline.json"),
+                "--market-data",
+                str(paths["market_data_path"]),
+                "--research-window",
+                str(tmp_path / "research_window.json"),
+                "--sources",
+                str(paths["sources_path"]),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(config_path),
+                "--output",
+                str(output_path),
+            ]
+        )
+    # The failure must come from the Ranking Trust Chain re-verification
+    # (validate_ranking_output_contract, run inside
+    # load_and_verify_ranking_trust_chain), NOT from a Selection-level check
+    # -- proving Ranking is re-verified before Selection's hash chain is
+    # even consulted.
+    assert "SELECTION_" not in str(exc_info.value)
+    assert not output_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # P1-4: broad cross-artifact validation for build-selection-recommendation.
 # ---------------------------------------------------------------------------
@@ -912,6 +996,18 @@ def test_risk_check_v6_v2_without_ranking_is_hard_error(tmp_path):
         _run_risk_check(chain, tmp_path, ranking_path=False)
 
 
+def test_risk_check_v6_v2_without_event_gate_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    with pytest.raises(ValueError, match="RISK_SELECTION_EVENT_GATE_REQUIRED"):
+        _run_risk_check(chain, tmp_path, event_gate_path=False)
+
+
+def test_risk_check_v6_v2_without_research_window_is_hard_error(tmp_path):
+    chain = _full_v6_chain(tmp_path)
+    with pytest.raises(ValueError, match="RISK_SELECTION_RESEARCH_WINDOW_REQUIRED"):
+        _run_risk_check(chain, tmp_path, research_window_path=False)
+
+
 def test_risk_check_selection_sha256_tamper_is_hard_error(tmp_path):
     chain = _full_v6_chain(tmp_path)
     tampered = json.loads(chain["selection_path"].read_text(encoding="utf-8"))
@@ -980,6 +1076,81 @@ def test_risk_check_forged_selection_is_hard_error(tmp_path):
     _write_json_file(forged_path, forged)
     with pytest.raises(ValueError, match="SELECTION_OUTPUT_CONTRACT_MISMATCH"):
         _run_risk_check(chain, tmp_path, selection_path=forged_path)
+
+
+def test_risk_check_forged_recommendation_field_is_hard_error(tmp_path):
+    """A Recommendation v2 whose Selection-link fields (target_date,
+    strategy_version, config_sha256, decision, ticker, selection_sha256,
+    selection_reasons) are each individually correct, but whose 'notes'
+    field was independently hand-tampered, must still Hard Error --
+    proving validate_selection_recommendation_output_contract's
+    recompute-and-compare catches what validate_recommendation_selection_link
+    alone does not (build_selection_recommendation() always emits
+    notes=None; a non-null notes value can never be genuine)."""
+    chain = _full_v6_chain(tmp_path)
+    recommendation = json.loads(chain["recommendation_path"].read_text(encoding="utf-8"))
+    assert recommendation["notes"] is None
+    recommendation["notes"] = "hand-injected note, not produced by build_selection_recommendation"
+    tampered_recommendation_path = tmp_path / "tampered_notes_recommendation.json"
+    _write_json_file(tampered_recommendation_path, recommendation)
+    tampered_chain = dict(chain)
+    tampered_chain["recommendation_path"] = tampered_recommendation_path
+    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_OUTPUT_CONTRACT_MISMATCH"):
+        _run_risk_check(tampered_chain, tmp_path)
+
+
+def test_risk_check_case_c_atomic_write_on_hard_error(tmp_path):
+    """A pre-existing risk_result.json is left byte-for-byte unchanged when
+    a Case C trust-chain Hard Error occurs."""
+    chain = _full_v6_chain(tmp_path)
+    output_path = tmp_path / "risk_result.json"
+    sentinel = '{"sentinel": true}'
+    output_path.write_text(sentinel, encoding="utf-8")
+
+    forged = json.loads(chain["selection_path"].read_text(encoding="utf-8"))
+    forged["reason_codes"] = ["SELECTION_TURNOVER_BELOW_MINIMUM"]
+    for rule in forged["rule_evaluations"]:
+        rule["result"] = "REJECT"
+        rule["reason_code"] = (
+            "SELECTION_TURNOVER_BELOW_MINIMUM"
+            if rule["rule_id"] == "minimum_turnover_yen"
+            else "SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"
+        )
+    forged_path = tmp_path / "forged_selection_atomic.json"
+    _write_json_file(forged_path, forged)
+
+    argv = [
+        "risk-check",
+        "--recommendation",
+        str(chain["recommendation_path"]),
+        "--candidates",
+        str(chain["candidates_path"]),
+        "--candidate-pipeline",
+        str(chain["candidate_pipeline_path"]),
+        "--market-data",
+        str(chain["market_data_path"]),
+        "--sources",
+        str(chain["sources_path"]),
+        "--config",
+        str(chain["config_path"]),
+        "--output",
+        str(output_path),
+        "--current-positions",
+        "0",
+        "--trades-today",
+        "0",
+        "--selection",
+        str(forged_path),
+        "--ranking",
+        str(chain["ranking_path"]),
+        "--event-gate",
+        str(chain["event_gate_path"]),
+        "--research-window",
+        str(chain["research_window_path"]),
+    ]
+    with pytest.raises(ValueError, match="SELECTION_OUTPUT_CONTRACT_MISMATCH"):
+        cli.main(argv)
+    assert output_path.read_text(encoding="utf-8") == sentinel
 
 
 def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
@@ -1147,3 +1318,110 @@ def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
     assert rank2_ticker not in json.dumps(risk_result)
     # recommendation.json is never modified by risk-check.
     assert recommendation_path.read_text(encoding="utf-8") == recommendation_before
+
+
+def test_risk_check_case_c_no_trade_full_chain_reaches_not_applicable(tmp_path):
+    """Selection rules legitimately reject Rank 1 (turnover below the
+    configured threshold) -> Recommendation v2 NO_TRADE ->
+    risk-check reaches NOT_APPLICABLE, but only after the FULL Ranking +
+    Selection + Recommendation trust chain re-verification succeeds -- the
+    whole point is proving a NO_TRADE recommendation is genuine before Risk
+    is willing to say NOT_APPLICABLE for it."""
+    config_path, config = _enabled_selection_config_path(tmp_path, minimum_turnover_yen=1_000_000)
+    paths = _build_real_ranking_chain(
+        tmp_path,
+        config_path,
+        config,
+        [{"ticker": "1234", "previous_high": "400", "tick_size": "1", "raw_value": "1"}],
+    )
+    ranking_path = paths["ranking_path"]
+
+    selection_path = tmp_path / "selection.json"
+    assert cli.main(_build_selection_argv(paths, selection_path)) == 0
+    selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    assert selection["selection_status"] == "NO_TRADE"
+
+    candidate_pipeline_path = tmp_path / "candidate_pipeline.json"
+    _write_ranking_json_file(
+        candidate_pipeline_path,
+        {
+            "schema_version": 1,
+            "target_date": TARGET_DATE,
+            "generated_at": "2026-08-09T21:30:00+00:00",
+            "strategy_version": config["strategy_version"],
+            "config_sha256": strategy_config_sha256(config),
+            "summary": complete_pipeline_summary(),
+            "candidates": [],
+        },
+    )
+    research_window_path = tmp_path / "research_window.json"
+    _write_ranking_json_file(
+        research_window_path,
+        {
+            "schema_version": 1,
+            "target_date": TARGET_DATE,
+            "previous_trading_day": PREVIOUS_TRADING_DAY,
+            "research_cutoff": "2026-08-09T21:00:00+00:00",
+            "post_cutoff_information_status": "NO_NON_BUSINESS_GAP",
+            "research_window": {
+                "run_type": "FIRST_RUN",
+                "window_start": "2026-08-09T00:00:00+00:00",
+                "window_end": "2026-08-09T21:00:00+00:00",
+                "previous_research_cutoff": None,
+                "previous_run_date": None,
+                "bootstrap_lookback_days": 5,
+            },
+        },
+    )
+
+    recommendation_path = tmp_path / "recommendation.json"
+    assert (
+        cli.main(
+            [
+                "build-selection-recommendation",
+                "--ranking",
+                str(ranking_path),
+                "--selection",
+                str(selection_path),
+                "--event-gate",
+                str(paths["event_gate_path"]),
+                "--candidates",
+                str(paths["candidates_path"]),
+                "--candidate-pipeline",
+                str(candidate_pipeline_path),
+                "--market-data",
+                str(paths["market_data_path"]),
+                "--research-window",
+                str(research_window_path),
+                "--sources",
+                str(paths["sources_path"]),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
+                "--config",
+                str(config_path),
+                "--output",
+                str(recommendation_path),
+            ]
+        )
+        == 0
+    )
+    recommendation = json.loads(recommendation_path.read_text(encoding="utf-8"))
+    assert recommendation["decision"] == "NO_TRADE"
+
+    chain = {
+        "config_path": config_path,
+        "recommendation_path": recommendation_path,
+        "candidates_path": paths["candidates_path"],
+        "candidate_pipeline_path": candidate_pipeline_path,
+        "market_data_path": paths["market_data_path"],
+        "sources_path": paths["sources_path"],
+        "selection_path": selection_path,
+        "ranking_path": ranking_path,
+        "event_gate_path": paths["event_gate_path"],
+        "research_window_path": research_window_path,
+    }
+    result, output_path = _run_risk_check(chain, tmp_path)
+    assert result == 0
+    risk_result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert risk_result["decision"] == "NO_TRADE"
+    assert risk_result["status"] == "NOT_APPLICABLE"
