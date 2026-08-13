@@ -124,9 +124,22 @@ def jpx_listed_company_page(ticker: str = "7203") -> bytes:
 </body></html>""".encode("utf-8")
 
 
-def jpx_calendar_page() -> bytes:
+def jpx_calendar_page(
+    entries: tuple[tuple[str, str], ...] = (
+        ("2026年1月1日", "元日"),
+        ("2026年1月12日", "成人の日"),
+    ),
+) -> bytes:
+    body = "".join(f"<p>{date_text} {name}</p>" for date_text, name in entries)
+    return f"""<html><head><meta charset="utf-8"></head><body>
+{body}
+</body></html>""".encode("utf-8")
+
+
+def jpx_calendar_page_unparseable() -> bytes:
+    """A calendar page carrying no recognizable JP date at all."""
     return """<html><head><meta charset="utf-8"></head><body>
-<p>2026年1月1日 元日</p><p>2026年1月12日 成人の日</p>
+<p>no holiday dates published</p>
 </body></html>""".encode("utf-8")
 
 

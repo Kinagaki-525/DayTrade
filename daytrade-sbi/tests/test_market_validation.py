@@ -3,7 +3,12 @@ from pathlib import Path
 
 from src.market import audit_official_ohlcv, validate_market_data, validate_source_ledger
 from src.source_matrix import load_source_matrix
-from tests.factories import make_market_record, make_source_attempt, make_source_record
+from tests.factories import (
+    make_market_record,
+    make_matching_source_attempt,
+    make_source_attempt,
+    make_source_record,
+)
 
 
 def test_complete_sourced_market_data_is_valid_for_trade():
@@ -71,6 +76,7 @@ def test_source_ledger_rejects_embedded_source_not_in_canonical_ledger():
     ledger = {
         "target_date": "2026-08-10",
         "sources": [source.as_dict() for source in record.sources[:-1]],
+        "source_attempts": [make_matching_source_attempt(record.sources)],
     }
 
     result = validate_source_ledger("2026-08-10", [record], ledger)
@@ -205,7 +211,7 @@ def test_source_ledger_accepts_tdnet_found_zero_results():
         {
             "target_date": "2026-08-10",
             "sources": [source.as_dict() for source in record.sources],
-            "source_attempts": [attempt],
+            "source_attempts": [attempt, make_matching_source_attempt(record.sources)],
         },
     )
 
@@ -302,7 +308,7 @@ def test_source_ledger_accepts_existing_source_page_path():
         {
             "target_date": "2026-08-10",
             "sources": [source.as_dict() for source in record.sources],
-            "source_attempts": [attempt],
+            "source_attempts": [attempt, make_matching_source_attempt(record.sources)],
         },
         source_base_dir=Path("regression/2026-08-10-baseline/runs/2026-08-10"),
     )
@@ -323,7 +329,11 @@ def test_source_ledger_treats_numeric_string_and_number_as_same_value():
     result = validate_source_ledger(
         "2026-08-10",
         [record],
-        {"target_date": "2026-08-10", "sources": ledger_sources},
+        {
+            "target_date": "2026-08-10",
+            "sources": ledger_sources,
+            "source_attempts": [make_matching_source_attempt(record.sources)],
+        },
     )
 
     assert result.valid is True

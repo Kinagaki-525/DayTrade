@@ -834,17 +834,30 @@ def _acquire_sources(
             existing=current,
             trading_date=args.trading_date,
         )
-        # reflect_market_data can add traceability aliases for market_data
-        # fields whose source page parses under a different field_name (the
-        # STAGE1_FIELD_MAP renames, and the computed tick_size) -- same raw
-        # evidence, same value, only the field_name/source_ref differ. Those
-        # aliases must land in the canonical sources.json ledger too, or
-        # validate-market's "every market_data source exists in sources.json"
-        # check fails on data acquired by this very CLI.
+        # Some Attempt Values are fetched once per run (candidate_code=None,
+        # e.g. JPX_TICK_SIZE's band table) and then fanned out by
+        # reflect_market_data into a per-candidate market_data.sources entry
+        # (same source_ref, ticker now set). acquire_stage's own ledger only
+        # ever records the un-fanned, ticker-less value (AcquisitionResult
+        # only keeps values whose ParsedValue carried a ticker), so that
+        # fanned-out copy is otherwise absent from sources.json. Reconcile
+        # them here -- never inventing a source_ref, only including entries
+        # this stage's own attempts already parsed (real Attempt Values),
+        # so Source Ledger Integrity (every source_ref traces to a real
+        # source_attempts[].values[] entry) still holds.
+        this_stage_value_refs = {
+            str(value["source_ref"]) for value in result.values
+        } | {
+            str(value.get("source_ref"))
+            for attempt in result.attempts
+            for value in (attempt.get("values") or [])
+            if isinstance(value, dict) and value.get("source_ref")
+        }
         ledger_values = {value["source_ref"]: value for value in merged.get("sources", [])}
         for record in updated.get("records", []):
             for source in record.get("sources", []):
-                ledger_values.setdefault(source["source_ref"], source)
+                if source["source_ref"] in this_stage_value_refs:
+                    ledger_values.setdefault(source["source_ref"], source)
         merged["sources"] = list(ledger_values.values())
         write_market_data(market_data_path, updated)
         artifact = "market_data.json"

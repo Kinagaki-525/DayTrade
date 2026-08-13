@@ -457,28 +457,16 @@ def _set_provenance(record: dict[str, Any], entry: dict[str, Any]) -> None:
     record["field_provenance"] = provenance
 
 
-def _alias_source_value(source_value: dict[str, Any], field_name: str) -> dict[str, Any]:
-    """A traceable copy of ``source_value`` under a different ``field_name``.
-
-    Some market_data fields (the STAGE1_FIELD_MAP renames, and the computed
-    ``tick_size``) are derived from a source page whose own parsed field_name
-    differs from the market_data field it fills. ``market.validate_market_data``
-    requires every SOURCED_* field to have a source record whose field_name
-    matches the market_data field exactly, so the raw parsed record is kept
-    (for the page's own semantics) and this alias is merged in alongside it --
-    same raw evidence, same value, same source_id/url/retrieved_at, only the
-    field_name and source_ref (so it does not collide in the source ledger)
-    change. Nothing here changes *what value* ends up in market_data; it only
-    makes the already-computed value traceable under the name the Market
-    Contract validates against.
-    """
-    alias = dict(source_value)
-    alias["field_name"] = field_name
-    alias["source_ref"] = f"{source_value['source_ref']}->{field_name}"
-    return alias
-
-
 def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[str, Any]]) -> None:
+    """STAGE1_FIELD_MAP is a *Market Data field mapping*, not a source rename.
+
+    The raw Source Value stays under the page's own field_name (e.g.
+    "listed_company_name") in ``record.sources`` -- it is never duplicated
+    under the market_data field's name. Traceability to that raw value runs
+    through field_provenance.source_refs, which
+    ``market._has_verified_provenance`` accepts in place of a literal
+    same-named source record.
+    """
     for source_field, market_field in STAGE1_FIELD_MAP.items():
         found = [
             value
@@ -489,15 +477,13 @@ def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[st
             continue
         primary = found[0]
         record[market_field] = primary["value"]
-        alias = _alias_source_value(primary, market_field)
-        _merge_sources(record, [alias])
         _set_provenance(
             record,
             _provenance(
                 market_field,
                 status="VERIFIED",
                 verified_value=primary["value"],
-                primary=alias,
+                primary=primary,
                 secondary=None,
                 verified_at=primary.get("retrieved_at"),
             ),
@@ -587,18 +573,13 @@ def _apply_tick_size(
         return
 
     record["tick_size"] = str(tick)
-    tick_alias = dict(table_value)
-    tick_alias["field_name"] = "tick_size"
-    tick_alias["value"] = str(tick)
-    tick_alias["source_ref"] = f"{table_value['source_ref']}->tick_size"
-    _merge_sources(record, [tick_alias])
     _set_provenance(
         record,
         _provenance(
             "tick_size",
             status="VERIFIED",
             verified_value=str(tick),
-            primary=tick_alias,
+            primary=table_value,
             secondary=membership,
             extra_refs=(str(price["source_ref"]),),
             verified_at=table_value.get("retrieved_at"),

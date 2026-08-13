@@ -23,6 +23,14 @@ class ParseContext:
     trading_date: str
     ticker: str | None = None
     content_type: str | None = None
+    #: The exact JPX trading day immediately before ``trading_date``, as
+    #: resolved by :mod:`src.trading_calendar` from verified JPX_CALENDAR
+    #: evidence. ``None`` means that evidence was unavailable this run, so a
+    #: history parser must not derive previous_close/previous_high at all --
+    #: it must never fall back to guessing (e.g. the nearest earlier row a
+    #: page happens to publish). A parser only ever reads this field; it must
+    #: never compute its own notion of "the previous day".
+    previous_trading_date: str | None = None
 
 
 @dataclass(frozen=True)

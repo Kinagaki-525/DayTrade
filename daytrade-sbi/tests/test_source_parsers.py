@@ -26,12 +26,18 @@ MATRIX = load_source_matrix()
 DEFINITIONS = source_by_id(MATRIX)
 
 
-def _context(source_id: str, ticker: str | None = None) -> ParseContext:
+def _context(
+    source_id: str,
+    ticker: str | None = None,
+    *,
+    previous_trading_date: str | None = None,
+) -> ParseContext:
     return ParseContext(
         source_id=source_id,
         trading_date=TRADING_DATE,
         ticker=ticker,
         content_type="text/html; charset=utf-8",
+        previous_trading_date=previous_trading_date,
     )
 
 
@@ -140,7 +146,9 @@ def test_quote_turnover_rejects_a_page_for_another_ticker():
 
 def test_history_parses_only_the_requested_trading_date():
     result = yahoo_jp.parse_history(
-        pages.yahoo_history_page(), DEFINITIONS["YAHOO_JP_HISTORY"], _context("YAHOO_JP_HISTORY", "7203")
+        pages.yahoo_history_page(),
+        DEFINITIONS["YAHOO_JP_HISTORY"],
+        _context("YAHOO_JP_HISTORY", "7203", previous_trading_date="2026-08-11"),
     )
     assert result.status == "FOUND"
     assert {value.field_name for value in result.values} == {
@@ -155,9 +163,10 @@ def test_history_parses_only_the_requested_trading_date():
     assert all(value.trading_date == TRADING_DATE for value in result.values)
     close = next(v for v in result.values if v.field_name == "close")
     assert close.value == "1050"
-    # previous_close/previous_high come from the row for the trading day
-    # immediately before TRADING_DATE (2026-08-11 in the fixture), selected
-    # by its own parsed date -- never by row position.
+    # previous_close/previous_high come from the row whose own parsed date
+    # exactly equals context.previous_trading_date (here 2026-08-11, matching
+    # the fixture's second row) -- resolved by the caller from verified JPX
+    # calendar evidence, never guessed by the parser itself.
     previous_close = next(v for v in result.values if v.field_name == "previous_close")
     previous_high = next(v for v in result.values if v.field_name == "previous_high")
     assert previous_close.value == "1000"
@@ -191,12 +200,60 @@ def test_kabutan_history_parses_the_requested_date():
     result = kabutan.parse_history(
         pages.kabutan_history_page(),
         DEFINITIONS["KABUTAN_HISTORY"],
-        _context("KABUTAN_HISTORY", "7203"),
+        _context("KABUTAN_HISTORY", "7203", previous_trading_date="2026-08-11"),
     )
     assert result.status == "FOUND"
     assert next(v for v in result.values if v.field_name == "high").value == "1100"
     assert next(v for v in result.values if v.field_name == "previous_close").value == "1000"
     assert next(v for v in result.values if v.field_name == "previous_high").value == "1010"
+
+
+def test_history_without_calendar_evidence_never_derives_previous_fields():
+    """context.previous_trading_date is None -- e.g. JPX_CALENDAR evidence was
+    unavailable this run -- so previous_close/previous_high must not be
+    derived at all, from any row, no matter how plausible it looks."""
+    result = yahoo_jp.parse_history(
+        pages.yahoo_history_page(), DEFINITIONS["YAHOO_JP_HISTORY"], _context("YAHOO_JP_HISTORY", "7203")
+    )
+    assert result.status == "FOUND"
+    assert {value.field_name for value in result.values} == {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
+
+    result = kabutan.parse_history(
+        pages.kabutan_history_page(), DEFINITIONS["KABUTAN_HISTORY"], _context("KABUTAN_HISTORY", "7203")
+    )
+    assert result.status == "FOUND"
+    assert {value.field_name for value in result.values} == {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
+
+
+def test_history_ignores_a_row_that_is_not_exactly_the_expected_previous_date():
+    """A row one day off the resolved previous trading date (e.g. the fixture's
+    2026-08-11 row, when the calendar says the previous trading day was
+    2026-08-10) must never be used -- no nearest-earlier-row fallback."""
+    result = yahoo_jp.parse_history(
+        pages.yahoo_history_page(),
+        DEFINITIONS["YAHOO_JP_HISTORY"],
+        _context("YAHOO_JP_HISTORY", "7203", previous_trading_date="2026-08-10"),
+    )
+    assert result.status == "FOUND"
+    assert {value.field_name for value in result.values} == {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
 
 
 # -------------------------------------------------------------------- jpx ----

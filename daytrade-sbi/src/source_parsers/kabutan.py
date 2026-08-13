@@ -67,46 +67,42 @@ def parse_history(
     except ParseFailed as exc:
         return parse_failed(exc.message)
 
-    try:
-        previous_row = _previous_trading_day_row(
-            table_rows(page.text), context.trading_date
-        )
-    except ParseFailed as exc:
-        return parse_failed(exc.message)
-    if previous_row is not None:
+    if context.previous_trading_date is not None:
         try:
-            values.extend(_previous_day_values(previous_row, context))
+            previous_row = _exact_previous_trading_day_row(
+                table_rows(page.text), context.previous_trading_date
+            )
         except ParseFailed as exc:
             return parse_failed(exc.message)
+        if previous_row is not None:
+            try:
+                values.extend(_previous_day_values(previous_row, context))
+            except ParseFailed as exc:
+                return parse_failed(exc.message)
 
     return ParseResult(status="FOUND", values=tuple(values))
 
 
-def _previous_trading_day_row(
+def _exact_previous_trading_day_row(
     rows: list[list[str]],
-    trading_date: str,
+    expected_previous_trading_date: str,
 ) -> list[str] | None:
-    """The row for the trading day immediately preceding ``trading_date``.
-
-    Selected only by explicit date comparison against the dates the page
-    itself publishes -- never by row position. See yahoo_jp.parse_history
-    for the identical policy on the primary source.
+    """The row whose own parsed date exactly equals the resolved previous
+    JPX trading date. See yahoo_jp._exact_previous_trading_day_row for the
+    identical policy on the primary source: no older-row fallback, ever.
     """
-    dated_rows: list[tuple[str, list[str]]] = []
-    for row in rows:
-        if len(row) < 6:
-            continue
-        row_date = _iso_date(row[0])
-        if row_date is None or row_date >= trading_date:
-            continue
-        dated_rows.append((row_date, row))
-    if not dated_rows:
+    matching = [
+        row
+        for row in rows
+        if len(row) >= 6 and _iso_date(row[0]) == expected_previous_trading_date
+    ]
+    if not matching:
         return None
-    latest_date = max(row_date for row_date, _ in dated_rows)
-    candidates = [row for row_date, row in dated_rows if row_date == latest_date]
-    if len({tuple(row[1:6]) for row in candidates}) > 1:
-        raise ParseFailed(f"ambiguous previous trading day rows for {trading_date}")
-    return candidates[0]
+    if len({tuple(row[1:6]) for row in matching}) > 1:
+        raise ParseFailed(
+            f"ambiguous previous trading day rows for {expected_previous_trading_date}"
+        )
+    return matching[0]
 
 
 def _previous_day_values(row: list[str], context: ParseContext) -> list[ParsedValue]:

@@ -55,6 +55,7 @@ from src.source_parsers.registry import (
     parse_source_page,
     verify_source_parser_binding,
 )
+from src.trading_calendar import verified_previous_trading_date
 
 
 SOURCES_SCHEMA_VERSION = 3
@@ -340,6 +341,7 @@ def acquire_source(
     issuer_registry: dict[str, Any] | None = None,
     transport: Callable[[str], Any] = curl_transport,
     cache: "RequestBudgetCache | None" = None,
+    previous_trading_date: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Acquire and parse a single source. Returns (attempt, ledger values)."""
     # Parser binding is verified *before* the network call: a mis-wired
@@ -447,6 +449,7 @@ def acquire_source(
             trading_date=trading_date,
             ticker=candidate_code,
             content_type=result.content_type,
+            previous_trading_date=previous_trading_date,
         ),
     )
 
@@ -570,6 +573,24 @@ def acquire_stage(
 
     cache = RequestBudgetCache(run_dir, existing_ledger)
 
+    # The exact previous JPX trading date, resolved once per stage from
+    # verified JPX_CALENDAR evidence already on the run's ledger (Stage1
+    # acquires JPX_CALENDAR; Stage2 consumes it). Only the history parsers
+    # (YAHOO_JP_HISTORY / KABUTAN_HISTORY) read this; every other source
+    # simply ignores it. None (calendar evidence unavailable) means those
+    # parsers must not derive previous_close/previous_high at all.
+    previous_trading_date = (
+        verified_previous_trading_date(
+            existing_ledger,
+            run_dir=run_dir,
+            trading_date=trading_date,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+        )
+        if stage == "STAGE2"
+        else None
+    )
+
     seen_attempt_ids: set[str] = set()
     for source_id in selected:
         definition = definitions[source_id]
@@ -585,6 +606,7 @@ def acquire_stage(
                 issuer_registry=issuer_registry,
                 transport=transport,
                 cache=cache,
+                previous_trading_date=previous_trading_date,
             )
             # Request Budget: one GET per exact tuple, per run.
             if attempt["attempt_id"] in seen_attempt_ids:

@@ -178,6 +178,42 @@ def make_source_attempt(
     }
 
 
+def make_matching_source_attempt(sources: list[SourceRecord]) -> dict[str, object]:
+    """One synthetic Attempt whose ``values`` mirror ``sources`` exactly.
+
+    Lets a test assert Source Ledger Integrity (every sources.json
+    source_ref traces to a real source_attempts[].values[] Attempt Value)
+    without hand-building one attempt per source. It is not a claim about
+    which real source_id acquired which value -- only that each ledger
+    source_ref has *some* backing Attempt Value, which is all
+    ``validate_source_ledger``'s integrity check requires.
+    """
+    return {
+        "attempt_id": "att-matching-fixture",
+        "source_id": "YAHOO_JP_HISTORY",
+        "source_role": "PRIMARY",
+        "criticality": "TRADE_CRITICAL",
+        "information_type": "OHLCV",
+        "candidate_code": None,
+        "target_date": "2026-08-10",
+        "research_cutoff": "2026-08-07T20:00:00+09:00",
+        "requested_at": "2026-08-07T20:05:00+09:00",
+        "retrieved_at": "2026-08-07T20:06:00+09:00",
+        "url": "https://finance.yahoo.co.jp/quote/1234.T/history",
+        "status": "FOUND",
+        "values": [
+            {
+                "source_ref": source.source_ref,
+                "field_name": source.field_name,
+                "value": source.value,
+            }
+            for source in sources
+        ],
+        "result_count": len(sources),
+        "notes": [],
+    }
+
+
 def make_source_check(check_id: str, **overrides) -> dict[str, object]:
     check = {
         "check_id": check_id,

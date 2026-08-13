@@ -234,6 +234,11 @@ SOURCED_TEXT_FIELDS = (
     "market",
 )
 OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
+#: Source Ledger Integrity (every sources.json source traces to a real
+#: source_attempts[].values[] Attempt Value) applies from this ledger
+#: schema_version onward; see validate_source_ledger.
+SOURCES_SCHEMA_VERSION_FOR_INTEGRITY_CHECK = 3
+
 DATA_AVAILABLE_STATUS = "VERIFIED"
 DATA_BLOCKING_STATUSES = {
     "DATA_UNAVAILABLE",
@@ -344,7 +349,8 @@ def validate_market_data(
             source for source in record.sources if source.field_name == field_name
         ]
         if not field_sources:
-            errors.append(f"Missing source for market data field: {field_name}")
+            if not _has_verified_provenance(record, field_name):
+                errors.append(f"Missing source for market data field: {field_name}")
             continue
         record_value = getattr(record, field_name)
         source_values = [_as_decimal(source.value) for source in field_sources]
@@ -359,7 +365,8 @@ def validate_market_data(
             source for source in record.sources if source.field_name == field_name
         ]
         if not field_sources:
-            errors.append(f"Missing source for market data field: {field_name}")
+            if not _has_verified_provenance(record, field_name):
+                errors.append(f"Missing source for market data field: {field_name}")
             continue
         record_value = getattr(record, field_name)
         source_values = [
@@ -442,6 +449,41 @@ def _validate_source(
     return errors
 
 
+def _tick_size_has_jpx_primary_source(record: MarketDataRecord) -> bool:
+    """Whether tick_size's field_provenance traces to a real JPX_TICK_SIZE PRIMARY source.
+
+    tick_size is a Derived Value (JPX_TICK_SIZE band table + JPX_TOPIX500
+    membership + a price input, resolved deterministically), so there is no
+    literal source record whose own field_name is "tick_size" -- that would
+    require fabricating a Source Record that never came out of a parser.
+    Traceability instead runs through field_provenance[tick_size].source_refs,
+    which ``_validate_tick_size_provenance`` already requires to reference a
+    genuine JPX_TICK_SIZE PRIMARY source record (under that source's own
+    field_name, e.g. "tick_size_table").
+    """
+    source_by_ref = {
+        source.source_ref: source
+        for source in record.sources
+        if source.source_ref is not None
+    }
+    for provenance in record.field_provenance:
+        if _optional_text(provenance.get("field_name")) != "tick_size":
+            continue
+        source_refs = provenance.get("source_refs", [])
+        if not isinstance(source_refs, list):
+            continue
+        for source_ref in source_refs:
+            source = source_by_ref.get(str(source_ref))
+            if (
+                source is not None
+                and source.source_id == "JPX_TICK_SIZE"
+                and source.source_role == "PRIMARY"
+                and source.source_status == "FOUND"
+            ):
+                return True
+    return False
+
+
 def _validate_ohlcv_source_policy(record: MarketDataRecord) -> list[str]:
     errors: list[str] = []
     for field_name in OHLCV_FIELDS:
@@ -467,17 +509,31 @@ def _validate_ohlcv_source_policy(record: MarketDataRecord) -> list[str]:
         elif not has_secondary:
             errors.append(f"Missing secondary OHLCV source for field: {field_name}")
 
-    tick_sources = [
-        source
-        for source in record.sources
-        if source.field_name == "tick_size" and source.source_status == "FOUND"
-    ]
-    if not any(
-        source.source_id == "JPX_TICK_SIZE" and source.source_role == "PRIMARY"
-        for source in tick_sources
-    ):
+    if not _tick_size_has_jpx_primary_source(record):
         errors.append("Missing JPX primary source for tick_size")
     return errors
+
+
+def _has_verified_provenance(record: MarketDataRecord, field_name: str) -> bool:
+    """Whether ``field_name`` is backed by a VERIFIED field_provenance entry.
+
+    Some market_data fields (the STAGE1 renames -- company_name / market /
+    share_unit -- and the computed tick_size) are derived from a source page
+    whose own parsed field_name differs from, or has no 1:1 counterpart with,
+    the market_data field. Such a field has no literal same-named source
+    record, but it is fully traced through field_provenance instead:
+    ``_validate_field_provenance`` (called earlier in
+    :func:`validate_market_data`) already verifies that entry's
+    ``verified_value`` matches the record and that every one of its
+    ``source_refs`` resolves to a real record source, so this only needs to
+    confirm the entry exists and claims VERIFIED -- any inconsistency in it
+    is already reported as its own error.
+    """
+    return any(
+        _optional_text(item.get("field_name")) == field_name
+        and item.get("status") == "VERIFIED"
+        for item in record.field_provenance
+    )
 
 
 def _validate_field_provenance(record: MarketDataRecord) -> list[str]:
@@ -643,6 +699,22 @@ def validate_source_ledger(
         errors.append("sources.json target_date does not match market_data.json")
 
     ledger_sources = source_payload["sources"]
+    # Source Ledger Integrity applies from schema_version 3 (Source Ledger v3,
+    # where every Attempt Value keeps the source_ref its Source Record later
+    # reuses) onward. Pre-v3 fixtures -- frozen historical regression runs
+    # predating that convention -- are grandfathered rather than rewritten;
+    # they are exercised for their own (unchanged) invariants elsewhere.
+    check_attempt_integrity = int(source_payload.get("schema_version") or 0) >= SOURCES_SCHEMA_VERSION_FOR_INTEGRITY_CHECK
+    attempt_value_refs = (
+        {
+            _optional_text(value.get("source_ref"))
+            for attempt in source_payload.get("source_attempts", [])
+            for value in (attempt.get("values") or [])
+            if isinstance(value, dict)
+        }
+        if check_attempt_integrity
+        else None
+    )
     for index, source in enumerate(ledger_sources):
         errors.extend(
             source_definition_errors(
@@ -661,6 +733,20 @@ def validate_source_ledger(
                 f"sources[{index}]",
             )
         )
+        # Source Ledger Integrity (FIX-R2-001B): every sources.json source
+        # must trace to a real parsed Attempt Value carrying the identical
+        # source_ref. A source_ref with no such Attempt Value behind it is a
+        # fabricated Source Record -- e.g. a traceability "alias" grafted on
+        # after parsing -- never a genuine result of Raw Evidence -> Attempt
+        # Value -> Source Record.
+        if (
+            check_attempt_integrity
+            and _optional_text(source.get("source_ref")) not in attempt_value_refs
+        ):
+            errors.append(
+                f"sources[{index}].source_ref does not trace to any "
+                "source_attempts[].values[] Attempt Value"
+            )
 
     canonical_ledger = [_canonical_source(source) for source in ledger_sources]
     duplicate_count = len(canonical_ledger) - len(set(canonical_ledger))
