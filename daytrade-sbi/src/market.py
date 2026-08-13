@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -717,6 +718,13 @@ def validate_source_ledger(
                 f"source_attempts[{index}]",
             )
         )
+        errors.extend(
+            _source_page_hash_errors(
+                attempt,
+                source_base_dir,
+                f"source_attempts[{index}]",
+            )
+        )
     return SourceLedgerValidationResult(not errors, tuple(errors))
 
 
@@ -773,6 +781,42 @@ def _source_page_path_errors(
     if not target.is_file():
         return [f"{prefix}.source_page_path does not exist: {source_page_path}"]
     return []
+
+
+def _source_page_hash_errors(
+    attempt: dict[str, Any],
+    source_base_dir: Path | None,
+    prefix: str,
+) -> list[str]:
+    """Re-verify stored raw evidence against its recorded SHA256.
+
+    This is the raw-evidence gate for Source Ledger v3: the bytes a
+    deterministic parser read must still be, byte for byte, the bytes the
+    transport wrote. A mismatch is a hard error -- never a silent re-fetch,
+    never a silent repair.
+    """
+    expected = attempt.get("source_page_sha256")
+    source_page_path = attempt.get("source_page_path")
+    if expected is None or source_page_path is None or source_base_dir is None:
+        return []
+    target = (source_base_dir.resolve() / Path(str(source_page_path))).resolve()
+    if not target.is_file():
+        return []  # already reported by _source_page_path_errors
+    data = target.read_bytes()
+    actual = hashlib.sha256(data).hexdigest()
+    errors: list[str] = []
+    if actual != expected:
+        errors.append(
+            f"SOURCE_PAGE_HASH_MISMATCH: {prefix}.source_page_path {source_page_path} "
+            f"expected {expected}, found {actual}"
+        )
+    recorded_size = attempt.get("source_page_size_bytes")
+    if recorded_size is not None and recorded_size != len(data):
+        errors.append(
+            f"SOURCE_PAGE_SIZE_MISMATCH: {prefix}.source_page_size_bytes "
+            f"{recorded_size} != {len(data)}"
+        )
+    return errors
 
 
 def audit_official_ohlcv(

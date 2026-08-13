@@ -354,7 +354,73 @@ def build_parser() -> argparse.ArgumentParser:
     run_artifacts_parser = subparsers.add_parser("validate-run-artifacts")
     run_artifacts_parser.add_argument("--run-dir", required=True, type=Path)
     run_artifacts_parser.add_argument("--output", type=Path)
+
+    # --- Source Acquisition (deterministic HTTP, no AI in the numeric path) --
+    for command, needs_tickers in (
+        ("acquire-discovery", False),
+        ("acquire-stage1-sources", True),
+        ("acquire-stage2-market-sources", True),
+        ("acquire-actual-turnover", True),
+        ("acquire-event-sources", True),
+    ):
+        acquire_parser = subparsers.add_parser(command)
+        acquire_parser.add_argument("--target-date", required=True)
+        acquire_parser.add_argument("--trading-date", required=True)
+        acquire_parser.add_argument("--research-cutoff", required=True)
+        acquire_parser.add_argument("--run-dir", required=True, type=Path)
+        acquire_parser.add_argument("--sources", required=True, type=Path)
+        acquire_parser.add_argument(
+            "--source-matrix", type=Path, default=DEFAULT_SOURCE_MATRIX_PATH
+        )
+        acquire_parser.add_argument(
+            "--ticker",
+            action="append",
+            default=[],
+            required=needs_tickers,
+            help="candidate ticker; repeat for each candidate",
+        )
+        acquire_parser.add_argument("--output", type=Path)
+
+    merge_event_parser = subparsers.add_parser("merge-event-source-extraction")
+    merge_event_parser.add_argument("--extraction", required=True, type=Path)
+    merge_event_parser.add_argument("--sources", required=True, type=Path)
+    merge_event_parser.add_argument("--run-dir", type=Path)
+    merge_event_parser.add_argument("--output", type=Path)
+
+    verify_run_parser = subparsers.add_parser("verify-production-run")
+    verify_run_parser.add_argument("--run-dir", required=True, type=Path)
+    verify_run_parser.add_argument(
+        "--source-matrix", type=Path, default=DEFAULT_SOURCE_MATRIX_PATH
+    )
+    verify_run_parser.add_argument("--output", type=Path)
+
+    verify_happy_parser = subparsers.add_parser("verify-production-happy-path")
+    verify_happy_parser.add_argument("--run-dir", required=True, type=Path)
+    verify_happy_parser.add_argument(
+        "--source-matrix", type=Path, default=DEFAULT_SOURCE_MATRIX_PATH
+    )
+    verify_happy_parser.add_argument("--output", type=Path)
+
+    activate_parser = subparsers.add_parser("activate-selection-config")
+    activate_parser.add_argument("--calibration", required=True, type=Path)
+    activate_parser.add_argument(
+        "--pair-id",
+        required=True,
+        help="the pair_id a HUMAN chose; the agent must never pick one",
+    )
+    activate_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    activate_parser.add_argument("--output", type=Path)
     return parser
+
+
+#: acquisition CLI command -> acquisition stage
+ACQUIRE_COMMAND_STAGES = {
+    "acquire-discovery": "DISCOVERY",
+    "acquire-stage1-sources": "STAGE1",
+    "acquire-stage2-market-sources": "STAGE2",
+    "acquire-actual-turnover": "TURNOVER",
+    "acquire-event-sources": "EVENT",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,7 +677,137 @@ def main(argv: list[str] | None = None) -> int:
                 + ", ".join(unexpected)
             )
         return 0
+    if args.command in ACQUIRE_COMMAND_STAGES:
+        return _acquire_sources(ACQUIRE_COMMAND_STAGES[args.command], args)
+    if args.command == "merge-event-source-extraction":
+        return _merge_event_source_extraction(
+            args.extraction, args.sources, args.run_dir, args.output
+        )
+    if args.command == "verify-production-run":
+        return _verify_production_run(args.run_dir, args.source_matrix, args.output)
+    if args.command == "verify-production-happy-path":
+        return _verify_production_happy_path(
+            args.run_dir, args.source_matrix, args.output
+        )
+    if args.command == "activate-selection-config":
+        return _activate_selection_config(
+            args.calibration, args.pair_id, args.config, args.output
+        )
     raise ValueError(f"Unknown command: {args.command}")
+
+
+def _acquire_sources(stage: str, args: argparse.Namespace) -> int:
+    """Stage-aware Source Acquisition.
+
+    Contract: fetch the stage's sources for exactly the supplied candidate
+    tickers, store the raw evidence, parse it deterministically, and merge the
+    resulting Source Ledger v3 attempts into ``--sources``.
+    """
+    from src.source_acquisition import (
+        acquire_stage,
+        load_ledger,
+        merge_ledger,
+        write_ledger,
+    )
+
+    source_matrix = load_source_matrix(args.source_matrix)
+    result = acquire_stage(
+        stage,
+        target_date=args.target_date,
+        trading_date=args.trading_date,
+        research_cutoff=args.research_cutoff,
+        tickers=list(args.ticker or []),
+        run_dir=args.run_dir,
+        source_matrix=source_matrix,
+    )
+    merged = merge_ledger(load_ledger(args.sources), result.as_ledger())
+    validate_json_document(merged, "sources.schema.json")
+    write_ledger(args.sources, merged)
+    _emit_json(
+        {
+            "status": result.gate_status,
+            "stage": stage,
+            "reason_codes": result.gate_reason_codes,
+            "attempt_count": len(result.attempts),
+            "value_count": len(result.values),
+        },
+        args.output,
+    )
+    return 0 if result.gate_status != "CLOSED" else 1
+
+
+def _merge_event_source_extraction(
+    extraction_path: Path,
+    sources_path: Path,
+    run_dir: Path | None,
+    output_path: Path | None,
+) -> int:
+    from src.event_source_extraction import merge_event_source_extraction_files
+
+    merged = merge_event_source_extraction_files(
+        extraction_path=extraction_path,
+        sources_path=sources_path,
+        run_dir=run_dir,
+    )
+    _emit_json(
+        {
+            "status": "MERGED",
+            "value_count": len(merged["sources"]),
+            "attempt_count": len(merged["source_attempts"]),
+        },
+        output_path,
+    )
+    return 0
+
+
+def _verify_production_run(
+    run_dir: Path,
+    source_matrix_path: Path,
+    output_path: Path | None,
+) -> int:
+    from src.production_verify import INVALID_RUN, verify_production_run
+
+    report = verify_production_run(run_dir, source_matrix_path=source_matrix_path)
+    _emit_json(report.as_dict(), output_path)
+    return 1 if report.status == INVALID_RUN else 0
+
+
+def _verify_production_happy_path(
+    run_dir: Path,
+    source_matrix_path: Path,
+    output_path: Path | None,
+) -> int:
+    from src.production_verify import (
+        VERIFIED_CASE_C,
+        verify_production_happy_path,
+    )
+
+    report = verify_production_happy_path(
+        run_dir, source_matrix_path=source_matrix_path
+    )
+    _emit_json(report.as_dict(), output_path)
+    return 0 if report.status == VERIFIED_CASE_C else 1
+
+
+def _activate_selection_config(
+    calibration_path: Path,
+    pair_id: str,
+    config_path: Path,
+    output_path: Path | None,
+) -> int:
+    """Apply the human-chosen threshold pair. Never chooses one itself."""
+    from src.selection_activation import activate_selection_config
+
+    calibration = load_json_document(
+        calibration_path, "selection_calibration.schema.json"
+    )
+    summary = activate_selection_config(
+        config_path=config_path,
+        calibration=calibration,
+        pair_id=pair_id,
+    )
+    _emit_json(summary, output_path)
+    return 0
 
 
 def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:

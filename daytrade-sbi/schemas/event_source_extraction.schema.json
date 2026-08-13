@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event_source_extraction.schema.json",
+  "title": "Event source AI classification (temporary working artifact)",
+  "description": "Written by the Event AI Classification step from LOCAL raw source pages only. It is never a business artifact: it must be merged into sources.json by merge-event-source-extraction, which revalidates every field.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "generated_at",
+    "classifier",
+    "extractions"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "classifier": {"type": "string", "minLength": 1},
+    "extractions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/extraction"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "extraction": {
+      "type": "object",
+      "required": [
+        "source_attempt_id",
+        "source_id",
+        "ticker",
+        "trading_date",
+        "source_page_sha256",
+        "event_type",
+        "event_date"
+      ],
+      "properties": {
+        "source_attempt_id": {"type": "string", "minLength": 1},
+        "source_id": {
+          "enum": [
+            "JPX_TDNET",
+            "COMPANY_IR_DISCLOSURE",
+            "YAHOO_JP_NEWS",
+            "KABUTAN_NEWS"
+          ]
+        },
+        "ticker": {"type": "string", "pattern": "^[0-9A-Z]{4}$"},
+        "trading_date": {"type": "string", "format": "date"},
+        "source_page_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_type": {
+          "enum": [
+            "EARNINGS_ANNOUNCEMENT",
+            "TIMELY_DISCLOSURE",
+            "IR_DISCLOSURE",
+            "NEWS",
+            "NONE"
+          ]
+        },
+        "event_date": {"type": ["string", "null"], "format": "date"},
+        "evidence_excerpt": {"type": "string", "maxLength": 400}
+      },
+      "additionalProperties": false
+    }
+  }
+}
