@@ -100,6 +100,347 @@ _REQUIRED_UPSTREAM_ARTIFACTS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Canonical JSON hashing vs. raw-byte hashing (kept as two distinct helpers
+# per spec INV-010/INV-011: raw-byte hashing verifies Artifact identity;
+# canonical-JSON hashing derives semantic identity such as cohort_id,
+# observation_id, pair_id, and calibration_context_sha256. The two must
+# never be interchanged.)
+# ---------------------------------------------------------------------------
+
+
+def sha256_raw_bytes(data: bytes) -> str:
+    """Raw-byte SHA256, used for Artifact identity verification (INV-010).
+
+    This is semantically distinct from ``sha256_canonical_json`` below --
+    never substitute one for the other.
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """Deterministic canonical JSON encoding used for semantic-identity
+    hashing only (cohort_id / observation_id / pair_id /
+    calibration_context_sha256). Never used for Artifact byte-identity
+    verification (INV-011).
+
+    Contract: UTF-8, sort_keys=True, separators=(",", ":"),
+    ensure_ascii=False, NaN/Infinity rejected (allow_nan=False).
+    """
+
+    def _default(obj: Any) -> Any:
+        raise TypeError(f"canonical_json_bytes: unsupported type {type(obj)!r}")
+
+    text = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        default=_default,
+    )
+    return text.encode("utf-8")
+
+
+def sha256_canonical_json(value: Any) -> str:
+    """SHA256 over ``canonical_json_bytes(value)``. Semantic-identity hash
+    only -- never used for raw Artifact byte-identity verification."""
+    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Calibration Context / Cohort Identity (spec section 25-30).
+#
+# Only these three mutable Selection config paths are excluded from the
+# Calibration Context -- nothing else (INV-013). The full config_sha256 is
+# never used directly as the Cohort key (INV-012); instead a
+# calibration_context_sha256 is derived over the config with exactly these
+# three paths removed.
+# ---------------------------------------------------------------------------
+
+CALIBRATION_CONTEXT_EXCLUDED_PATHS: tuple[tuple[str, ...], ...] = (
+    ("selection", "enabled"),
+    ("selection", "rules", "minimum_turnover_yen", "threshold_yen"),
+    ("selection", "rules", "maximum_relative_tick_size", "threshold_ratio"),
+)
+
+
+def _delete_path(container: dict[str, Any], path: tuple[str, ...]) -> None:
+    node = container
+    for key in path[:-1]:
+        if not isinstance(node, dict) or key not in node:
+            return
+        node = node[key]
+    if isinstance(node, dict):
+        node.pop(path[-1], None)
+
+
+def compute_calibration_context(validated_config: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of ``validated_config`` with exactly the three
+    allowed mutable Selection paths removed. Never mutates the input
+    (spec section 27)."""
+    import copy
+
+    context = copy.deepcopy(validated_config)
+    for path in CALIBRATION_CONTEXT_EXCLUDED_PATHS:
+        _delete_path(context, path)
+    return context
+
+
+def compute_calibration_context_sha256(validated_config: dict[str, Any]) -> str:
+    """sha256_canonical_json of the Calibration Context (spec section 27)."""
+    return sha256_canonical_json(compute_calibration_context(validated_config))
+
+
+def compute_cohort_id(
+    *,
+    strategy_version: str,
+    ranking_version: str,
+    ranking_schema_version: int,
+    selection_version: str,
+    calibration_context_sha256: str,
+    source_matrix_raw_sha256: str,
+) -> str:
+    """Cohort ID per spec section 30: canonical-JSON SHA256 over exactly
+    these six fields. UUIDs are never used (INV-014/INV-024 determinism)."""
+    key = {
+        "strategy_version": strategy_version,
+        "ranking_version": ranking_version,
+        "ranking_schema_version": ranking_schema_version,
+        "selection_version": selection_version,
+        "calibration_context_sha256": calibration_context_sha256,
+        "source_matrix_raw_sha256": source_matrix_raw_sha256,
+    }
+    return sha256_canonical_json(key)
+
+
+def compute_observation_id(
+    *, cohort_id: str, target_date: str, ranking_raw_sha256: str
+) -> str:
+    """Observation ID per spec section 24: canonical-JSON SHA256 over
+    (cohort_id, target_date, ranking_raw_sha256). UUIDs are never used."""
+    return sha256_canonical_json(
+        {
+            "cohort_id": cohort_id,
+            "target_date": target_date,
+            "ranking_raw_sha256": ranking_raw_sha256,
+        }
+    )
+
+
+def compute_pair_id(
+    *,
+    cohort_id: str,
+    minimum_turnover_yen: int,
+    maximum_relative_tick_numerator: int,
+    maximum_relative_tick_denominator: int,
+) -> str:
+    """Pair ID per spec section 40: canonical-JSON SHA256 over cohort_id,
+    minimum_turnover_yen, and the canonical maximum_relative_tick_size
+    ratio. UUIDs are never used."""
+    return sha256_canonical_json(
+        {
+            "cohort_id": cohort_id,
+            "minimum_turnover_yen": minimum_turnover_yen,
+            "maximum_relative_tick_size": {
+                "numerator": maximum_relative_tick_numerator,
+                "denominator": maximum_relative_tick_denominator,
+            },
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Candidate generation (spec section 33-37): observed values only. No
+# quantiles, grids, percentiles, top-N, every-Nth-value, or random sampling.
+# ---------------------------------------------------------------------------
+
+
+def generate_turnover_candidates(observations: list[dict[str, Any]]) -> list[int]:
+    """Distinct observed turnover_yen values, ascending. Observed values
+    only (spec section 33/35) -- never quantiles/grids/samples."""
+    distinct = {int(Decimal(str(item["turnover_yen"]))) for item in observations}
+    return sorted(distinct)
+
+
+def generate_relative_tick_candidates(
+    observations: list[dict[str, Any]],
+) -> list[tuple[int, int]]:
+    """Distinct observed canonical relative-tick ratios, exact-ratio
+    ascending (spec section 34) -- never Python tuple lexicographic sort."""
+    distinct: dict[tuple[int, int], None] = {}
+    for item in observations:
+        ratio = item["canonical_relative_tick_ratio"]
+        distinct[(ratio["numerator"], ratio["denominator"])] = None
+
+    ordered: list[tuple[int, int]] = []
+    for ratio in distinct:
+        inserted = False
+        for index, existing in enumerate(ordered):
+            if compare_exact_ratios(ratio[0], ratio[1], existing[0], existing[1]) < 0:
+                ordered.insert(index, ratio)
+                inserted = True
+                break
+        if not inserted:
+            ordered.append(ratio)
+    return ordered
+
+
+# ---------------------------------------------------------------------------
+# Threshold Pair generation (spec section 38-39): full Cartesian product,
+# fixed deterministic ordering (turnover ascending, then relative-tick exact
+# ascending). Nothing is thinned.
+# ---------------------------------------------------------------------------
+
+
+def generate_threshold_pairs(
+    turnover_candidates: list[int], relative_tick_candidates: list[tuple[int, int]]
+) -> list[tuple[int, tuple[int, int]]]:
+    pairs: list[tuple[int, tuple[int, int]]] = []
+    for turnover in turnover_candidates:
+        for ratio in relative_tick_candidates:
+            pairs.append((turnover, ratio))
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# Pair evaluation (spec section 41-46): reuses the existing Selection v1
+# evaluator (evaluate_selection_rules) -- never a re-implemented rule
+# evaluator. Observations are evaluated in target_date ascending order.
+# ---------------------------------------------------------------------------
+
+
+def evaluate_threshold_pair(
+    *,
+    cohort_id: str,
+    minimum_turnover_yen: int,
+    maximum_relative_tick_ratio: tuple[int, int],
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate one Threshold Pair against all Observations (already sorted
+    ascending by target_date by the caller), reusing
+    ``evaluate_selection_rules`` from src.selection -- never a re-implemented
+    Selection rule evaluator (INV-016)."""
+    from src.selection import evaluate_selection_rules
+
+    numerator, denominator = maximum_relative_tick_ratio
+    selection_config = {
+        "rules": {
+            "minimum_turnover_yen": {"threshold_yen": minimum_turnover_yen},
+            "maximum_relative_tick_size": {
+                "threshold_ratio": {"numerator": numerator, "denominator": denominator}
+            },
+        }
+    }
+
+    selected_count = 0
+    rejected_count = 0
+    rejected_turnover_only_count = 0
+    rejected_relative_tick_only_count = 0
+    rejected_both_count = 0
+    decision_bits: list[str] = []
+
+    ordered_observations = sorted(observations, key=lambda item: item["target_date"])
+
+    for observation in ordered_observations:
+        rank1 = {
+            "ticker": observation["ticker"],
+            "feature_values": {
+                "turnover_yen": observation["turnover_yen"],
+                "relative_tick_size": {
+                    "numerator_yen": observation["relative_tick_size"]["numerator_yen"],
+                    "denominator_yen": observation["relative_tick_size"]["denominator_yen"],
+                },
+            },
+        }
+        rule_evaluations = evaluate_selection_rules(rank1, selection_config)
+        reason_codes = [
+            item["reason_code"] for item in rule_evaluations if item["result"] == "REJECT"
+        ]
+        if not reason_codes:
+            selected_count += 1
+            decision_bits.append("1")
+        else:
+            rejected_count += 1
+            decision_bits.append("0")
+            if reason_codes == ["SELECTION_TURNOVER_BELOW_MINIMUM"]:
+                rejected_turnover_only_count += 1
+            elif reason_codes == ["SELECTION_RELATIVE_TICK_SIZE_ABOVE_MAXIMUM"]:
+                rejected_relative_tick_only_count += 1
+            else:
+                rejected_both_count += 1
+
+    observation_count = len(ordered_observations)
+    if selected_count + rejected_count != observation_count:
+        _hard_error(
+            "CALIBRATION_EVALUATION_INVARIANT_VIOLATION",
+            "selected_count + rejected_count must equal observation_count",
+        )
+    if (
+        rejected_turnover_only_count + rejected_relative_tick_only_count + rejected_both_count
+        != rejected_count
+    ):
+        _hard_error(
+            "CALIBRATION_EVALUATION_INVARIANT_VIOLATION",
+            "rejected_turnover_only_count + rejected_relative_tick_only_count + "
+            "rejected_both_count must equal rejected_count",
+        )
+
+    outcome_signature_sha256 = sha256_raw_bytes("".join(decision_bits).encode("utf-8"))
+    pair_id = compute_pair_id(
+        cohort_id=cohort_id,
+        minimum_turnover_yen=minimum_turnover_yen,
+        maximum_relative_tick_numerator=numerator,
+        maximum_relative_tick_denominator=denominator,
+    )
+
+    return {
+        "pair_id": pair_id,
+        "minimum_turnover_yen": minimum_turnover_yen,
+        "maximum_relative_tick_size": {"numerator": numerator, "denominator": denominator},
+        "observation_count": observation_count,
+        "selected_count": selected_count,
+        "rejected_count": rejected_count,
+        "selection_rate": {"numerator": selected_count, "denominator": observation_count}
+        if observation_count
+        else {"numerator": 0, "denominator": 0},
+        "rejected_turnover_only_count": rejected_turnover_only_count,
+        "rejected_relative_tick_only_count": rejected_relative_tick_only_count,
+        "rejected_both_count": rejected_both_count,
+        "outcome_signature_sha256": outcome_signature_sha256,
+    }
+
+
+def evaluate_all_threshold_pairs(
+    *,
+    cohort_id: str,
+    turnover_candidates: list[int],
+    relative_tick_candidates: list[tuple[int, int]],
+    observations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Evaluate the full Cartesian product of candidate pairs, in fixed
+    deterministic order (spec section 38-39/41/45). No pair is skipped."""
+    pairs = generate_threshold_pairs(turnover_candidates, relative_tick_candidates)
+    evaluated = [
+        evaluate_threshold_pair(
+            cohort_id=cohort_id,
+            minimum_turnover_yen=turnover,
+            maximum_relative_tick_ratio=ratio,
+            observations=observations,
+        )
+        for turnover, ratio in pairs
+    ]
+    expected_pair_count = len(turnover_candidates) * len(relative_tick_candidates)
+    if len(evaluated) != expected_pair_count:
+        _hard_error(
+            "CALIBRATION_PAIR_COUNT_INVARIANT_VIOLATION",
+            f"evaluated_pair_count ({len(evaluated)}) must equal "
+            f"turnover_candidate_count * relative_tick_candidate_count "
+            f"({expected_pair_count})",
+        )
+    return evaluated
+
+
 def build_selection_calibration_report(
     *,
     runs_dir: Path,
