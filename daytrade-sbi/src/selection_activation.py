@@ -71,6 +71,72 @@ def find_threshold_pair(calibration: dict[str, Any], pair_id: str) -> dict[str, 
     return matches[0]
 
 
+def check_calibration_trust(
+    calibration: dict[str, Any],
+    config: dict[str, Any],
+    source_matrix_path: Path,
+) -> dict[str, str]:
+    """Verify the calibration report describes **this** configuration.
+
+    A threshold pair is only meaningful for the exact cohort it was calibrated
+    against. Activating a pair from a stale report -- a different strategy, a
+    different selection version, a different calibration context, or a
+    different Source Matrix -- would apply numbers derived from a world that
+    no longer exists.
+
+    The identity values are recomputed with the *existing* calibration helpers
+    (:func:`compute_calibration_context_sha256`, ``sha256_raw_bytes``); nothing
+    is reimplemented here.
+    """
+    from src.selection_calibration import (
+        compute_calibration_context_sha256,
+        sha256_raw_bytes,
+    )
+
+    cohort = calibration.get("cohort")
+    if not isinstance(cohort, dict):
+        raise SelectionActivationError(
+            "CALIBRATION_COHORT_MISSING",
+            "the calibration report carries no cohort identity block",
+        )
+
+    selection = config.get("selection")
+    if not isinstance(selection, dict):
+        raise SelectionActivationError(
+            "SELECTION_BLOCK_MISSING", "strategy config has no selection block"
+        )
+
+    source_matrix_path = Path(source_matrix_path)
+    if not source_matrix_path.is_file():
+        raise SelectionActivationError(
+            "SOURCE_MATRIX_NOT_FOUND",
+            f"--source-matrix does not exist: {source_matrix_path}",
+        )
+
+    expected = {
+        "strategy_version": str(config.get("strategy_version")),
+        "selection_version": str(selection.get("version")),
+        "calibration_context_sha256": compute_calibration_context_sha256(config),
+        "source_matrix_raw_sha256": sha256_raw_bytes(source_matrix_path.read_bytes()),
+    }
+    codes = {
+        "strategy_version": "CALIBRATION_STRATEGY_VERSION_MISMATCH",
+        "selection_version": "CALIBRATION_SELECTION_VERSION_MISMATCH",
+        "calibration_context_sha256": "CALIBRATION_CONTEXT_MISMATCH",
+        "source_matrix_raw_sha256": "CALIBRATION_SOURCE_MATRIX_MISMATCH",
+    }
+    for field_name, expected_value in expected.items():
+        recorded = cohort.get(field_name)
+        if recorded != expected_value:
+            raise SelectionActivationError(
+                codes[field_name],
+                f"calibration cohort.{field_name} is {recorded!r}, but the "
+                f"configuration being activated has {expected_value!r}: the "
+                "calibration is stale and must be re-run",
+            )
+    return expected
+
+
 def check_activation_preconditions(config: dict[str, Any]) -> None:
     selection = config.get("selection")
     if not isinstance(selection, dict):
@@ -161,13 +227,19 @@ def activate_selection_config(
     config_path: Path = DEFAULT_CONFIG_PATH,
     calibration: dict[str, Any],
     pair_id: str,
+    source_matrix_path: Path,
 ) -> dict[str, Any]:
-    """Activate ``pair_id``. Returns a summary; raises on any violation."""
+    """Activate ``pair_id``. Returns a summary; raises on any violation.
+
+    On **any** rejection the configuration file is left byte-identical: every
+    check runs before the atomic replace, and the replace is the last step.
+    """
     config_path = Path(config_path)
-    pair = find_threshold_pair(calibration, pair_id)
 
     # load + validate the CURRENT config before touching anything
     current = load_strategy_config(config_path)
+    identity = check_calibration_trust(calibration, current, source_matrix_path)
+    pair = find_threshold_pair(calibration, pair_id)
     check_activation_preconditions(current)
 
     original_text = config_path.read_text(encoding="utf-8")
@@ -195,6 +267,7 @@ def activate_selection_config(
     return {
         "status": "SELECTION_CONFIG_ACTIVATED",
         "pair_id": pair_id,
+        "calibration_identity": identity,
         "minimum_turnover_yen": int(pair["minimum_turnover_yen"]),
         "maximum_relative_tick_size": {
             "numerator": int(ratio["numerator"]),

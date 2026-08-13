@@ -422,6 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="the pair_id a HUMAN chose; the agent must never pick one",
     )
     activate_parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    # Required, not defaulted: activation must be pinned to the exact Source
+    # Matrix bytes the calibration was produced under.
+    activate_parser.add_argument("--source-matrix", required=True, type=Path)
     activate_parser.add_argument("--output", type=Path)
     return parser
 
@@ -712,7 +715,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "activate-selection-config":
         return _activate_selection_config(
-            args.calibration, args.pair_id, args.config, args.output
+            args.calibration,
+            args.pair_id,
+            args.config,
+            args.source_matrix,
+            args.output,
         )
     raise ValueError(f"Unknown command: {args.command}")
 
@@ -894,7 +901,7 @@ def _verify_production_happy_path(
     output_path: Path | None,
 ) -> int:
     from src.production_verify import (
-        VERIFIED_CASE_C,
+        VERIFIED_STATUSES,
         verify_production_happy_path,
     )
 
@@ -902,13 +909,16 @@ def _verify_production_happy_path(
         run_dir, source_matrix_path=source_matrix_path
     )
     _emit_json(report.as_dict(), output_path)
-    return 0 if report.status == VERIFIED_CASE_C else 1
+    # A correct termination is the success condition -- including Case C
+    # NO_TRADE. A forced TRADE is not required and must never be.
+    return 0 if report.status in VERIFIED_STATUSES else 1
 
 
 def _activate_selection_config(
     calibration_path: Path,
     pair_id: str,
     config_path: Path,
+    source_matrix_path: Path,
     output_path: Path | None,
 ) -> int:
     """Apply the human-chosen threshold pair. Never chooses one itself."""
@@ -921,6 +931,7 @@ def _activate_selection_config(
         config_path=config_path,
         calibration=calibration,
         pair_id=pair_id,
+        source_matrix_path=source_matrix_path,
     )
     _emit_json(summary, output_path)
     return 0
