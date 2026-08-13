@@ -474,6 +474,8 @@ def _full_v6_chain(tmp_path, *, ticker: str = "AA01"):
                 str(ranking_path),
                 "--selection",
                 str(selection_path),
+                "--event-gate",
+                str(event_gate_path),
                 "--candidates",
                 str(candidates_path),
                 "--candidate-pipeline",
@@ -484,6 +486,8 @@ def _full_v6_chain(tmp_path, *, ticker: str = "AA01"):
                 str(research_window_path),
                 "--sources",
                 str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
@@ -498,6 +502,7 @@ def _full_v6_chain(tmp_path, *, ticker: str = "AA01"):
         "config": config,
         "ranking_path": ranking_path,
         "selection_path": selection_path,
+        "event_gate_path": event_gate_path,
         "candidates_path": candidates_path,
         "candidate_pipeline_path": candidate_pipeline_path,
         "market_data_path": market_data_path,
@@ -570,6 +575,8 @@ def test_cli_build_selection_recommendation_forged_selection_is_hard_error(tmp_p
                 str(ranking_path),
                 "--selection",
                 str(forged_selection_path),
+                "--event-gate",
+                str(paths["event_gate_path"]),
                 "--candidates",
                 str(tmp_path / "candidates.json"),
                 "--candidate-pipeline",
@@ -580,6 +587,8 @@ def test_cli_build_selection_recommendation_forged_selection_is_hard_error(tmp_p
                 str(tmp_path / "research_window.json"),
                 "--sources",
                 str(tmp_path / "sources.json"),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
@@ -615,6 +624,8 @@ def test_cli_build_selection_recommendation_input_hashes_mismatch_is_hard_error(
                 str(ranking_path),
                 "--selection",
                 str(tampered_path),
+                "--event-gate",
+                str(paths["event_gate_path"]),
                 "--candidates",
                 str(tmp_path / "candidates.json"),
                 "--candidate-pipeline",
@@ -625,6 +636,8 @@ def test_cli_build_selection_recommendation_input_hashes_mismatch_is_hard_error(
                 str(tmp_path / "research_window.json"),
                 "--sources",
                 str(tmp_path / "sources.json"),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
@@ -648,6 +661,8 @@ def _run_selection_recommendation(chain, tmp_path, *, overrides=None, output_nam
         str(chain["ranking_path"]),
         "--selection",
         str(chain["selection_path"]),
+        "--event-gate",
+        str(chain["event_gate_path"]),
         "--candidates",
         str(chain["candidates_path"]),
         "--candidate-pipeline",
@@ -658,6 +673,8 @@ def _run_selection_recommendation(chain, tmp_path, *, overrides=None, output_nam
         str(chain["research_window_path"]),
         "--sources",
         str(chain["sources_path"]),
+        "--source-matrix",
+        str(DEFAULT_SOURCE_MATRIX_PATH),
         "--config",
         str(chain["config_path"]),
         "--output",
@@ -678,12 +695,25 @@ def _tamper_json_file(src_path, tmp_path, name, mutate):
     return tampered_path
 
 
+# Note: candidates.json / market_data.json / sources.json are now also
+# Ranking's own claimed upstream inputs (re-verified by
+# load_and_verify_ranking_trust_chain, which build-selection-recommendation
+# now runs FIRST, before its own P1-4 cross-artifact checks). Mutating one
+# of them is therefore caught earlier, by the Ranking Trust Chain's raw-byte
+# hash/target_date re-verification, rather than by P1-4 -- both are
+# legitimate Hard Errors, so these tests accept either.
+_RANKING_TRUST_CHAIN_ERRORS = "RANKING_INPUT_HASHES_MISMATCH|RANKING_TARGET_DATE_MISMATCH"
+
+
 def test_selection_recommendation_candidates_target_date_mismatch_is_hard_error(tmp_path):
     chain = _full_v6_chain(tmp_path)
     tampered = _tamper_json_file(
         chain["candidates_path"], tmp_path, "bad_candidates.json", lambda p: p.__setitem__("target_date", "2099-01-01")
     )
-    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+    with pytest.raises(
+        ValueError,
+        match=f"SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH|{_RANKING_TRUST_CHAIN_ERRORS}",
+    ):
         _run_selection_recommendation(chain, tmp_path, overrides={"--candidates": tampered})
 
 
@@ -704,7 +734,10 @@ def test_selection_recommendation_market_data_target_date_mismatch_is_hard_error
     tampered = _tamper_json_file(
         chain["market_data_path"], tmp_path, "bad_market_data.json", lambda p: p.__setitem__("target_date", "2099-01-01")
     )
-    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+    with pytest.raises(
+        ValueError,
+        match=f"SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH|{_RANKING_TRUST_CHAIN_ERRORS}",
+    ):
         _run_selection_recommendation(chain, tmp_path, overrides={"--market-data": tampered})
 
 
@@ -725,7 +758,10 @@ def test_selection_recommendation_sources_target_date_mismatch_is_hard_error(tmp
     tampered = _tamper_json_file(
         chain["sources_path"], tmp_path, "bad_sources.json", lambda p: p.__setitem__("target_date", "2099-01-01")
     )
-    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH"):
+    with pytest.raises(
+        ValueError,
+        match=f"SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH|{_RANKING_TRUST_CHAIN_ERRORS}",
+    ):
         _run_selection_recommendation(chain, tmp_path, overrides={"--sources": tampered})
 
 
@@ -740,7 +776,7 @@ def test_selection_recommendation_ranking_target_date_mismatch_is_hard_error(tmp
     with pytest.raises(
         ValueError,
         match="SELECTION_RECOMMENDATION_TARGET_DATE_MISMATCH|SELECTION_OUTPUT_CONTRACT_MISMATCH|"
-        "SELECTION_RECOMMENDATION_INPUT_HASHES_MISMATCH",
+        f"SELECTION_RECOMMENDATION_INPUT_HASHES_MISMATCH|{_RANKING_TRUST_CHAIN_ERRORS}",
     ):
         _run_selection_recommendation(chain, tmp_path, overrides={"--ranking": tampered})
 
@@ -750,7 +786,10 @@ def test_selection_recommendation_strategy_version_mismatch_is_hard_error(tmp_pa
     tampered = _tamper_json_file(
         chain["candidates_path"], tmp_path, "bad_candidates_sv.json", lambda p: p.__setitem__("strategy_version", "other-v")
     )
-    with pytest.raises(ValueError, match="SELECTION_RECOMMENDATION_STRATEGY_VERSION_MISMATCH"):
+    with pytest.raises(
+        ValueError,
+        match=f"SELECTION_RECOMMENDATION_STRATEGY_VERSION_MISMATCH|{_RANKING_TRUST_CHAIN_ERRORS}",
+    ):
         _run_selection_recommendation(chain, tmp_path, overrides={"--candidates": tampered})
 
 
@@ -804,7 +843,16 @@ def test_selection_recommendation_previous_trading_day_mismatch_is_hard_error(tm
 # ---------------------------------------------------------------------------
 
 
-def _run_risk_check(chain, tmp_path, *, extra_args=None, selection_path=None, ranking_path=None):
+def _run_risk_check(
+    chain,
+    tmp_path,
+    *,
+    extra_args=None,
+    selection_path=None,
+    ranking_path=None,
+    event_gate_path=None,
+    research_window_path=None,
+):
     output_path = tmp_path / "risk_result.json"
     argv = [
         "risk-check",
@@ -831,6 +879,13 @@ def _run_risk_check(chain, tmp_path, *, extra_args=None, selection_path=None, ra
         argv += ["--selection", str(selection_path or chain["selection_path"])]
     if ranking_path is not False:
         argv += ["--ranking", str(ranking_path or chain["ranking_path"])]
+    if event_gate_path is not False:
+        argv += ["--event-gate", str(event_gate_path or chain["event_gate_path"])]
+    if research_window_path is not False:
+        argv += [
+            "--research-window",
+            str(research_window_path or chain["research_window_path"]),
+        ]
     if extra_args:
         argv += extra_args
     return cli.main(argv), output_path
@@ -1041,6 +1096,8 @@ def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
                 str(ranking_path),
                 "--selection",
                 str(selection_path),
+                "--event-gate",
+                str(event_gate_path),
                 "--candidates",
                 str(candidates_path),
                 "--candidate-pipeline",
@@ -1051,6 +1108,8 @@ def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
                 str(research_window_path),
                 "--sources",
                 str(sources_path),
+                "--source-matrix",
+                str(DEFAULT_SOURCE_MATRIX_PATH),
                 "--config",
                 str(config_path),
                 "--output",
@@ -1071,6 +1130,8 @@ def test_risk_check_no_rank2_fallback_on_reject(tmp_path):
         "sources_path": sources_path,
         "selection_path": selection_path,
         "ranking_path": ranking_path,
+        "event_gate_path": event_gate_path,
+        "research_window_path": research_window_path,
     }
     # current_positions == max_positions forces a REJECTED risk decision
     # regardless of market data, exercising the Risk REJECTED path.

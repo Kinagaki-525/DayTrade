@@ -1092,6 +1092,48 @@ def validate_ranking_terminal_recommendation_output_contract(
         )
 
 
+def validate_selection_recommendation_output_contract(
+    *,
+    recommendation: dict[str, Any],
+    selection: dict[str, Any],
+    candidates: dict[str, Any],
+    candidate_pipeline: dict[str, Any],
+    market_data: dict[str, Any],
+    research_window: dict[str, Any],
+    source_payload: dict[str, Any],
+    config: dict[str, Any],
+    selection_sha256: str,
+) -> None:
+    """Recompute the Selection Recommendation (Case C) from the same
+    already-trust-chain-verified inputs and compare, full dict equality.
+
+    Mirrors validate_ranking_terminal_recommendation_output_contract's
+    recompute-and-compare pattern for the Case C path.
+    ``build_selection_recommendation()`` never emits a generated_at-style
+    non-deterministic field, so this is a full, unqualified dict comparison.
+    ``selection_sha256`` must be the ACTUAL raw SHA256 of selection.json as
+    computed by the caller -- never trusted from any embedded field.
+    """
+    from src.selection_recommendation import build_selection_recommendation
+
+    recomputed = build_selection_recommendation(
+        selection=selection,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
+        selection_sha256=selection_sha256,
+    )
+    if recommendation != recomputed:
+        raise ValueError(
+            "SELECTION_RECOMMENDATION_OUTPUT_CONTRACT_MISMATCH: recommendation.json does "
+            "not match the recomputed Selection Recommendation payload for the same "
+            "genuinely re-verified Selection + upstream artifact inputs"
+        )
+
+
 def validate_recommendation_selection_link(
     *,
     recommendation: dict[str, Any],

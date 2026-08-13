@@ -42,6 +42,7 @@ from src.contracts import (
     validate_run_artifact_allowlist,
     validate_selection_output_contract,
     validate_selection_preconditions,
+    validate_selection_recommendation_output_contract,
     validate_selection_recommendation_preconditions,
 )
 from src.execution import append_trade, build_trade_row
@@ -233,11 +234,13 @@ def build_parser() -> argparse.ArgumentParser:
     selection_recommendation_parser = subparsers.add_parser("build-selection-recommendation")
     selection_recommendation_parser.add_argument("--ranking", required=True, type=Path)
     selection_recommendation_parser.add_argument("--selection", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--event-gate", required=True, type=Path)
     selection_recommendation_parser.add_argument("--candidates", required=True, type=Path)
     selection_recommendation_parser.add_argument("--candidate-pipeline", required=True, type=Path)
     selection_recommendation_parser.add_argument("--market-data", required=True, type=Path)
     selection_recommendation_parser.add_argument("--research-window", required=True, type=Path)
     selection_recommendation_parser.add_argument("--sources", required=True, type=Path)
+    selection_recommendation_parser.add_argument("--source-matrix", required=True, type=Path)
     selection_recommendation_parser.add_argument("--config", required=True, type=Path)
     selection_recommendation_parser.add_argument("--output", required=True, type=Path)
 
@@ -473,11 +476,13 @@ def main(argv: list[str] | None = None) -> int:
         return _build_selection_recommendation(
             args.ranking,
             args.selection,
+            args.event_gate,
             args.candidates,
             args.candidate_pipeline,
             args.market_data,
             args.research_window,
             args.sources,
+            args.source_matrix,
             args.config,
             args.output,
         )
@@ -849,12 +854,40 @@ def _risk_check(
                 "RISK_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
                 "Selection-driven (recommendation.schema_version == 2) recommendation"
             )
+        if event_gate_path is None:
+            raise ValueError(
+                "RISK_SELECTION_EVENT_GATE_REQUIRED: --event-gate is required for a "
+                "config_schema_version 6 Selection-driven (recommendation.schema_version == 2) "
+                "recommendation"
+            )
+        if research_window_path is None:
+            raise ValueError(
+                "RISK_SELECTION_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
+                "config_schema_version 6 Selection-driven (recommendation.schema_version == 2) "
+                "recommendation"
+            )
+
+        # Full re-verification of the Ranking Trust Chain BEFORE any of
+        # Selection's own business logic is trusted -- mirrors
+        # build-selection/build-selection-recommendation exactly, via the
+        # SAME shared helper, so Risk can never be tricked by a forged
+        # ranking.json whose downstream selection/recommendation hashes were
+        # also faked to stay self-consistent.
+        bundle = load_and_verify_ranking_trust_chain(
+            ranking_path=ranking_path,
+            event_gate_path=event_gate_path,
+            candidates_path=candidates_path,
+            market_data_path=market_data_path,
+            sources_path=sources_path,
+            source_matrix_path=source_matrix_path,
+            config_path=config_path,
+        )
+        ranking = bundle.ranking
 
         ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
         selection_sha256 = _sha256_bytes(selection_path.read_bytes())
-        strategy_snapshot_sha256 = _sha256_bytes(config_path.read_bytes())
+        strategy_snapshot_sha256 = bundle.actual_ranking_input_hashes["strategy_snapshot_sha256"]
 
-        ranking = load_json_document(ranking_path, "ranking.schema.json")
         selection = load_json_document(selection_path, "selection.schema.json")
 
         actual_selection_input_hashes = {
@@ -875,6 +908,36 @@ def _risk_check(
         validate_recommendation_selection_link(
             recommendation=recommendation,
             selection=selection,
+            selection_sha256=selection_sha256,
+        )
+
+        research_window = load_json_document(
+            research_window_path, "research_window.schema.json"
+        )
+        selection_candidates = load_json_document(candidates_path, "candidates.schema.json")
+        selection_candidate_pipeline = load_json_document(
+            candidate_pipeline_path, "candidate_pipeline.schema.json"
+        )
+        selection_market_data = load_json_document(market_data_path, "market_data.schema.json")
+        selection_source_payload = load_json_document(sources_path, "sources.schema.json")
+
+        # Recompute-and-compare the entire Selection Recommendation itself:
+        # catches a Recommendation whose Selection-link fields are each
+        # individually correct but where some OTHER field (notes,
+        # source_urls, order values, selection_reasons, ...) was
+        # independently hand-tampered. Runs for BOTH TRADE and NO_TRADE
+        # Selection-driven recommendations -- proving the NO_TRADE
+        # recommendation itself is genuine before Risk even says
+        # NOT_APPLICABLE.
+        validate_selection_recommendation_output_contract(
+            recommendation=recommendation,
+            selection=selection,
+            candidates=selection_candidates,
+            candidate_pipeline=selection_candidate_pipeline,
+            market_data=selection_market_data,
+            research_window=research_window,
+            source_payload=selection_source_payload,
+            config=config,
             selection_sha256=selection_sha256,
         )
     elif selection_path is not None:
@@ -1728,38 +1791,60 @@ def _evaluate_selection_thresholds(
 def _build_selection_recommendation(
     ranking_path: Path,
     selection_path: Path,
+    event_gate_path: Path,
     candidates_path: Path,
     candidate_pipeline_path: Path,
     market_data_path: Path,
     research_window_path: Path,
     sources_path: Path,
+    source_matrix_path: Path,
     config_path: Path,
     output_path: Path,
 ) -> int:
     from src.selection_recommendation import build_selection_recommendation
 
-    # Fixed processing order (closes the trust-chain bypass): hash the raw
-    # bytes of ranking.json / selection.json / the strategy snapshot ->
-    # schema-validate ranking + selection -> load config -> build the ACTUAL
-    # input_hashes Selection should have used -> assert selection.input_hashes
-    # matches exactly -> validate_selection_preconditions ->
-    # validate_selection_output_contract (recomputes build_selection() and
-    # requires an exact match, catching a hand-forged selection.json whose
-    # business content does not match what Rank 1 would really produce, even
-    # if its input_hashes field was also faked to look self-consistent) ->
-    # only then proceed to the existing candidate/pipeline/market-data/
-    # sources cross-validation + build_selection_recommendation().
-    ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
+    # Fixed processing order (closes the trust-chain bypass):
+    #  1. hash selection.json's raw bytes (Selection's own input_hashes-chain
+    #     hash AND recommendation.selection_sha256 -- kept separate)
+    #  2. load_and_verify_ranking_trust_chain(): full re-verification that
+    #     ranking.json was genuinely produced from its own claimed upstream
+    #     artifacts. This MUST run before Selection's own hash-chain check --
+    #     a forged ranking.json that an attacker also made selection.json
+    #     self-consistent with must never slip past Ranking verification.
+    #  3. schema-validate selection.json
+    #  4. build the ACTUAL Selection input_hashes = {ranking_sha256,
+    #     strategy_snapshot_sha256} (ranking_sha256 computed independently,
+    #     strategy_snapshot_sha256 reused from the bundle)
+    #  5. assert selection.input_hashes matches exactly
+    #  6. validate_selection_preconditions
+    #  7. validate_selection_output_contract (recompute-and-compare, catches
+    #     a hand-forged selection.json even with self-consistent hashes)
+    #  8. load candidate_pipeline.json / research_window.json
+    #  9. validate_selection_recommendation_preconditions (broad
+    #     cross-artifact check)
+    #  10. build_selection_recommendation (pure function)
+    #  11. schema-validate the resulting payload
+    #  12. validate_recommendation_selection_link
+    #  13. atomic write only on full success
     selection_sha256 = _sha256_bytes(selection_path.read_bytes())
-    strategy_snapshot_sha256 = _sha256_bytes(config_path.read_bytes())
 
-    ranking = load_json_document(ranking_path, "ranking.schema.json")
+    bundle = load_and_verify_ranking_trust_chain(
+        ranking_path=ranking_path,
+        event_gate_path=event_gate_path,
+        candidates_path=candidates_path,
+        market_data_path=market_data_path,
+        sources_path=sources_path,
+        source_matrix_path=source_matrix_path,
+        config_path=config_path,
+    )
+    ranking = bundle.ranking
+    config = bundle.config
+
     selection = load_json_document(selection_path, "selection.schema.json")
-    config = load_strategy_config(config_path)
 
     actual_input_hashes = {
-        "ranking_sha256": ranking_sha256,
-        "strategy_snapshot_sha256": strategy_snapshot_sha256,
+        "ranking_sha256": _sha256_bytes(ranking_path.read_bytes()),
+        "strategy_snapshot_sha256": bundle.actual_ranking_input_hashes["strategy_snapshot_sha256"],
     }
     if selection.get("input_hashes") != actual_input_hashes:
         raise ValueError(
@@ -1820,6 +1905,17 @@ def _build_selection_recommendation(
     validate_recommendation_selection_link(
         recommendation=payload,
         selection=selection,
+        selection_sha256=selection_sha256,
+    )
+    validate_selection_recommendation_output_contract(
+        recommendation=payload,
+        selection=selection,
+        candidates=candidates,
+        candidate_pipeline=candidate_pipeline,
+        market_data=market_data,
+        research_window=research_window,
+        source_payload=source_payload,
+        config=config,
         selection_sha256=selection_sha256,
     )
     _write_json(output_path, payload, "recommendation.schema.json")
