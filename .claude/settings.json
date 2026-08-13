@@ -2,6 +2,7 @@
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
     "deny": [
       "WebSearch",
       "WebFetch",
@@ -20,6 +21,7 @@
   },
   "sandbox": {
     "enabled": true,
+    "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "autoAllowBashIfSandboxed": false,
     "network": {

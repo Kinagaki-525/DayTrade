@@ -130,11 +130,12 @@ def test_sandbox_unavailability_may_not_silently_fall_back_to_the_host():
 
 
 def test_permission_escalation_modes_are_disabled():
-    """``disableBypassPermissionsMode`` lives inside ``permissions`` in Claude
-    Code's settings.json schema, alongside ``defaultMode`` -- not at the top
-    level, and there is no ``disableAutoMode`` key."""
+    """``disableBypassPermissionsMode`` and ``disableAutoMode`` live inside
+    ``permissions`` in Claude Code's settings.json schema, alongside
+    ``defaultMode`` -- not at the top level."""
     permissions = _settings()["permissions"]
     assert permissions["disableBypassPermissionsMode"] == "disable"
+    assert permissions["disableAutoMode"] == "disable"
     assert permissions["defaultMode"] == "default"
     assert "disableAutoMode" not in _settings()
     assert "disableBypassPermissionsMode" not in _settings()
