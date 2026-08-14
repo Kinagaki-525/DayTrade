@@ -22,7 +22,9 @@ ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: The current JPX official non-business-day calendar publishes each
 #: holiday's date as ``YYYY/MM/DD（曜）`` -- the parenthesized weekday
 #: character is display-only and is never used for business-day judgement,
-#: only the digits are.
+#: only the digits are. Used with ``.search()`` for the whole-page
+#: "any stray date" sweep, and with ``.fullmatch()`` against an individual
+#: table cell, which must be *exactly* this shape and nothing else.
 JPX_SLASH_DATE_PATTERN = re.compile(r"(\d{4})/(\d{2})/(\d{2})（[^）]*）")
 
 #: A year section heading: an isolated ``<h1>``-``<h4>`` whose entire text
@@ -84,14 +86,44 @@ def parse_calendar(
             )
         table_html = table_match.group(1)
 
+        rows = [row for row in table_rows(table_html) if row]
+        if not rows:
+            return parse_failed(f"{year}年 section's holiday table has no rows")
+
+        # The first row must be the expected 日付 / 名称 header -- a table
+        # that doesn't carry that header is not recognizably a JPX holiday
+        # table at all, even if its body happens to contain date-shaped text.
+        header, data_rows = rows[0], rows[1:]
+        if (
+            len(header) < 2
+            or "日付" not in header[0]
+            or "名称" not in header[1]
+        ):
+            return parse_failed(
+                f"{year}年 section's table header is not 日付/名称"
+            )
+        if not data_rows:
+            return parse_failed(f"{year}年 section's holiday table has no data rows")
+
         year_dates: list[str] = []
-        for row in table_rows(table_html):
-            if not row:
-                continue
-            match = JPX_SLASH_DATE_PATTERN.search(row[0])
+        for row in data_rows:
+            # Every data row must have at least the date and name columns,
+            # and the date column must be *exactly* YYYY/MM/DD（曜）-- a
+            # malformed row is never silently skipped, it fails the whole
+            # calendar the same as an invalid or cross-year date would.
+            if len(row) < 2:
+                return parse_failed(
+                    f"{year}年 section holiday row is missing the name column: {row!r}"
+                )
+            match = JPX_SLASH_DATE_PATTERN.fullmatch(row[0])
             if match is None:
-                # A header row ("日付" / "名称") or other non-date row.
-                continue
+                return parse_failed(
+                    f"{year}年 section holiday row date is not YYYY/MM/DD（曜）: {row[0]!r}"
+                )
+            if not row[1]:
+                return parse_failed(
+                    f"{year}年 section holiday row has an empty name column"
+                )
             row_year, month, day = match.groups()
             if row_year != year:
                 return parse_failed(
@@ -106,11 +138,6 @@ def parse_calendar(
                 )
             if iso not in year_dates:
                 year_dates.append(iso)
-
-        if not year_dates:
-            return parse_failed(
-                f"{year}年 section's holiday table has no recognizable holiday rows"
-            )
 
         covered_years.append(year)
         for iso in year_dates:

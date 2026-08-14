@@ -308,7 +308,7 @@ def test_jpx_calendar_production_slash_date_format():
     the weekday character is display-only and never drives the parse."""
     page = (
         "<html><head><meta charset=\"utf-8\"></head><body>"
-        "<h2>2026年</h2><table><tbody>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
         "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
         "<tr><td>2026/08/11（火）</td><td>山の日</td></tr>"
         "</tbody></table></body></html>"
@@ -322,7 +322,7 @@ def test_jpx_calendar_production_slash_date_format():
 def test_jpx_calendar_invalid_date_is_parse_failed():
     page = (
         "<html><head><meta charset=\"utf-8\"></head><body>"
-        "<h2>2026年</h2><table><tbody>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
         "<tr><td>2026/13/40（木）</td><td>存在しない日</td></tr>"
         "</tbody></table></body></html>"
     ).encode("utf-8")
@@ -334,7 +334,7 @@ def test_jpx_calendar_date_outside_any_year_section_is_parse_failed():
     page = (
         "<html><head><meta charset=\"utf-8\"></head><body>"
         "<p>2026/08/11（火）山の日</p>"
-        "<h2>2026年</h2><table><tbody>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
         "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
         "</tbody></table></body></html>"
     ).encode("utf-8")
@@ -345,7 +345,7 @@ def test_jpx_calendar_date_outside_any_year_section_is_parse_failed():
 def test_jpx_calendar_date_mismatched_with_its_section_year_is_parse_failed():
     page = (
         "<html><head><meta charset=\"utf-8\"></head><body>"
-        "<h2>2026年</h2><table><tbody>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
         "<tr><td>2027/01/01（金）</td><td>元日</td></tr>"
         "</tbody></table></body></html>"
     ).encode("utf-8")
@@ -421,7 +421,7 @@ def test_jpx_calendar_one_broken_year_section_fails_the_whole_calendar():
     and 2027 as merely uncovered."""
     page = (
         "<html><head><meta charset=\"utf-8\"></head><body>"
-        "<h2>2026年</h2><table><tbody>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
         "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
         "</tbody></table>"
         "<h2>2027年</h2><table><tbody></tbody></table>"
@@ -441,6 +441,82 @@ def test_jpx_calendar_only_a_structurally_valid_section_creates_coverage():
     non_business_days = next(v for v in result.values if v.field_name == "non_business_days")
     assert covered_years.value == ["2026"]
     assert non_business_days.value == ["2026-08-11"]
+
+
+# ------------------------------------------------- FIX-R2-001E: row rigor ---
+
+
+def test_jpx_calendar_valid_row_mixed_with_malformed_row_is_parse_failed():
+    """Test A: one well-formed row plus one malformed row in the same
+    table -- the malformed row must not be silently dropped."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "<tr><td>not a date</td><td>謎の休日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_row_with_only_a_date_column_is_parse_failed():
+    """Test B: a data row with just one column (date, no name) fails --
+    never treated as "close enough"."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
+        "<tr><td>2026/01/01（木）</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_unrecognized_header_with_real_looking_dates_is_parse_failed():
+    """Test C: the table body has genuine-looking YYYY/MM/DD（曜） rows, but
+    the header does not read as 日付/名称 -- this is not confidently a JPX
+    holiday table, regardless of what the body contains."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>Col A</th><th>Col B</th></tr></thead><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_normal_jpx_shaped_table_is_found():
+    """Test D: a fully well-formed JPX-shaped table (header + >=1 valid
+    two-column row, all in the section's own year) is FOUND with coverage."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "<tr><td>2026/08/11（火）</td><td>山の日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "FOUND"
+    covered_years = next(v for v in result.values if v.field_name == "calendar_covered_years")
+    non_business_days = next(v for v in result.values if v.field_name == "non_business_days")
+    assert covered_years.value == ["2026"]
+    assert non_business_days.value == ["2026-01-01", "2026-08-11"]
+
+
+def test_jpx_calendar_valid_row_mixed_with_cross_year_row_is_parse_failed():
+    """Test E: a normal in-year row alongside a cross-year row in the same
+    2026年 section table."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "<tr><td>2027/01/01（金）</td><td>元日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
 
 
 # ------------------------------------------------------------- dispatch -----
