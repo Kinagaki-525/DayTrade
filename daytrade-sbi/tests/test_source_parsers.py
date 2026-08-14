@@ -362,6 +362,87 @@ def test_jpx_calendar_no_year_section_is_not_found():
     assert result.status == "NOT_FOUND"
 
 
+# ------------------------------------------------- FIX-R2-001D: coverage ----
+
+
+def test_jpx_calendar_bare_year_heading_cannot_create_coverage():
+    """A year heading with no table at all must not become "covered"."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2>"
+        "</body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status != "FOUND"
+
+
+def test_jpx_calendar_empty_year_table_cannot_create_coverage():
+    """A year heading followed by a header-only, zero-row table must not
+    become "covered" either."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr>"
+        "</thead><tbody></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status != "FOUND"
+
+
+def test_jpx_calendar_malformed_row_in_year_table_is_parse_failed():
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><thead><tr><th>日付</th><th>名称</th></tr></thead>"
+        "<tbody><tr><td>not a date at all</td><td>謎の休日</td></tr></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    # No recognizable holiday row in the table -> the whole section (and
+    # therefore the whole parse) fails, the same as an empty table.
+    assert result.status != "FOUND"
+
+
+def test_jpx_calendar_truncated_table_is_parse_failed():
+    """A table that never closes before the next heading / end of page is a
+    structural failure, not an empty-but-valid section."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td>"
+        "</body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status != "FOUND"
+
+
+def test_jpx_calendar_one_broken_year_section_fails_the_whole_calendar():
+    """A genuinely valid 2026 section next to a broken, empty 2027 section:
+    the whole parse fails rather than silently reporting 2026 as covered
+    and 2027 as merely uncovered."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "</tbody></table>"
+        "<h2>2027年</h2><table><tbody></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_only_a_structurally_valid_section_creates_coverage():
+    """The positive counterpart: a proper heading + header row + >=1 valid
+    data row does create coverage for that year."""
+    page = pages.jpx_calendar_page((("2026-08-11", "山の日"),))
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "FOUND"
+    covered_years = next(v for v in result.values if v.field_name == "calendar_covered_years")
+    non_business_days = next(v for v in result.values if v.field_name == "non_business_days")
+    assert covered_years.value == ["2026"]
+    assert non_business_days.value == ["2026-08-11"]
+
+
 # ------------------------------------------------------------- dispatch -----
 
 

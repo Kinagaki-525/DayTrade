@@ -770,6 +770,82 @@ def test_unparseable_jpx_calendar_fails_previous_fields_closed(tmp_path, monkeyp
     assert record["data_status"] == "DATA_UNAVAILABLE"
 
 
+def test_verified_previous_trading_date_is_none_when_coverage_does_not_form(
+    tmp_path, monkeypatch
+):
+    """FIX-R2-001D test E: with Raw Evidence that carries a year heading but
+    no valid holiday rows (so calendar_covered_years never forms),
+    src.trading_calendar.verified_previous_trading_date must return None --
+    called directly, not just observed indirectly through market_data."""
+    from src.trading_calendar import verified_previous_trading_date
+
+    ticker = "7203"
+    routes = fake_transport.clean_run_routes((ticker,))
+    routes["https://www.jpx.co.jp/corporate/about-jpx/calendar/"] = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, (ticker,), stage1_passed=(ticker,))
+    target_date = "2026-08-13"
+    trading_date = pages.TRADING_DATE
+    research_cutoff = "2026-08-12T20:00:00+09:00"
+    args = _run_args(
+        tmp_path,
+        target_date=target_date,
+        trading_date=trading_date,
+        research_cutoff=research_cutoff,
+    )
+    cli.main(["acquire-stage1-sources", *args])
+
+    ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
+    result = verified_previous_trading_date(
+        ledger,
+        run_dir=tmp_path,
+        trading_date=trading_date,
+        target_date=target_date,
+        research_cutoff=research_cutoff,
+    )
+    assert result is None
+
+
+def test_incomplete_calendar_coverage_fails_previous_fields_closed_despite_a_convenient_history_row(
+    tmp_path, monkeypatch
+):
+    """FIX-R2-001D test F: the calendar has a year heading but no valid
+    holiday rows (coverage does not form), yet the history pages happen to
+    carry a plausible-looking previous-day row. History must never be used
+    to compensate for missing/incomplete calendar coverage."""
+    ticker = "7203"
+    routes = fake_transport.clean_run_routes((ticker,))
+    routes["https://www.jpx.co.jp/corporate/about-jpx/calendar/"] = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    fake_transport.install(
+        monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
+    )
+    _market_research(tmp_path, (ticker,), stage1_passed=(ticker,))
+    args = _run_args(
+        tmp_path,
+        target_date="2026-08-13",
+        trading_date=pages.TRADING_DATE,
+        research_cutoff="2026-08-12T20:00:00+09:00",
+    )
+    _run_full_chain(tmp_path, args)
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["previous_high"] is None
+    assert record["data_status"] != "VERIFIED"
+
+
 def test_previous_close_conflict_on_the_exact_expected_date_fails(tmp_path, monkeypatch):
     ticker = "7203"
     routes = fake_transport.clean_run_routes((ticker,))

@@ -31,6 +31,11 @@ JPX_SLASH_DATE_PATTERN = re.compile(r"(\d{4})/(\d{2})/(\d{2})（[^）]*）")
 #: holiday section; a date can only be trusted if it falls inside one.
 YEAR_HEADING_PATTERN = re.compile(r"<h[1-4][^>]*>\s*(\d{4})年\s*</h[1-4]>")
 
+#: A complete, closed table block. A heading with no table, or a table that
+#: never closes before the next heading / end of page, is a structural
+#: failure -- not an empty-but-valid section.
+TABLE_BLOCK_PATTERN = re.compile(r"<table\b[^>]*>(.*?)</table>", re.IGNORECASE | re.DOTALL)
+
 
 def _decode(raw: bytes, context: ParseContext):
     return decode_source_page(raw, context.content_type)
@@ -44,12 +49,14 @@ def parse_calendar(
     """JPX_CALENDAR -> non-business days AND the years that evidence covers.
 
     Production JPX holiday tables are organized by year: an ``<h?>YYYY年</h?>``
-    heading followed by that year's ``YYYY/MM/DD（曜）`` rows. A year only
-    counts as "covered" when its own heading was actually found and parsed --
-    never inferred from a bare date appearing somewhere on the page -- so a
-    calendar that only publishes 2026 can never be used to conclude anything
-    about 2027, and a date found outside any year section is untrusted data,
-    not a discovered holiday.
+    heading followed by that year's holiday table, with rows in
+    ``YYYY/MM/DD（曜）`` form. A year only counts as "covered" when its own
+    section was structurally recognized end to end AND yielded at least one
+    valid holiday row -- a bare heading, an empty or header-only table, a
+    table that never closes, or a row whose date does not belong to that
+    section's year are all structural failures of the *whole* calendar, not
+    an empty-but-valid section quietly skipped: one broken year section
+    fails the entire parse rather than silently degrading coverage.
     """
     try:
         page = _decode(raw, context)
@@ -64,14 +71,28 @@ def parse_calendar(
     dates: list[str] = []
     for index, heading in enumerate(headings):
         year = heading.group(1)
-        if year not in covered_years:
-            covered_years.append(year)
         section_start = heading.end()
         section_end = (
             headings[index + 1].start() if index + 1 < len(headings) else len(page.text)
         )
         section_text = page.text[section_start:section_end]
-        for row_year, month, day in JPX_SLASH_DATE_PATTERN.findall(section_text):
+
+        table_match = TABLE_BLOCK_PATTERN.search(section_text)
+        if table_match is None:
+            return parse_failed(
+                f"{year}年 section has no complete holiday table"
+            )
+        table_html = table_match.group(1)
+
+        year_dates: list[str] = []
+        for row in table_rows(table_html):
+            if not row:
+                continue
+            match = JPX_SLASH_DATE_PATTERN.search(row[0])
+            if match is None:
+                # A header row ("日付" / "名称") or other non-date row.
+                continue
+            row_year, month, day = match.groups()
             if row_year != year:
                 return parse_failed(
                     f"calendar date {row_year}/{month}/{day} appears inside the "
@@ -83,6 +104,16 @@ def parse_calendar(
                 return parse_failed(
                     f"calendar date {row_year}/{month}/{day} is not a valid date"
                 )
+            if iso not in year_dates:
+                year_dates.append(iso)
+
+        if not year_dates:
+            return parse_failed(
+                f"{year}年 section's holiday table has no recognizable holiday rows"
+            )
+
+        covered_years.append(year)
+        for iso in year_dates:
             if iso not in dates:
                 dates.append(iso)
 

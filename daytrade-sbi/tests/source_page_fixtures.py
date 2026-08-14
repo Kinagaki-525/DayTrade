@@ -132,14 +132,14 @@ def jpx_calendar_page(
         ("2026-01-01", "元日"),
         ("2026-01-12", "成人の日"),
     ),
-    *,
-    extra_years: tuple[str, ...] = (),
 ) -> bytes:
     """Production-shaped JPX holiday calendar: one ``<h2>YYYY年</h2>`` section
-    per year, each followed by a table of that year's ``YYYY/MM/DD（曜）``
-    rows. ``entries`` are ``(iso_date, holiday_name)``. ``extra_years`` adds
-    additional covered-but-empty year sections (e.g. to prove a later year's
-    coverage without needing a holiday actually falling in it).
+    per year, each followed by a complete ``<table>`` (header row + data
+    rows) of that year's ``YYYY/MM/DD（曜）`` rows. ``entries`` are
+    ``(iso_date, holiday_name)``. A year section only exists here when
+    ``entries`` actually has at least one date in it -- there is no way to
+    fabricate an empty-but-"covered" year, matching the parser's own refusal
+    to treat a heading-only or empty-table section as coverage.
     """
     import datetime as _dt
 
@@ -147,8 +147,6 @@ def jpx_calendar_page(
     for iso_date, name in entries:
         year = iso_date.split("-")[0]
         by_year.setdefault(year, []).append((iso_date, name))
-    for year in extra_years:
-        by_year.setdefault(year, [])
 
     sections = []
     for year in sorted(by_year):
@@ -160,7 +158,10 @@ def jpx_calendar_page(
             )
             for iso_date, name in by_year[year]
         )
-        sections.append(f"<h2>{year}年</h2><table><tbody>{rows}</tbody></table>")
+        sections.append(
+            f"<h2>{year}年</h2><table><thead><tr><th>日付</th><th>名称</th></tr>"
+            f"</thead><tbody>{rows}</tbody></table>"
+        )
     body = "".join(sections)
     return f"""<html><head><meta charset="utf-8"></head><body>
 {body}
