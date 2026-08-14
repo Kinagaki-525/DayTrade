@@ -40,6 +40,7 @@ RUN_ARTIFACT_ALLOWLIST = {
     "official_ohlcv_audit.json",
     "execution_result.json",
     "source_pages",
+    "network_requests",
     "ranking.json",
     "selection.json",
 }

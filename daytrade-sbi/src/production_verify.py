@@ -38,6 +38,7 @@ from src.market import (
     validate_source_ledger,
 )
 from src.ranking_trust import load_and_verify_ranking_trust_chain
+from src.request_budget import list_request_records, request_id_for
 from src.source_fetch import SourceFetchError, verify_source_page
 from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH, load_source_matrix
 
@@ -133,62 +134,145 @@ def _sha256_bytes(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 
-def network_audit(source_payload: dict[str, Any]) -> dict[str, Any]:
-    """Network audit, sourced **only** from sources.json.source_attempts.
+def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, Any]:
+    """Network audit, sourced from the run's Physical Network Request Records
+    (``network_requests/*.json``) -- the primary source of truth for "how
+    many real network requests did this run make" (FIX-R2-002) -- cross-
+    checked against ``sources.json.source_attempts``.
 
-    The number of *attempts* is not the number of *requests*: a globally
-    shared page (one JPX_TDNET index) yields one candidate-scoped attempt per
-    candidate off a single GET. ``cache_status`` is what distinguishes them --
-    MISS is a real network request, HIT is a reuse of already-stored bytes --
-    so the audit counts MISS attempts, never ``len(source_attempts)``.
+    ``request_count`` is never inferred from ``cache_status``: a globally
+    shared page (one JPX_TDNET index) yields one candidate-scoped Attempt
+    per candidate off a single Physical Request, and only the Request
+    Record files -- not the attempts -- can say how many GETs actually
+    happened.
     """
+    requests = list_request_records(run_dir)
     attempts = [
         attempt
         for attempt in source_payload.get("source_attempts", [])
         if isinstance(attempt, dict)
     ]
-    network_attempts = [
-        attempt for attempt in attempts if attempt.get("cache_status") != "HIT"
-    ]
+    attempts_by_id = {str(a.get("attempt_id")): a for a in attempts}
+
+    completed_requests = [r for r in requests if r.get("state") == "COMPLETED"]
+    reserved_requests = [r for r in requests if r.get("state") == "RESERVED"]
 
     hosts: dict[str, int] = {}
-    for attempt in network_attempts:
-        url = str(attempt.get("url", ""))
+    statuses: dict[str, int] = {}
+    for record in requests:
+        url = str(record.get("url", ""))
         host = url.split("//", 1)[-1].split("/", 1)[0] if "//" in url else ""
         if host:
             hosts[host] = hosts.get(host, 0) + 1
-
-    statuses: dict[str, int] = {}
-    for attempt in attempts:
-        status = str(attempt.get("status"))
+        status = str(record.get("source_status"))
         statuses[status] = statuses.get(status, 0) + 1
 
-    duplicate_ids = _duplicates([str(a.get("attempt_id")) for a in attempts])
+    # request_id is never trusted as written: recomputed from
+    # (url, target_date, research_cutoff) exactly as request_budget.request_id_for
+    # does, so a tampered request_id (or a tampered url/date/cutoff inside an
+    # otherwise-untouched file) is caught the same way.
+    invalid_request_ids = [
+        str(record.get("request_id"))
+        for record in requests
+        if request_id_for(
+            url=str(record.get("url", "")),
+            target_date=str(record.get("target_date", "")),
+            research_cutoff=str(record.get("research_cutoff", "")),
+        )
+        != record.get("request_id")
+    ]
 
-    # A second real GET of a URL already fetched in this run is a Request
-    # Budget violation, whatever the attempt ids say. Only an explicit
-    # ``cache_status: MISS`` asserts that a GET was issued; an attempt with no
-    # cache_status (a pre-v3 ledger) makes no such claim and is not evidence
-    # of a duplicate request.
-    seen_urls: set[str] = set()
-    duplicate_requests: list[str] = []
-    for attempt in network_attempts:
-        if attempt.get("cache_status") != "MISS":
+    duplicate_request_ids = _duplicates([str(r.get("request_id")) for r in requests])
+    physical_keys = [
+        (str(r.get("url", "")), str(r.get("target_date", "")), str(r.get("research_cutoff", "")))
+        for r in requests
+    ]
+    duplicate_physical_keys = [
+        "|".join(key) for key in _duplicates([str(k) for k in physical_keys])
+    ]
+
+    # Every COMPLETED request must trace to a real origin Attempt.
+    orphan_request_records = [
+        str(record.get("request_id"))
+        for record in completed_requests
+        if str(record.get("origin_attempt_id")) not in attempts_by_id
+    ]
+
+    # Every MISS/HIT attempt must trace to a real, COMPLETED Request Record,
+    # and the reuse chain (HIT -> its origin MISS) must be internally
+    # consistent: HIT never references another HIT, a forged request_id, or
+    # an origin that didn't actually perform the GET it claims to have.
+    requests_by_id = {str(r.get("request_id")): r for r in requests}
+    orphan_attempt_request_ids: list[str] = []
+    invalid_reuse_links: list[str] = []
+    for attempt in attempts:
+        attempt_id = str(attempt.get("attempt_id"))
+        cache_status = attempt.get("cache_status")
+        request_id = attempt.get("request_id")
+        performed = attempt.get("network_request_performed")
+        reused_from = attempt.get("reused_from_attempt_id")
+
+        if cache_status == "NOT_CACHEABLE":
+            if request_id is not None or performed is not False or reused_from is not None:
+                invalid_reuse_links.append(attempt_id)
             continue
-        url = str(attempt.get("url", ""))
-        if url in seen_urls and url not in duplicate_requests:
-            duplicate_requests.append(url)
-        seen_urls.add(url)
+        if cache_status not in ("MISS", "HIT"):
+            continue
+
+        record = requests_by_id.get(str(request_id)) if request_id else None
+        if record is None or record.get("state") != "COMPLETED":
+            orphan_attempt_request_ids.append(attempt_id)
+            continue
+
+        if cache_status == "MISS":
+            if performed is not True or reused_from is not None:
+                invalid_reuse_links.append(attempt_id)
+            elif str(record.get("origin_attempt_id")) != attempt_id:
+                invalid_reuse_links.append(attempt_id)
+        elif cache_status == "HIT":
+            if performed is not False:
+                invalid_reuse_links.append(attempt_id)
+                continue
+            origin = attempts_by_id.get(str(reused_from)) if reused_from else None
+            if (
+                origin is None
+                or origin.get("cache_status") != "MISS"
+                or origin.get("network_request_performed") is not True
+                or str(origin.get("request_id")) != str(request_id)
+            ):
+                invalid_reuse_links.append(attempt_id)
+
+    duplicate_attempt_ids = _duplicates([str(a.get("attempt_id")) for a in attempts])
+    cache_hit_count = sum(1 for a in attempts if a.get("cache_status") == "HIT")
+
+    request_budget_respected = not (
+        duplicate_attempt_ids
+        or duplicate_request_ids
+        or duplicate_physical_keys
+        or orphan_request_records
+        or orphan_attempt_request_ids
+        or invalid_reuse_links
+        or invalid_request_ids
+    )
+    network_audit_complete = request_budget_respected and not reserved_requests
 
     return {
+        "request_count": len(requests),
+        "completed_request_count": len(completed_requests),
+        "reserved_request_count": len(reserved_requests),
         "attempt_count": len(attempts),
-        "request_count": len(network_attempts),
-        "cache_hit_count": len(attempts) - len(network_attempts),
+        "cache_hit_count": cache_hit_count,
         "hosts": hosts,
         "statuses": statuses,
-        "duplicate_attempt_ids": duplicate_ids,
-        "duplicate_requested_urls": duplicate_requests,
-        "request_budget_respected": not duplicate_ids and not duplicate_requests,
+        "duplicate_attempt_ids": duplicate_attempt_ids,
+        "duplicate_request_ids": duplicate_request_ids,
+        "duplicate_physical_keys": duplicate_physical_keys,
+        "orphan_request_records": orphan_request_records,
+        "orphan_attempt_request_ids": orphan_attempt_request_ids,
+        "invalid_reuse_links": invalid_reuse_links,
+        "invalid_request_ids": invalid_request_ids,
+        "request_budget_respected": request_budget_respected,
+        "network_audit_complete": network_audit_complete,
     }
 
 
@@ -256,18 +340,37 @@ def verify_production_run(
     )
 
     # ---- 4. network audit / Request Budget --------------------------------
-    report.network_audit = network_audit(source_payload)
+    report.network_audit = network_audit(run_dir, source_payload)
     if not report.network_audit["request_budget_respected"]:
         report.record(
             "request_budget",
             False,
             "duplicate attempt ids: "
             + ", ".join(report.network_audit["duplicate_attempt_ids"])
-            + "; duplicate requested urls: "
-            + ", ".join(report.network_audit["duplicate_requested_urls"]),
+            + "; duplicate request ids: "
+            + ", ".join(report.network_audit["duplicate_request_ids"])
+            + "; duplicate physical keys: "
+            + ", ".join(report.network_audit["duplicate_physical_keys"])
+            + "; orphan request records: "
+            + ", ".join(report.network_audit["orphan_request_records"])
+            + "; orphan attempt request ids: "
+            + ", ".join(report.network_audit["orphan_attempt_request_ids"])
+            + "; invalid reuse links: "
+            + ", ".join(report.network_audit["invalid_reuse_links"])
+            + "; invalid request ids: "
+            + ", ".join(report.network_audit["invalid_request_ids"]),
         )
     else:
         report.record("request_budget", True)
+    if not report.network_audit["network_audit_complete"]:
+        report.record(
+            "network_audit_complete",
+            False,
+            f"{report.network_audit['reserved_request_count']} RESERVED (never "
+            "COMPLETED) network request(s) -- state indeterminate",
+        )
+    else:
+        report.record("network_audit_complete", True)
 
     # ---- 5. the raw evidence on disk still hashes to what was recorded -----
     verify_raw_evidence(run_dir, source_payload, report)

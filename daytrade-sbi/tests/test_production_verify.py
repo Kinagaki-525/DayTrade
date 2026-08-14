@@ -358,32 +358,79 @@ def test_case_b_with_a_selection_artifact_is_invalid(tmp_path):
 
 # --------------------------------------------------------- network audit ---
 
+TARGET_DATE = "2026-08-13"
+RESEARCH_CUTOFF = "2026-08-12T20:00:00+09:00"
 
-def test_network_audit_counts_requests_not_attempts():
-    """FIX-013: N candidate attempts off one shared page is ONE request."""
+
+def _complete_request(tmp_path, *, url, origin_attempt_id, source_status="FOUND"):
+    from src.request_budget import complete_request, reserve_request
+
+    outcome = reserve_request(
+        tmp_path,
+        url=url,
+        target_date=TARGET_DATE,
+        research_cutoff=RESEARCH_CUTOFF,
+        origin_source_id="JPX_TDNET",
+        origin_candidate_code=None,
+        origin_attempt_id=origin_attempt_id,
+    )
+    record = complete_request(
+        tmp_path,
+        outcome.record["request_id"],
+        source_status=source_status,
+        http_status=200,
+        content_type="text/html",
+        transport_exit_code=0,
+        source_page_path=None,
+        source_page_sha256=None,
+        source_page_size_bytes=None,
+    )
+    return record
+
+
+def test_network_audit_counts_requests_not_attempts(tmp_path):
+    """FIX-R2-002: N candidate attempts off one shared page is ONE request,
+    counted from network_requests/*.json, not from cache_status."""
+    tdnet_record = _complete_request(
+        tmp_path,
+        url="https://www.release.tdnet.info/inbs/I_main_00.html",
+        origin_attempt_id="att-1",
+    )
+    yahoo_record = _complete_request(
+        tmp_path, url="https://finance.yahoo.co.jp/quote/7203.T", origin_attempt_id="att-3"
+    )
     payload = {
         "source_attempts": [
             {
                 "attempt_id": "att-1",
-                "url": "https://www.release.tdnet.info/inbs/I_main_00.html",
+                "url": tdnet_record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": tdnet_record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
             {
                 "attempt_id": "att-2",
-                "url": "https://www.release.tdnet.info/inbs/I_main_00.html",
+                "url": tdnet_record["url"],
                 "status": "FOUND",
                 "cache_status": "HIT",
+                "request_id": tdnet_record["request_id"],
+                "network_request_performed": False,
+                "reused_from_attempt_id": "att-1",
             },
             {
                 "attempt_id": "att-3",
-                "url": "https://finance.yahoo.co.jp/quote/7203.T",
+                "url": yahoo_record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": yahoo_record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
         ]
     }
-    audit = network_audit(payload)
+    audit = network_audit(tmp_path, payload)
     assert audit["attempt_count"] == 3
     assert audit["request_count"] == 2
     assert audit["cache_hit_count"] == 1
@@ -392,49 +439,278 @@ def test_network_audit_counts_requests_not_attempts():
         "finance.yahoo.co.jp": 1,
     }
     assert audit["request_budget_respected"] is True
+    assert audit["network_audit_complete"] is True
 
 
-def test_network_audit_flags_a_duplicate_attempt_id():
+def test_network_audit_flags_a_duplicate_attempt_id(tmp_path):
+    record = _complete_request(
+        tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1"
+    )
     payload = {
         "source_attempts": [
             {
                 "attempt_id": "att-1",
-                "url": "https://www.jpx.co.jp/a",
+                "url": record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
             {
                 "attempt_id": "att-1",
-                "url": "https://www.jpx.co.jp/a",
+                "url": record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
         ]
     }
-    audit = network_audit(payload)
+    audit = network_audit(tmp_path, payload)
     assert audit["duplicate_attempt_ids"] == ["att-1"]
     assert audit["request_budget_respected"] is False
 
 
-def test_network_audit_flags_a_second_real_get_of_the_same_url():
+def test_network_audit_flags_a_second_attempt_claiming_the_same_get(tmp_path):
+    """Two different attempt_ids both claim to be the real GET
+    (network_request_performed=True) for the same Physical Request -- only
+    the request's own recorded origin_attempt_id may claim that."""
+    record = _complete_request(
+        tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1"
+    )
     payload = {
         "source_attempts": [
             {
                 "attempt_id": "att-1",
-                "url": "https://www.jpx.co.jp/a",
+                "url": record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
             {
                 "attempt_id": "att-2",
-                "url": "https://www.jpx.co.jp/a",
+                "url": record["url"],
                 "status": "FOUND",
                 "cache_status": "MISS",
+                "request_id": record["request_id"],
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
             },
         ]
     }
-    audit = network_audit(payload)
-    assert audit["duplicate_requested_urls"] == ["https://www.jpx.co.jp/a"]
+    audit = network_audit(tmp_path, payload)
+    assert audit["invalid_reuse_links"] == ["att-2"]
+    assert audit["request_budget_respected"] is False
+
+
+def _base_attempt(record, attempt_id, **overrides):
+    attempt = {
+        "attempt_id": attempt_id,
+        "url": record["url"],
+        "status": "FOUND",
+        "cache_status": "MISS",
+        "request_id": record["request_id"],
+        "network_request_performed": True,
+        "reused_from_attempt_id": None,
+    }
+    attempt.update(overrides)
+    return attempt
+
+
+def test_network_audit_flags_a_miss_without_a_request_record(tmp_path):
+    payload = {
+        "source_attempts": [
+            _base_attempt(
+                {"url": "https://www.jpx.co.jp/a", "request_id": "req-" + "0" * 32},
+                "att-1",
+            )
+        ]
+    }
+    audit = network_audit(tmp_path, payload)
+    assert audit["orphan_attempt_request_ids"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_hit_without_a_request_record(tmp_path):
+    payload = {
+        "source_attempts": [
+            _base_attempt(
+                {"url": "https://www.jpx.co.jp/a", "request_id": "req-" + "0" * 32},
+                "att-2",
+                cache_status="HIT",
+                network_request_performed=False,
+                reused_from_attempt_id="att-1",
+            )
+        ]
+    }
+    audit = network_audit(tmp_path, payload)
+    assert audit["orphan_attempt_request_ids"] == ["att-2"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_hit_without_reused_from_attempt_id(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    payload = {
+        "source_attempts": [
+            _base_attempt(record, "att-1"),
+            _base_attempt(
+                record,
+                "att-2",
+                cache_status="HIT",
+                network_request_performed=False,
+                reused_from_attempt_id=None,
+            ),
+        ]
+    }
+    audit = network_audit(tmp_path, payload)
+    assert audit["invalid_reuse_links"] == ["att-2"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_hit_referencing_a_hit(tmp_path):
+    """HIT -> HIT is forbidden: reused_from_attempt_id must chain to the
+    genuine MISS origin, never to another reuse."""
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    payload = {
+        "source_attempts": [
+            _base_attempt(record, "att-1"),
+            _base_attempt(
+                record,
+                "att-2",
+                cache_status="HIT",
+                network_request_performed=False,
+                reused_from_attempt_id="att-1",
+            ),
+            _base_attempt(
+                record,
+                "att-3",
+                cache_status="HIT",
+                network_request_performed=False,
+                reused_from_attempt_id="att-2",
+            ),
+        ]
+    }
+    audit = network_audit(tmp_path, payload)
+    assert "att-3" in audit["invalid_reuse_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_hit_referencing_another_request_id(tmp_path):
+    record_a = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    record_b = _complete_request(tmp_path, url="https://www.jpx.co.jp/b", origin_attempt_id="att-2")
+    payload = {
+        "source_attempts": [
+            _base_attempt(record_a, "att-1"),
+            _base_attempt(record_b, "att-2"),
+            # att-3 claims request_id from record_b but reuses att-1 (whose
+            # actual request_id is record_a's) -- a forged cross-request link.
+            _base_attempt(
+                record_b,
+                "att-3",
+                cache_status="HIT",
+                network_request_performed=False,
+                reused_from_attempt_id="att-1",
+            ),
+        ]
+    }
+    audit = network_audit(tmp_path, payload)
+    assert "att-3" in audit["invalid_reuse_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_an_orphan_request_record(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-missing")
+    payload = {"source_attempts": []}
+    audit = network_audit(tmp_path, payload)
+    assert audit["orphan_request_records"] == [record["request_id"]]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_reserved_request(tmp_path):
+    from src.request_budget import reserve_request
+
+    outcome = reserve_request(
+        tmp_path,
+        url="https://www.jpx.co.jp/a",
+        target_date=TARGET_DATE,
+        research_cutoff=RESEARCH_CUTOFF,
+        origin_source_id="JPX_TDNET",
+        origin_candidate_code=None,
+        origin_attempt_id="att-1",
+    )
+    payload = {"source_attempts": []}
+    audit = network_audit(tmp_path, payload)
+    assert audit["reserved_request_count"] == 1
+    assert audit["network_audit_complete"] is False
+    assert outcome.record["state"] == "RESERVED"
+
+
+def test_network_audit_flags_a_duplicate_physical_request(tmp_path):
+    """Two request record files claiming the same (url, target_date,
+    research_cutoff) physical identity under different request_ids."""
+    from src.request_budget import network_request_path
+    import json as _json
+
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    duplicate = dict(record)
+    duplicate["request_id"] = "req-" + "1" * 32
+    duplicate["origin_attempt_id"] = "att-2"
+    network_request_path(tmp_path, duplicate["request_id"]).write_text(
+        _json.dumps(duplicate), encoding="utf-8"
+    )
+
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert audit["duplicate_physical_keys"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_request_id_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    from src.request_budget import network_request_path
+    import json as _json
+
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["request_id"] = "req-" + "9" * 32
+    path.unlink()
+    path.write_text(_json.dumps(tampered), encoding="utf-8")
+
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert tampered["request_id"] in audit["invalid_request_ids"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_request_url_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    from src.request_budget import network_request_path
+    import json as _json
+
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["url"] = "https://www.jpx.co.jp/tampered"
+    path.write_text(_json.dumps(tampered), encoding="utf-8")
+
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert record["request_id"] in audit["invalid_request_ids"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_a_request_cutoff_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    from src.request_budget import network_request_path
+    import json as _json
+
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["research_cutoff"] = "2099-01-01T00:00:00+09:00"
+    path.write_text(_json.dumps(tampered), encoding="utf-8")
+
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert record["request_id"] in audit["invalid_request_ids"]
     assert audit["request_budget_respected"] is False
 
 
@@ -444,6 +720,27 @@ def test_real_run_network_audit_matches_the_ledger(case_c_no_trade):
     sources = _read(case_c_no_trade, "sources.json")
     assert audit["attempt_count"] == len(sources["source_attempts"])
     assert audit["request_count"] <= audit["attempt_count"]
+
+
+def test_a_reserved_request_invalidates_an_otherwise_complete_run(case_c_no_trade):
+    """FIX-R2-002: a RESERVED (never COMPLETED) Physical Request Record --
+    e.g. left behind by a crashed acquisition process -- must fail the whole
+    verification, not just be a quiet audit-dict flag nobody looks at."""
+    from src.request_budget import reserve_request
+
+    reserve_request(
+        case_c_no_trade,
+        url="https://www.jpx.co.jp/never-completed",
+        target_date="2026-08-12",
+        research_cutoff="2026-08-11T20:00:00+09:00",
+        origin_source_id="JPX_TDNET",
+        origin_candidate_code=None,
+        origin_attempt_id="att-crashed",
+    )
+    report = _verify(case_c_no_trade)
+    assert report.status == INVALID_RUN
+    assert report.network_audit["reserved_request_count"] == 1
+    assert report.network_audit["network_audit_complete"] is False
 
 
 # ---------------------------------------------------------------- reuse ---

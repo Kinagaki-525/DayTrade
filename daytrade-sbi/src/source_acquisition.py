@@ -37,7 +37,6 @@ from src.network_policy import (
     load_issuer_domain_registry,
 )
 from src.source_fetch import (
-    FetchResult,
     SourceFetchError,
     curl_transport,
     _fetch_source,
@@ -55,6 +54,10 @@ from src.source_parsers.registry import (
     ParserRegistryError,
     parse_source_page,
     verify_source_parser_binding,
+)
+from src.request_budget import (
+    complete_request,
+    reserve_request,
 )
 from src.trading_calendar import verified_previous_trading_date
 
@@ -144,101 +147,34 @@ def attempt_id_for(
 
 
 class RequestBudgetCache:
-    """The Request Budget, enforced against evidence already on disk.
+    """Exact Logical Attempt identity, tracked against evidence already on disk.
 
     Attempt identity is the tuple ``(source_id, candidate_code, resolved_url,
     target_date, research_cutoff)`` -- exactly what :func:`attempt_id_for`
-    hashes. Before any network request, an attempt whose identity is already
-    satisfied by a stored, hash-verified raw page is reused with
-    ``cache_status="HIT"`` and **no GET is issued**.
+    hashes. If the exact same identity was already acquired (this run or a
+    previous invocation of the same CLI against the same run directory), that
+    Attempt is returned byte-for-byte immutable: it is never re-derived, and
+    a MISS is never silently overwritten into a HIT.
 
-    A stored page whose bytes no longer hash to the recorded SHA256 is a hard
-    stop (``SOURCE_PAGE_HASH_MISMATCH`` from :func:`verify_source_page`): the
-    run is tampered with or corrupted, and silently re-fetching to "self-heal"
-    would hide exactly that.
+    The actual "was a physical GET already made for this URL" question is a
+    separate concern, answered by :mod:`src.request_budget`'s Physical
+    Request Records on disk, not by anything this cache tracks in memory.
     """
 
     def __init__(self, run_dir: Path, existing: dict[str, Any] | None = None) -> None:
         self.run_dir = Path(run_dir)
         self._by_id: dict[str, dict[str, Any]] = {}
-        self._by_page_key: dict[tuple[str, str, str], dict[str, Any]] = {}
         for attempt in (existing or {}).get("source_attempts", []):
             if isinstance(attempt, dict) and attempt.get("attempt_id"):
                 self.remember(attempt)
 
-    @staticmethod
-    def _page_key(attempt: dict[str, Any]) -> tuple[str, str, str]:
-        """Identity of the *raw page*, which is candidate-independent.
-
-        A globally-shared page (one JPX_TDNET index relevant to every
-        candidate) is fetched exactly once; each relevant candidate then gets
-        its own candidate-scoped Source Attempt referencing the same stored
-        bytes and the same SHA256.
-        """
-        return (
-            str(attempt.get("url") or ""),
-            str(attempt.get("target_date") or ""),
-            str(attempt.get("research_cutoff") or ""),
-        )
-
-    def lookup_page(
-        self,
-        *,
-        url: str,
-        target_date: str,
-        research_cutoff: str,
-    ) -> dict[str, Any] | None:
-        """A stored raw page for this exact URL, whoever fetched it."""
-        return self._by_page_key.get((url, target_date, research_cutoff))
-
-    def lookup(
-        self,
-        *,
-        source_id: str,
-        candidate_code: str | None,
-        url: str,
-        target_date: str,
-        research_cutoff: str,
-    ) -> dict[str, Any] | None:
-        attempt_id = attempt_id_for(
-            source_id=source_id,
-            candidate_code=candidate_code,
-            url=url,
-            target_date=target_date,
-            research_cutoff=research_cutoff,
-        )
-        attempt = self._by_id.get(attempt_id)
-        if attempt is None:
-            return None
-        # Only a genuinely completed acquisition is reusable, and only when
-        # the whole identity tuple -- not just the id -- still agrees.
-        if attempt.get("status") not in {"FOUND", "PARSE_FAILED"}:
-            return None
-        if (
-            str(attempt.get("source_id") or "") != source_id
-            or (attempt.get("candidate_code") or None) != candidate_code
-            or str(attempt.get("url") or "") != url
-            or str(attempt.get("target_date") or "") != target_date
-            or str(attempt.get("research_cutoff") or "") != research_cutoff
-        ):
-            return None
-        if not attempt.get("source_page_path") or not attempt.get("source_page_sha256"):
-            return None
-        if attempt.get("source_page_size_bytes") is None:
-            return None
-        return attempt
+    def existing_attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        return self._by_id.get(attempt_id)
 
     def remember(self, attempt: dict[str, Any]) -> None:
         if not attempt.get("attempt_id"):
             return
-        record = dict(attempt)
-        self._by_id[str(record["attempt_id"])] = record
-        if (
-            record.get("source_page_path")
-            and record.get("source_page_sha256")
-            and record.get("source_page_size_bytes") is not None
-        ):
-            self._by_page_key.setdefault(self._page_key(record), record)
+        self._by_id[str(attempt["attempt_id"])] = dict(attempt)
 
 
 def resolve_url(
@@ -319,145 +255,49 @@ def _failed_attempt(
     }
 
 
-def acquire_source(
+def _ledger_values_from_attempt(
+    attempt: dict[str, Any],
+    source_id: str,
     definition: dict[str, Any],
-    *,
-    target_date: str,
-    trading_date: str,
-    research_cutoff: str,
-    candidate_code: str | None,
-    run_dir: Path,
-    issuer_registry: dict[str, Any] | None = None,
-    transport: Callable[[str], Any] = curl_transport,
-    cache: "RequestBudgetCache | None" = None,
-    previous_trading_date: str | None = None,
+) -> list[dict[str, Any]]:
+    """Reconstruct the Source Ledger entries an immutable, reused Attempt
+    already implies -- from its own (unchanged) ``values``, never
+    recomputed or re-derived. Only genuine parsed-field dicts (carrying
+    ``source_ref``) count; Event Objects mixed into the same list do not.
+    """
+    if attempt.get("status") != "FOUND":
+        return []
+    ledger_values: list[dict[str, Any]] = []
+    for value in attempt.get("values") or []:
+        if not isinstance(value, dict) or not value.get("source_ref"):
+            continue
+        ledger_values.append(
+            {
+                "source_ref": value["source_ref"],
+                "source_id": source_id,
+                "source_role": definition["role"],
+                "information_type": definition["information_type"],
+                "source_status": "FOUND",
+                "source_name": definition["source_name"],
+                "source_url": attempt["url"],
+                "retrieved_at": attempt["retrieved_at"],
+                "trading_date": value.get("trading_date"),
+                "ticker": value.get("ticker"),
+                "field_name": value.get("field_name"),
+                "value": value.get("value"),
+            }
+        )
+    return ledger_values
+
+
+def _finish_found_attempt(
+    attempt: dict[str, Any],
+    parsed: Any,
+    source_id: str,
+    definition: dict[str, Any],
+    cache: "RequestBudgetCache | None",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Acquire and parse a single source. Returns (attempt, ledger values)."""
-    # Parser binding is verified *before* the network call: a mis-wired
-    # Source Matrix must never cause a fetch.
-    verify_source_parser_binding(definition)
-
-    source_id = str(definition["source_id"])
-    try:
-        url = resolve_url(
-            definition, ticker=candidate_code, issuer_registry=issuer_registry
-        )
-    except (AcquisitionError, NetworkPolicyError) as exc:
-        return (
-            _failed_attempt(
-                definition=definition,
-                candidate_code=candidate_code,
-                url=str(definition["url_template"]),
-                target_date=target_date,
-                research_cutoff=research_cutoff,
-                status="ACCESS_FAILED",
-                notes=(getattr(exc, "code", "URL_RESOLUTION_FAILED"),),
-            ),
-            [],
-        )
-
-    # ---- Request Budget: is this exact tuple already satisfied on disk? ----
-    cached = None
-    if cache is not None:
-        cached = cache.lookup(
-            source_id=source_id,
-            candidate_code=candidate_code,
-            url=url,
-            target_date=target_date,
-            research_cutoff=research_cutoff,
-        )
-        if cached is None:
-            # Globally-shared page: the same URL was already fetched for
-            # another candidate. Reuse the raw bytes, still record a separate
-            # candidate-scoped attempt. Network requests: 1. Attempts: N.
-            cached = cache.lookup_page(
-                url=url,
-                target_date=target_date,
-                research_cutoff=research_cutoff,
-            )
-
-    if cached is not None:
-        # A cache HIT costs zero network requests. The stored bytes are
-        # re-hashed first; a mismatch is a hard stop, never a silent re-fetch.
-        stored = verify_source_page(
-            run_dir, str(cached["source_page_path"]), str(cached["source_page_sha256"])
-        )
-        result = FetchResult(
-            url=str(cached["url"]),
-            source_id=source_id,
-            candidate_code=candidate_code,
-            status="FOUND",
-            http_status=cached.get("http_status"),
-            content_type=cached.get("content_type"),
-            transport_exit_code=int(cached.get("transport_exit_code", 0)),
-            body=stored,
-            source_page_sha256=str(cached["source_page_sha256"]),
-            source_page_size_bytes=int(cached["source_page_size_bytes"]),
-            source_page_path=str(cached["source_page_path"]),
-        )
-        cache_status = "HIT"
-        retrieved_at = str(cached.get("retrieved_at") or utc_now_iso())
-    else:
-        result = _fetch_source(
-            url,
-            source_id=source_id,
-            candidate_code=candidate_code,
-            ticker=candidate_code,
-            issuer_registry=issuer_registry,
-            run_dir=run_dir,
-            transport=transport,
-        )
-        cache_status = "MISS"
-        retrieved_at = utc_now_iso()
-
-    attempt = _failed_attempt(
-        definition=definition,
-        candidate_code=candidate_code,
-        url=result.url,
-        target_date=target_date,
-        research_cutoff=research_cutoff,
-        status=result.status,
-        notes=result.notes,
-    )
-
-    if result.status != "FOUND":
-        return attempt, []
-
-    if cache_status == "MISS":
-        # Re-read the bytes from disk and re-verify their hash before parsing:
-        # the parser must operate on exactly the stored evidence.
-        stored = verify_source_page(
-            run_dir, result.source_page_path, result.source_page_sha256
-        )
-
-    parsed = parse_source_page(
-        stored,
-        definition,
-        ParseContext(
-            source_id=source_id,
-            trading_date=trading_date,
-            ticker=candidate_code,
-            content_type=result.content_type,
-            previous_trading_date=previous_trading_date,
-        ),
-    )
-
-    attempt.update(
-        {
-            "acquisition_method": result.acquisition_method,
-            "http_status": result.http_status,
-            "content_type": result.content_type,
-            "transport_exit_code": result.transport_exit_code,
-            "source_page_path": result.source_page_path,
-            "source_page_sha256": result.source_page_sha256,
-            "source_page_size_bytes": result.source_page_size_bytes,
-            "retrieved_at": retrieved_at,
-            "cache_status": cache_status,
-        }
-    )
-    if cache is not None:
-        cache.remember(attempt)
-
+    """Branch a FOUND transport outcome on parse status and build ledger values."""
     if parsed.status != "FOUND":
         # FIX-012: the raw evidence WAS acquired and stored, so every
         # transport/evidence field stays on the attempt. Only the parsed
@@ -467,6 +307,8 @@ def acquire_source(
         attempt["values"] = None
         attempt["result_count"] = None
         attempt["notes"] = list(attempt["notes"]) + list(parsed.reason_codes)
+        if cache is not None:
+            cache.remember(attempt)
         return attempt, []
 
     values: list[dict[str, Any]] = []
@@ -490,7 +332,7 @@ def acquire_source(
                 "information_type": definition["information_type"],
                 "source_status": "FOUND",
                 "source_name": definition["source_name"],
-                "source_url": result.url,
+                "source_url": attempt["url"],
                 "retrieved_at": attempt["retrieved_at"],
                 "trading_date": parsed_value.trading_date,
                 "ticker": parsed_value.ticker,
@@ -512,7 +354,232 @@ def acquire_source(
 
     attempt["values"] = values
     attempt["result_count"] = len(values)
+    if cache is not None:
+        cache.remember(attempt)
     return attempt, ledger_values
+
+
+def acquire_source(
+    definition: dict[str, Any],
+    *,
+    target_date: str,
+    trading_date: str,
+    research_cutoff: str,
+    candidate_code: str | None,
+    run_dir: Path,
+    issuer_registry: dict[str, Any] | None = None,
+    transport: Callable[[str], Any] = curl_transport,
+    cache: "RequestBudgetCache | None" = None,
+    previous_trading_date: str | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Acquire and parse a single source. Returns (attempt, ledger values).
+
+    FIX-R2-002: a Physical Network Request (:mod:`src.request_budget`) and a
+    Logical Attempt are different things, tracked independently:
+
+    1. If this exact Logical Attempt (source_id, candidate_code, resolved
+       url, target_date, research_cutoff) already exists in ``cache``, it is
+       returned byte-for-byte unchanged -- never re-derived, never
+       "upgraded" from MISS to HIT.
+    2. Otherwise the tuple's Physical Request is reserved (crash-safe,
+       written to disk *before* any transport call) or found already
+       COMPLETED (this run or a previous one): either way, the transport is
+       invoked **at most once** per physical (url, target_date,
+       research_cutoff) regardless of success, HTTP failure, timeout, or
+       parse failure.
+    """
+    # Parser binding is verified *before* the network call: a mis-wired
+    # Source Matrix must never cause a fetch.
+    verify_source_parser_binding(definition)
+
+    source_id = str(definition["source_id"])
+    try:
+        url = resolve_url(
+            definition, ticker=candidate_code, issuer_registry=issuer_registry
+        )
+    except (AcquisitionError, NetworkPolicyError) as exc:
+        # Pre-network failure: no Physical Request was ever consumed.
+        attempt = _failed_attempt(
+            definition=definition,
+            candidate_code=candidate_code,
+            url=str(definition["url_template"]),
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+            status="ACCESS_FAILED",
+            notes=(getattr(exc, "code", "URL_RESOLUTION_FAILED"),),
+        )
+        attempt.update(
+            {
+                "request_id": None,
+                "network_request_performed": False,
+                "cache_status": "NOT_CACHEABLE",
+                "reused_from_attempt_id": None,
+            }
+        )
+        return attempt, []
+
+    attempt_id = attempt_id_for(
+        source_id=source_id,
+        candidate_code=candidate_code,
+        url=url,
+        target_date=target_date,
+        research_cutoff=research_cutoff,
+    )
+
+    # ---- Exact Logical Attempt Immutability -------------------------------
+    if cache is not None:
+        existing_attempt = cache.existing_attempt(attempt_id)
+        if existing_attempt is not None:
+            page_path = existing_attempt.get("source_page_path")
+            page_sha = existing_attempt.get("source_page_sha256")
+            if page_path and page_sha:
+                verify_source_page(run_dir, str(page_path), str(page_sha))
+            return dict(existing_attempt), _ledger_values_from_attempt(
+                existing_attempt, source_id, definition
+            )
+
+    # ---- Physical Request: reserve (crash-safe) before any transport call -
+    reservation = reserve_request(
+        run_dir,
+        url=url,
+        target_date=target_date,
+        research_cutoff=research_cutoff,
+        origin_source_id=source_id,
+        origin_candidate_code=candidate_code,
+        origin_attempt_id=attempt_id,
+    )
+    record = reservation.record
+    request_id = str(record["request_id"])
+
+    if reservation.already_completed:
+        # Shared Physical Request: another attempt (this run or a previous
+        # invocation) already consumed the GET for this exact URL. Reuse the
+        # outcome; the transport is never called again for it.
+        page_path = record.get("source_page_path")
+        page_sha = record.get("source_page_sha256")
+        stored = b""
+        if page_path and page_sha:
+            stored = verify_source_page(run_dir, str(page_path), str(page_sha))
+        attempt = _failed_attempt(
+            definition=definition,
+            candidate_code=candidate_code,
+            url=url,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+            status=str(record.get("source_status")),
+            notes=(),
+        )
+        attempt.update(
+            {
+                "acquisition_method": "HTTP_GET",
+                "http_status": record.get("http_status"),
+                "content_type": record.get("content_type"),
+                "transport_exit_code": record.get("transport_exit_code"),
+                "retrieved_at": record.get("completed_at"),
+                "cache_status": "HIT",
+                "request_id": request_id,
+                "network_request_performed": False,
+                "reused_from_attempt_id": record.get("origin_attempt_id"),
+            }
+        )
+        if page_path:
+            attempt.update(
+                {
+                    "source_page_path": page_path,
+                    "source_page_sha256": page_sha,
+                    "source_page_size_bytes": record.get("source_page_size_bytes"),
+                }
+            )
+        if str(record.get("source_status")) != "FOUND":
+            if cache is not None:
+                cache.remember(attempt)
+            return attempt, []
+        parsed = parse_source_page(
+            stored,
+            definition,
+            ParseContext(
+                source_id=source_id,
+                trading_date=trading_date,
+                ticker=candidate_code,
+                content_type=record.get("content_type"),
+                previous_trading_date=previous_trading_date,
+            ),
+        )
+        return _finish_found_attempt(attempt, parsed, source_id, definition, cache)
+
+    # ---- New Physical Request: the transport runs exactly once here -------
+    result = _fetch_source(
+        url,
+        source_id=source_id,
+        candidate_code=candidate_code,
+        ticker=candidate_code,
+        issuer_registry=issuer_registry,
+        run_dir=run_dir,
+        transport=transport,
+    )
+    complete_request(
+        run_dir,
+        request_id,
+        source_status=result.status,
+        http_status=result.http_status,
+        content_type=result.content_type,
+        transport_exit_code=result.transport_exit_code,
+        source_page_path=result.source_page_path,
+        source_page_sha256=result.source_page_sha256,
+        source_page_size_bytes=result.source_page_size_bytes,
+    )
+
+    attempt = _failed_attempt(
+        definition=definition,
+        candidate_code=candidate_code,
+        url=result.url,
+        target_date=target_date,
+        research_cutoff=research_cutoff,
+        status=result.status,
+        notes=result.notes,
+    )
+    attempt.update(
+        {
+            "acquisition_method": result.acquisition_method,
+            "http_status": result.http_status,
+            "content_type": result.content_type,
+            "transport_exit_code": result.transport_exit_code,
+            "retrieved_at": utc_now_iso(),
+            "cache_status": "MISS",
+            "request_id": request_id,
+            "network_request_performed": True,
+            "reused_from_attempt_id": None,
+        }
+    )
+    if result.source_page_path:
+        attempt.update(
+            {
+                "source_page_path": result.source_page_path,
+                "source_page_sha256": result.source_page_sha256,
+                "source_page_size_bytes": result.source_page_size_bytes,
+            }
+        )
+
+    if result.status != "FOUND":
+        if cache is not None:
+            cache.remember(attempt)
+        return attempt, []
+
+    # Re-read the bytes from disk and re-verify their hash before parsing:
+    # the parser must operate on exactly the stored evidence.
+    stored = verify_source_page(run_dir, result.source_page_path, result.source_page_sha256)
+    parsed = parse_source_page(
+        stored,
+        definition,
+        ParseContext(
+            source_id=source_id,
+            trading_date=trading_date,
+            ticker=candidate_code,
+            content_type=result.content_type,
+            previous_trading_date=previous_trading_date,
+        ),
+    )
+    return _finish_found_attempt(attempt, parsed, source_id, definition, cache)
 
 
 def acquire_stage(
@@ -677,15 +744,51 @@ def _apply_turnover_semantics(result: AcquisitionResult) -> None:
         result.gate_reason_codes.append("TURNOVER_SOURCE_UNAVAILABLE")
 
 
+#: Fields a Logical Attempt's identity/network facts must never change once
+#: written -- see FIX-R2-002 section 21. Business fields Event processing
+#: legitimately adds later (coverage_status, notes, values/result_count) are
+#: deliberately excluded: only the fields that describe *what physically
+#: happened on the wire* are immutable.
+_IMMUTABLE_ATTEMPT_FIELDS: tuple[str, ...] = (
+    "attempt_id",
+    "request_id",
+    "source_id",
+    "source_role",
+    "criticality",
+    "information_type",
+    "candidate_code",
+    "target_date",
+    "research_cutoff",
+    "requested_at",
+    "retrieved_at",
+    "url",
+    "network_request_performed",
+    "cache_status",
+    "reused_from_attempt_id",
+    "acquisition_method",
+    "http_status",
+    "content_type",
+    "transport_exit_code",
+    "source_page_path",
+    "source_page_sha256",
+    "source_page_size_bytes",
+    "status",
+)
+
+
 def merge_ledger(
     existing: dict[str, Any] | None,
     addition: dict[str, Any],
 ) -> dict[str, Any]:
     """Merge a stage's ledger into the run ledger.
 
-    Attempts are keyed by ``attempt_id`` and values by ``source_ref``;
-    re-running a stage replaces its own attempts rather than appending
-    duplicates.
+    Attempts are keyed by ``attempt_id`` and values by ``source_ref``. A
+    reappearing ``attempt_id`` is never a later-wins overwrite: its
+    immutable network facts (:data:`_IMMUTABLE_ATTEMPT_FIELDS`) must agree
+    with what is already on disk, or the merge is a hard error -- silently
+    replacing a MISS's evidence with something else (even something that
+    looks like a HIT of it) would erase the truth of what actually happened
+    on the wire.
     """
     if existing is None:
         return addition
@@ -696,7 +799,25 @@ def merge_ledger(
         )
     attempts = {attempt["attempt_id"]: attempt for attempt in existing.get("source_attempts", [])}
     for attempt in addition.get("source_attempts", []):
-        attempts[attempt["attempt_id"]] = attempt
+        attempt_id = attempt["attempt_id"]
+        prior = attempts.get(attempt_id)
+        if prior is not None:
+            mismatched = [
+                field_name
+                for field_name in _IMMUTABLE_ATTEMPT_FIELDS
+                if prior.get(field_name) != attempt.get(field_name)
+            ]
+            if mismatched:
+                raise AcquisitionError(
+                    "SOURCE_ATTEMPT_IMMUTABILITY_VIOLATION",
+                    f"attempt {attempt_id} network facts changed on re-merge: "
+                    + ", ".join(mismatched),
+                )
+        # Immutable network facts agree (or this is a genuinely new
+        # attempt_id): the addition wins, carrying forward whatever
+        # legitimate business-field update it makes (values, coverage_status,
+        # notes, ...).
+        attempts[attempt_id] = attempt
     values = {value["source_ref"]: value for value in existing.get("sources", [])}
     for value in addition.get("sources", []):
         values[value["source_ref"]] = value

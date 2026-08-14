@@ -299,3 +299,235 @@ def test_access_failure_records_no_evidence(tmp_path):
     assert attempt["status"] == "ACCESS_FAILED"
     for absent in ("source_page_path", "source_page_sha256", "source_page_size_bytes"):
         assert absent not in attempt
+
+
+# --------------------------------------------- FIX-R2-002: Request Budget ---
+
+
+def _counting_transport(body: bytes = b"", status: int = 200, exit_code: int = 0):
+    calls = {"count": 0}
+
+    def _run(url: str) -> TransportResult:
+        calls["count"] += 1
+        return TransportResult(exit_code, status if exit_code == 0 else None, "text/html", body)
+
+    return _run, calls
+
+
+def _run_stage_twice(tmp_path, transport, *, tickers=("7203",), source_ids=("YAHOO_JP_QUOTE",)):
+    """Simulates the real acquire-* CLI: run the stage, persist the ledger,
+    reload it, and run the exact same stage again against that ledger."""
+    first = acquire_stage(
+        "TURNOVER",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        tickers=list(tickers),
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=source_ids,
+    )
+    ledger_path = tmp_path / "sources.json"
+    write_ledger(ledger_path, first.as_ledger())
+
+    second = acquire_stage(
+        "TURNOVER",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        tickers=list(tickers),
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=source_ids,
+        existing_ledger=load_ledger(ledger_path),
+    )
+    return first, second
+
+
+@pytest.mark.parametrize(
+    "status,exit_code",
+    [
+        (200, 0),
+        (403, 0),
+        (404, 0),
+        (429, 0),
+        (500, 0),
+        (None, 28),  # CURL_TIMEOUT_EXIT_CODE
+        (None, 7),  # an arbitrary non-zero, non-timeout exit code -> EXECUTION_FAILED
+    ],
+)
+def test_double_run_performs_exactly_one_transport_call(tmp_path, status, exit_code):
+    body = pages.yahoo_quote_page() if status == 200 else b""
+    transport, calls = _counting_transport(body, status=(status or 200), exit_code=exit_code)
+    first, second = _run_stage_twice(tmp_path, transport)
+    assert calls["count"] == 1
+
+    first_attempt = first.attempts[0]
+    second_attempt = second.attempts[0]
+    assert first_attempt["cache_status"] == "MISS"
+    assert first_attempt["network_request_performed"] is True
+    assert second_attempt["cache_status"] == "MISS"
+    assert second_attempt["network_request_performed"] is True
+    # Exact Logical Attempt Immutability: the second call returns the SAME
+    # attempt, not a re-derived one.
+    assert second_attempt["requested_at"] == first_attempt["requested_at"]
+    assert second_attempt["retrieved_at"] == first_attempt["retrieved_at"]
+    assert second_attempt["request_id"] == first_attempt["request_id"]
+
+
+def test_parse_failed_double_run_performs_one_get(tmp_path):
+    # 200 + a page the turnover parser cannot read -> PARSE_FAILED.
+    body = b"<html><body>7203.T no turnover here</body></html>"
+    transport, calls = _counting_transport(body, status=200)
+    first, second = _run_stage_twice(tmp_path, transport)
+    assert calls["count"] == 1
+    assert first.attempts[0]["status"] == "PARSE_FAILED"
+    assert second.attempts[0]["status"] == "PARSE_FAILED"
+    assert second.attempts[0]["source_page_sha256"] == first.attempts[0]["source_page_sha256"]
+
+
+def test_different_research_cutoff_permits_a_new_get(tmp_path):
+    body = pages.yahoo_quote_page()
+    transport, calls = _counting_transport(body, status=200)
+
+    first = acquire_stage(
+        "TURNOVER",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        tickers=["7203"],
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=("YAHOO_JP_QUOTE",),
+    )
+    ledger_path = tmp_path / "sources.json"
+    write_ledger(ledger_path, first.as_ledger())
+
+    second = acquire_stage(
+        "TURNOVER",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff="2026-08-11T20:00:00+09:00",
+        tickers=["7203"],
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=("YAHOO_JP_QUOTE",),
+        existing_ledger=load_ledger(ledger_path),
+    )
+    assert calls["count"] == 2
+    assert first.attempts[0]["request_id"] != second.attempts[0]["request_id"]
+
+
+def test_raw_page_tamper_never_triggers_a_refetch(tmp_path):
+    body = pages.yahoo_quote_page()
+    transport, calls = _counting_transport(body, status=200)
+    first, _ = _run_stage_twice(tmp_path, transport)
+    assert calls["count"] == 1
+
+    stored_path = tmp_path / first.attempts[0]["source_page_path"]
+    stored_path.write_bytes(stored_path.read_bytes() + b"\x00")
+
+    from src.source_fetch import SourceFetchError
+
+    with pytest.raises(SourceFetchError) as excinfo:
+        acquire_stage(
+            "TURNOVER",
+            target_date=TARGET_DATE,
+            trading_date=TARGET_DATE,
+            research_cutoff=CUTOFF,
+            tickers=["7203"],
+            run_dir=tmp_path,
+            source_matrix=MATRIX,
+            transport=transport,
+            issuer_registry=REGISTRY,
+            source_ids=("YAHOO_JP_QUOTE",),
+            existing_ledger=load_ledger(tmp_path / "sources.json"),
+        )
+    assert excinfo.value.code == "SOURCE_PAGE_HASH_MISMATCH"
+    assert calls["count"] == 1
+
+
+def test_failed_shared_request_performs_one_get_for_three_candidates(tmp_path):
+    """Three candidates sharing one EVENT-stage page (JPX_TDNET), the page
+    returns HTTP 403: exactly one transport call, three attempts, the
+    origin is MISS/network_request_performed=True, the other two are
+    HIT/network_request_performed=False, all three ACCESS_FAILED."""
+    transport, calls = _counting_transport(b"", status=403)
+    result = acquire_stage(
+        "EVENT",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        tickers=["7203", "6758", "9984"],
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=("JPX_TDNET",),
+    )
+    assert calls["count"] == 1
+    assert len(result.attempts) == 3
+    assert all(a["status"] == "ACCESS_FAILED" for a in result.attempts)
+
+    misses = [a for a in result.attempts if a["cache_status"] == "MISS"]
+    hits = [a for a in result.attempts if a["cache_status"] == "HIT"]
+    assert len(misses) == 1
+    assert len(hits) == 2
+    assert misses[0]["network_request_performed"] is True
+    assert all(h["network_request_performed"] is False for h in hits)
+    assert all(h["reused_from_attempt_id"] == misses[0]["attempt_id"] for h in hits)
+    assert all(a["request_id"] == misses[0]["request_id"] for a in result.attempts)
+
+
+def test_merge_ledger_preserves_the_original_immutable_attempt(tmp_path):
+    """merge_ledger must never let a later call overwrite an existing
+    attempt_id's immutable network facts -- when the incoming addition
+    agrees, the original is kept; forging a different addition is an error."""
+    from src.source_acquisition import AcquisitionError
+
+    body = pages.yahoo_quote_page()
+    transport, _ = _counting_transport(body, status=200)
+    first = _stage_with_transport(tmp_path, transport)
+    existing = first.as_ledger()
+
+    # Re-running the identical stage produces the identical attempt: merging
+    # it back in is a no-op, not a violation.
+    merged = merge_ledger(existing, first.as_ledger())
+    assert merged["source_attempts"] == existing["source_attempts"]
+
+    # A forged addition claiming a different http_status for the same
+    # attempt_id must be rejected, not silently accepted as the new truth.
+    forged = {
+        "schema_version": 3,
+        "target_date": existing["target_date"],
+        "sources": [],
+        "source_attempts": [
+            {**existing["source_attempts"][0], "http_status": 999},
+        ],
+    }
+    with pytest.raises(AcquisitionError) as excinfo:
+        merge_ledger(existing, forged)
+    assert excinfo.value.code == "SOURCE_ATTEMPT_IMMUTABILITY_VIOLATION"
+
+
+def _stage_with_transport(tmp_path, transport):
+    return acquire_stage(
+        "TURNOVER",
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        tickers=["7203"],
+        run_dir=tmp_path,
+        source_matrix=MATRIX,
+        transport=transport,
+        issuer_registry=REGISTRY,
+        source_ids=("YAHOO_JP_QUOTE",),
+    )

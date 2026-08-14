@@ -155,9 +155,13 @@ def test_stage2_cli_derives_tickers_from_stage1(tmp_path, clean_curl):
 def test_same_acquisition_cli_twice_performs_one_get(tmp_path, clean_curl):
     """The Request Budget is about *network requests*, not ledger rows.
 
-    Asserting on the merged ledger would hide a duplicate GET, because the
-    second attempt overwrites the first under the same attempt_id. So this
-    counts the transport calls directly.
+    FIX-R2-002: the exact same Logical Attempt (source_id, candidate_code,
+    url, target_date, research_cutoff) is immutable once written -- a
+    second run must reuse it byte-for-byte, not "upgrade" its original
+    cache_status=MISS into a HIT. Re-running still costs zero additional
+    transport calls; what changes is that the ledger keeps recording the
+    truth of what actually happened (this attempt is the one that made the
+    real GET), not a fiction about how the second run obtained it.
     """
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
     args = ["acquire-actual-turnover", *_base_args(tmp_path)]
@@ -171,7 +175,26 @@ def test_same_acquisition_cli_twice_performs_one_get(tmp_path, clean_curl):
     ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
     attempts = ledger["source_attempts"]
     assert len(attempts) == 1
-    assert attempts[0]["cache_status"] == "HIT"
+    attempt = attempts[0]
+    assert attempt["cache_status"] == "MISS"
+    assert attempt["network_request_performed"] is True
+    assert attempt["request_id"]
+
+    first_requested_at = attempt["requested_at"]
+    first_retrieved_at = attempt["retrieved_at"]
+    first_request_id = attempt["request_id"]
+    first_sha = attempt["source_page_sha256"]
+
+    cli.main(args)
+    assert clean_curl.call_count == 1
+
+    ledger_again = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
+    attempt_again = ledger_again["source_attempts"][0]
+    assert attempt_again["requested_at"] == first_requested_at
+    assert attempt_again["retrieved_at"] == first_retrieved_at
+    assert attempt_again["request_id"] == first_request_id
+    assert attempt_again["source_page_sha256"] == first_sha
+    assert attempt_again["cache_status"] == "MISS"
 
 
 def test_tampered_cached_page_hard_stops_instead_of_refetching(tmp_path, clean_curl):

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "network_request.schema.json",
+  "title": "Physical Network Request Record",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "url",
+    "target_date",
+    "research_cutoff",
+    "state",
+    "reserved_at",
+    "completed_at",
+    "origin_source_id",
+    "origin_candidate_code",
+    "origin_attempt_id",
+    "source_status",
+    "http_status",
+    "content_type",
+    "transport_exit_code",
+    "source_page_path",
+    "source_page_sha256",
+    "source_page_size_bytes"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^req-[0-9a-f]{32}$"},
+    "url": {"type": "string", "pattern": "^https?://"},
+    "target_date": {"type": "string", "format": "date"},
+    "research_cutoff": {"type": "string", "format": "date-time"},
+    "state": {"enum": ["RESERVED", "COMPLETED"]},
+    "reserved_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": ["string", "null"], "format": "date-time"},
+    "origin_source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+    "origin_candidate_code": {"type": ["string", "null"]},
+    "origin_attempt_id": {"type": "string", "minLength": 1},
+    "source_status": {"type": ["string", "null"]},
+    "http_status": {"type": ["integer", "null"], "minimum": 100, "maximum": 599},
+    "content_type": {"type": ["string", "null"]},
+    "transport_exit_code": {"type": ["integer", "null"]},
+    "source_page_path": {"type": ["string", "null"]},
+    "source_page_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "source_page_size_bytes": {"type": ["integer", "null"], "minimum": 0}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {"state": {"const": "RESERVED"}},
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "completed_at": {"const": null},
+          "source_status": {"const": null},
+          "http_status": {"const": null},
+          "content_type": {"const": null},
+          "transport_exit_code": {"const": null},
+          "source_page_path": {"const": null},
+          "source_page_sha256": {"const": null},
+          "source_page_size_bytes": {"const": null}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"state": {"const": "COMPLETED"}},
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["completed_at", "source_status"],
+        "properties": {
+          "completed_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  ]
+}

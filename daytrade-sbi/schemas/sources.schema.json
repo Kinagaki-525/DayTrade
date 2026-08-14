@@ -211,6 +211,17 @@
             "NOT_CACHEABLE"
           ]
         },
+        "request_id": {
+          "type": ["string", "null"],
+          "pattern": "^req-[0-9a-f]{32}$"
+        },
+        "network_request_performed": {
+          "type": "boolean"
+        },
+        "reused_from_attempt_id": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
         "status": {
           "$ref": "#/$defs/sourceStatus"
         },
