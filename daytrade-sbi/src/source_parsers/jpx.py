@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 from src.source_parsers.base import ParseContext, ParseResult, ParsedValue, parse_failed
@@ -17,7 +18,18 @@ from src.source_parsers.numeric import (
 
 
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-JP_DATE_PATTERN = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")
+
+#: The current JPX official non-business-day calendar publishes each
+#: holiday's date as ``YYYY/MM/DD（曜）`` -- the parenthesized weekday
+#: character is display-only and is never used for business-day judgement,
+#: only the digits are.
+JPX_SLASH_DATE_PATTERN = re.compile(r"(\d{4})/(\d{2})/(\d{2})（[^）]*）")
+
+#: A year section heading: an isolated ``<h1>``-``<h4>`` whose entire text
+#: content is ``YYYY年`` and nothing else. Everything between one heading and
+#: the next (or the end of the page) is that year's officially published
+#: holiday section; a date can only be trusted if it falls inside one.
+YEAR_HEADING_PATTERN = re.compile(r"<h[1-4][^>]*>\s*(\d{4})年\s*</h[1-4]>")
 
 
 def _decode(raw: bytes, context: ParseContext):
@@ -29,19 +41,65 @@ def parse_calendar(
     source_definition: dict[str, Any],
     context: ParseContext,
 ) -> ParseResult:
-    """JPX_CALENDAR -> the set of non-business days published on the page."""
+    """JPX_CALENDAR -> non-business days AND the years that evidence covers.
+
+    Production JPX holiday tables are organized by year: an ``<h?>YYYY年</h?>``
+    heading followed by that year's ``YYYY/MM/DD（曜）`` rows. A year only
+    counts as "covered" when its own heading was actually found and parsed --
+    never inferred from a bare date appearing somewhere on the page -- so a
+    calendar that only publishes 2026 can never be used to conclude anything
+    about 2027, and a date found outside any year section is untrusted data,
+    not a discovered holiday.
+    """
     try:
         page = _decode(raw, context)
     except DecodeError as exc:
         return parse_failed(exc.message)
 
+    headings = list(YEAR_HEADING_PATTERN.finditer(page.text))
+    if not headings:
+        return ParseResult(status="NOT_FOUND", reason_codes=("NO_CALENDAR_YEAR_SECTIONS",))
+
+    covered_years: list[str] = []
     dates: list[str] = []
-    for year, month, day in JP_DATE_PATTERN.findall(page.text):
-        iso = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
-        if iso not in dates:
-            dates.append(iso)
-    if not dates:
-        return ParseResult(status="NOT_FOUND", reason_codes=("NO_CALENDAR_DATES",))
+    for index, heading in enumerate(headings):
+        year = heading.group(1)
+        if year not in covered_years:
+            covered_years.append(year)
+        section_start = heading.end()
+        section_end = (
+            headings[index + 1].start() if index + 1 < len(headings) else len(page.text)
+        )
+        section_text = page.text[section_start:section_end]
+        for row_year, month, day in JPX_SLASH_DATE_PATTERN.findall(section_text):
+            if row_year != year:
+                return parse_failed(
+                    f"calendar date {row_year}/{month}/{day} appears inside the "
+                    f"{year}年 section"
+                )
+            try:
+                iso = date(int(row_year), int(month), int(day)).isoformat()
+            except ValueError:
+                return parse_failed(
+                    f"calendar date {row_year}/{month}/{day} is not a valid date"
+                )
+            if iso not in dates:
+                dates.append(iso)
+
+    # Any slash-formatted date outside every year section is untrustworthy:
+    # it cannot be attributed to a confirmed-covered year.
+    covered_spans = [(h.end(), (headings[i + 1].start() if i + 1 < len(headings) else len(page.text)))
+                      for i, h in enumerate(headings)]
+
+    def _inside_a_section(position: int) -> bool:
+        return any(start <= position < end for start, end in covered_spans)
+
+    for match in JPX_SLASH_DATE_PATTERN.finditer(page.text):
+        if not _inside_a_section(match.start()):
+            return parse_failed(
+                f"calendar date {match.group(0)} is outside every YYYY年 section"
+            )
+
     return ParseResult(
         status="FOUND",
         values=(
@@ -50,6 +108,12 @@ def parse_calendar(
                 ticker=None,
                 trading_date=context.trading_date,
                 value=sorted(dates),
+            ),
+            ParsedValue(
+                field_name="calendar_covered_years",
+                ticker=None,
+                trading_date=context.trading_date,
+                value=sorted(covered_years),
             ),
         ),
     )

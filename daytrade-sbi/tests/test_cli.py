@@ -119,7 +119,10 @@ def source_payload_from_record(record, *, include_share_unit=True):
         "sources": [
             source.as_dict()
             for source in record.sources
-            if include_share_unit or source.field_name != "share_unit"
+            # share_unit is a MAPPED field: its Source Record's own
+            # field_name is "trading_unit" (JPX_TRADING_UNIT's raw parsed
+            # field), not "share_unit" -- see market.MAPPED_FIELD_CONTRACTS.
+            if include_share_unit or source.field_name != "trading_unit"
         ],
         "source_attempts": [],
     }

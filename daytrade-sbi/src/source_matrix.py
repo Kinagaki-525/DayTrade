@@ -63,6 +63,24 @@ REQUIRED_SOURCE_IDS = {
     "YAHOO_JP_QUOTE",
 }
 
+#: Source ids fetched once per run rather than once per candidate. A single
+#: Attempt Value from one of these carries ``ticker=None`` and is shared by
+#: every candidate that consumes it -- it is never cloned into a
+#: candidate-scoped Source Record. Shared here (not only in
+#: src.source_acquisition) because src.market's Source Ledger validation
+#: needs the identical set to know which ``ticker=null`` sources are
+#: legitimate Global Sources rather than a missing candidate attribution.
+GLOBAL_SOURCE_IDS = frozenset(
+    {
+        "YAHOO_JP_VOLUME_RANKING",
+        "YAHOO_JP_GAIN_RANKING",
+        "JPX_CALENDAR",
+        "JPX_TICK_SIZE",
+        "JPX_TDNET",
+        "JPX_EARNINGS_SCHEDULE",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SourceMatrixValidationResult:

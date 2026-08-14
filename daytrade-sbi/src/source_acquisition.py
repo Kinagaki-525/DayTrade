@@ -46,6 +46,7 @@ from src.source_fetch import (
 from src.source_matrix import (
     AI_CLASSIFICATION_SOURCE_IDS,
     DEFAULT_SOURCE_MATRIX_PATH,
+    GLOBAL_SOURCE_IDS,
     load_source_matrix,
     source_by_id,
 )
@@ -83,18 +84,6 @@ STAGE_SOURCE_IDS: dict[str, tuple[str, ...]] = {
         "KABUTAN_NEWS",
     ),
 }
-
-#: Source ids fetched once per run rather than once per candidate.
-GLOBAL_SOURCE_IDS = frozenset(
-    {
-        "YAHOO_JP_VOLUME_RANKING",
-        "YAHOO_JP_GAIN_RANKING",
-        "JPX_CALENDAR",
-        "JPX_TICK_SIZE",
-        "JPX_TDNET",
-        "JPX_EARNINGS_SCHEDULE",
-    }
-)
 
 TSE_LISTING_SOURCE_ID = "JPX_LISTED_COMPANY"
 TURNOVER_SOURCE_ID = "YAHOO_JP_QUOTE"
@@ -487,23 +476,28 @@ def acquire_source(
         source_ref = f"{attempt['attempt_id']}#{payload['field_name']}"
         payload["source_ref"] = source_ref
         values.append(payload)
-        if parsed_value.ticker:
-            ledger_values.append(
-                {
-                    "source_ref": source_ref,
-                    "source_id": source_id,
-                    "source_role": definition["role"],
-                    "information_type": definition["information_type"],
-                    "source_status": "FOUND",
-                    "source_name": definition["source_name"],
-                    "source_url": result.url,
-                    "retrieved_at": attempt["retrieved_at"],
-                    "trading_date": parsed_value.trading_date,
-                    "ticker": parsed_value.ticker,
-                    "field_name": parsed_value.field_name,
-                    "value": payload["value"],
-                }
-            )
+        # Every parsed value becomes a canonical Source Ledger entry, even a
+        # Global Source's ticker=None value (source_id in GLOBAL_SOURCE_IDS,
+        # e.g. JPX_TICK_SIZE's band table): it is one Source Record shared by
+        # every candidate that consumes it, not a per-candidate clone --
+        # see src.stage_wiring._ledger_value_records and
+        # src.source_matrix.GLOBAL_SOURCE_IDS.
+        ledger_values.append(
+            {
+                "source_ref": source_ref,
+                "source_id": source_id,
+                "source_role": definition["role"],
+                "information_type": definition["information_type"],
+                "source_status": "FOUND",
+                "source_name": definition["source_name"],
+                "source_url": result.url,
+                "retrieved_at": attempt["retrieved_at"],
+                "trading_date": parsed_value.trading_date,
+                "ticker": parsed_value.ticker,
+                "field_name": parsed_value.field_name,
+                "value": payload["value"],
+            }
+        )
 
     # Event sources additionally contribute Event Objects in exactly the shape
     # the existing Event Gate reads. They live alongside the parsed values in

@@ -21,21 +21,21 @@ def make_market_record(
     }
     sources = [
         make_source_record(
-            field_name="company_name",
+            field_name="listed_company_name",
             value="Example Co.",
             source_id="JPX_LISTED_COMPANY",
             source_role="PRIMARY",
             information_type="LISTED_COMPANY",
         ),
         make_source_record(
-            field_name="market",
+            field_name="market_segment",
             value="TSE Prime",
             source_id="JPX_LISTED_COMPANY",
             source_role="PRIMARY",
             information_type="LISTED_COMPANY",
         ),
         make_source_record(
-            field_name="share_unit",
+            field_name="trading_unit",
             value="100",
             source_id="JPX_TRADING_UNIT",
             source_role="PRIMARY",
@@ -83,6 +83,15 @@ def make_market_record(
     tick_source = next(source for source in sources if source.source_id == "JPX_TICK_SIZE")
     topix_source = next(source for source in sources if source.source_id == "JPX_TOPIX500")
     price_source = next(source for source in sources if source.field_name == "previous_high")
+    company_name_source = next(
+        source for source in sources if source.field_name == "listed_company_name"
+    )
+    market_source = next(
+        source for source in sources if source.field_name == "market_segment"
+    )
+    share_unit_source = next(
+        source for source in sources if source.field_name == "trading_unit"
+    )
     return MarketDataRecord(
         ticker="1234",
         company_name="Example Co.",
@@ -120,8 +129,52 @@ def make_market_record(
                 ],
                 "verified_at": "2026-08-09T20:01:00+09:00",
             },
+            {
+                "field_name": "company_name",
+                "status": "VERIFIED",
+                "verified_value": "Example Co.",
+                "primary_source_ref": None,
+                "secondary_source_ref": None,
+                "source_refs": [company_name_source.source_ref],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
+            {
+                "field_name": "market",
+                "status": "VERIFIED",
+                "verified_value": "TSE Prime",
+                "primary_source_ref": None,
+                "secondary_source_ref": None,
+                "source_refs": [market_source.source_ref],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
+            {
+                "field_name": "share_unit",
+                "status": "VERIFIED",
+                "verified_value": "100",
+                "primary_source_ref": None,
+                "secondary_source_ref": None,
+                "source_refs": [share_unit_source.source_ref],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
         ),
     )
+
+
+#: Source ids fetched once per run and shared by every candidate; a Source
+#: Record for one of these carries ticker=None. Mirrors
+#: src.source_matrix.GLOBAL_SOURCE_IDS without importing production code
+#: into a test fixture, since this list only ever needs to match what the
+#: fixtures below construct.
+_GLOBAL_SOURCE_IDS_FOR_FIXTURES = frozenset(
+    {
+        "YAHOO_JP_VOLUME_RANKING",
+        "YAHOO_JP_GAIN_RANKING",
+        "JPX_CALENDAR",
+        "JPX_TICK_SIZE",
+        "JPX_TDNET",
+        "JPX_EARNINGS_SCHEDULE",
+    }
+)
 
 
 def make_source_record(
@@ -132,6 +185,7 @@ def make_source_record(
     source_role: str,
     information_type: str,
 ) -> SourceRecord:
+    is_global = source_id in _GLOBAL_SOURCE_IDS_FOR_FIXTURES
     return SourceRecord(
         source_ref=f"{source_id}:1234:{field_name}",
         source_id=source_id,
@@ -142,7 +196,7 @@ def make_source_record(
         source_url=_source_url(source_id, field_name),
         retrieved_at="2026-08-09T20:00:00+09:00",
         trading_date="2026-08-07",
-        ticker="1234",
+        ticker=None if is_global else "1234",
         field_name=field_name,
         value=value,
     )

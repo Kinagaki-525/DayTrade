@@ -569,7 +569,7 @@ def test_case_b_holiday_boundary_skips_the_confirmed_non_business_day(
     ticker = "7203"
     routes = fake_transport.clean_run_routes((ticker,))
     routes["https://www.jpx.co.jp/corporate/about-jpx/calendar/"] = pages.jpx_calendar_page(
-        (("2026年8月11日", "山の日"),)
+        ((CASE_B_HOLIDAY, "山の日"),)
     )
     yahoo_rows = (
         (CASE_B_TRADING_DATE, "1,000", "1,100", "990", "1,050", "2,345,600"),
@@ -597,6 +597,85 @@ def test_case_b_holiday_boundary_skips_the_confirmed_non_business_day(
 
     validation = _validate_market(tmp_path)
     assert validation["results"][0]["valid_for_trade"] is True
+
+
+def test_previous_date_resolution_fails_closed_when_the_year_is_not_covered(
+    tmp_path, monkeypatch
+):
+    """Calendar evidence that only covers 2025 says nothing about whether any
+    day in 2026 was a trading day -- CASE_A_TRADING_DATE (2026-08-13) must
+    resolve to no previous date at all, not fall back to a bare weekday
+    computation."""
+    ticker = "7203"
+    routes = fake_transport.clean_run_routes((ticker,))
+    routes["https://www.jpx.co.jp/corporate/about-jpx/calendar/"] = pages.jpx_calendar_page(
+        (("2025-01-01", "元日"),)
+    )
+    rows = (
+        (CASE_A_TRADING_DATE, "1,000", "1,100", "990", "1,050", "2,345,600"),
+        (CASE_A_EXPECTED_PREVIOUS, "980", "1,010", "975", "1,000", "1,111,100"),
+    )
+    _install_history_routes(monkeypatch, routes, ticker, rows, rows)
+
+    _market_research(tmp_path, (ticker,), stage1_passed=(ticker,))
+    args = _run_args(
+        tmp_path,
+        target_date=CASE_A_TARGET_DATE,
+        trading_date=CASE_A_TRADING_DATE,
+        research_cutoff="2026-08-13T20:00:00+09:00",
+    )
+    _run_full_chain(tmp_path, args)
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["previous_high"] is None
+    assert record["data_status"] == "DATA_UNAVAILABLE"
+
+
+def test_tampered_calendar_attempt_values_fail_previous_fields_closed(
+    tmp_path, monkeypatch
+):
+    """Raw calendar page SHA is untouched, but the recorded Attempt Values
+    (non_business_days / calendar_covered_years) were rewritten after
+    acquisition. Re-parsing the still-genuine stored page must catch the
+    mismatch and fail previous fields closed."""
+    ticker = "7203"
+    routes = fake_transport.clean_run_routes((ticker,))
+    rows = (
+        (CASE_A_TRADING_DATE, "1,000", "1,100", "990", "1,050", "2,345,600"),
+        (CASE_A_EXPECTED_PREVIOUS, "980", "1,010", "975", "1,000", "1,111,100"),
+    )
+    _install_history_routes(monkeypatch, routes, ticker, rows, rows)
+
+    _market_research(tmp_path, (ticker,), stage1_passed=(ticker,))
+    args = _run_args(
+        tmp_path,
+        target_date=CASE_A_TARGET_DATE,
+        trading_date=CASE_A_TRADING_DATE,
+        research_cutoff="2026-08-13T20:00:00+09:00",
+    )
+    cli.main(["acquire-stage1-sources", *args])
+
+    ledger_path = tmp_path / "sources.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    for attempt in ledger["source_attempts"]:
+        if attempt["source_id"] == "JPX_CALENDAR":
+            for value in attempt["values"]:
+                if value["field_name"] == "calendar_covered_years":
+                    value["value"] = ["2099"]
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+    cli.main(["acquire-stage2-market-sources", *args])
+    cli.main(["acquire-actual-turnover", *args])
+
+    record = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )["records"][0]
+    assert record["previous_close"] is None
+    assert record["previous_high"] is None
+    assert record["data_status"] == "DATA_UNAVAILABLE"
 
 
 def test_expected_previous_row_missing_never_falls_back_to_an_older_row(
@@ -788,6 +867,45 @@ def test_source_ledger_rejects_an_artificial_alias_not_backed_by_an_attempt_valu
     )
 
 
+@pytest.mark.parametrize(
+    "field_name,new_value",
+    [
+        ("value", "999999"),
+        ("field_name", "tampered_field"),
+        ("source_id", "KABUTAN_HISTORY"),
+        ("source_url", "https://finance.yahoo.co.jp/quote/9999.T/history"),
+        ("retrieved_at", "2099-01-01T00:00:00+09:00"),
+        ("trading_date", "2099-01-01"),
+        ("ticker", "9999"),
+    ],
+)
+def test_source_ledger_rejects_a_same_ref_tampered_field(field_name, new_value):
+    """FIX-R2-001C section 6: a sources.json entry that keeps its original
+    source_ref but has any single field (value/field_name/source_id/
+    source_url/retrieved_at/trading_date/ticker) rewritten after acquisition
+    must fail -- same-ref existence is not enough, full content must match
+    the Attempt Value it claims to come from."""
+    from src.market import validate_source_ledger
+
+    record = make_market_record()
+    ledger_sources = [source.as_dict() for source in record.sources]
+    ledger_sources[0][field_name] = new_value
+
+    payload = {
+        "schema_version": 3,
+        "target_date": record.trading_date,
+        "sources": ledger_sources,
+        "source_attempts": [make_matching_source_attempt(record.sources)],
+    }
+    result = validate_source_ledger(record.trading_date, [record], payload)
+
+    assert result.valid is False
+    assert any(
+        "does not match the Source Record its Attempt Value implies" in error
+        for error in result.errors
+    )
+
+
 def test_derived_tick_size_provenance_missing_a_real_source_ref_fails_validation():
     """tick_size is a Derived Value: field_provenance must reference a real
     JPX_TICK_SIZE PRIMARY source (never a fabricated tick_size-named Source
@@ -815,6 +933,86 @@ def test_derived_tick_size_provenance_missing_a_real_source_ref_fails_validation
     assert result.valid_for_trade is False
     assert "Missing JPX primary source for tick_size" in result.errors
 
+
+def test_global_source_is_canonical_across_two_candidates(tmp_path, clean_curl):
+    """FIX-R2-001C section 9: JPX_TICK_SIZE (a Global Source) must not be
+    cloned into a per-candidate Source Record. One network GET, one Attempt
+    Value, one canonical Source Record shared by both candidates' provenance,
+    and validate-market/validate_source_ledger must accept both at once."""
+    tickers = ("7203", "6758")
+    _market_research(tmp_path, tickers, stage1_passed=tickers)
+    args = _run_args(
+        tmp_path,
+        target_date="2026-08-13",
+        trading_date=pages.TRADING_DATE,
+        research_cutoff="2026-08-12T20:00:00+09:00",
+    )
+    cli.main(["acquire-stage1-sources", *args])
+
+    tick_size_calls_before = sum(
+        1 for url in clean_curl.urls if "domestic/07.html" in url
+    )
+    cli.main(["acquire-stage2-market-sources", *args])
+    tick_size_calls_after = sum(
+        1 for url in clean_curl.urls if "domestic/07.html" in url
+    )
+    assert tick_size_calls_after - tick_size_calls_before == 1
+
+    ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
+    tick_size_attempts = [
+        attempt
+        for attempt in ledger["source_attempts"]
+        if attempt["source_id"] == "JPX_TICK_SIZE"
+    ]
+    assert len(tick_size_attempts) == 1
+    tick_size_ledger_sources = [
+        source for source in ledger["sources"] if source["source_id"] == "JPX_TICK_SIZE"
+    ]
+    tick_size_refs = {source["source_ref"] for source in tick_size_ledger_sources}
+    assert len(tick_size_refs) == 1, "JPX_TICK_SIZE must be one canonical Source Record"
+    assert all(source["ticker"] is None for source in tick_size_ledger_sources)
+
+    market_data = json.loads(
+        (tmp_path / "market_data.json").read_text(encoding="utf-8")
+    )
+    records_by_ticker = {record["ticker"]: record for record in market_data["records"]}
+    tick_size_ref = next(iter(tick_size_refs))
+    for ticker in tickers:
+        record = records_by_ticker[ticker]
+        provenance = next(
+            item for item in record["field_provenance"] if item["field_name"] == "tick_size"
+        )
+        assert provenance["primary_source_ref"] == tick_size_ref
+        # No candidate-specific clone of the Global Source: exactly one
+        # JPX_TICK_SIZE entry in this record's own sources, and it is the
+        # canonical ref.
+        record_tick_sources = [
+            source for source in record["sources"] if source["source_id"] == "JPX_TICK_SIZE"
+        ]
+        assert {source["source_ref"] for source in record_tick_sources} == {tick_size_ref}
+
+    ledger_result_errors = []
+    from src.market import load_market_data, validate_source_ledger
+
+    target_date, market_records = load_market_data(tmp_path / "market_data.json")
+    ledger_result = validate_source_ledger(target_date, market_records, ledger)
+    assert ledger_result.valid, ledger_result.errors
+
+    output = tmp_path / "market_validation.json"
+    cli.main(
+        [
+            "validate-market",
+            "--market-data", str(tmp_path / "market_data.json"),
+            "--sources", str(tmp_path / "sources.json"),
+            "--output", str(output),
+        ]
+    )
+    validation = json.loads(output.read_text(encoding="utf-8"))
+    for result in validation["results"]:
+        assert not any(
+            "JPX_TICK_SIZE" in error or "Global Source" in error
+            for error in result["errors"]
+        ), (result["ticker"], result["errors"])
 
 
 def test_agent_cannot_hand_edit_market_data_through_the_cli():

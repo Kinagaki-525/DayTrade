@@ -124,13 +124,44 @@ def jpx_listed_company_page(ticker: str = "7203") -> bytes:
 </body></html>""".encode("utf-8")
 
 
+_JP_WEEKDAY = ("月", "火", "水", "木", "金", "土", "日")
+
+
 def jpx_calendar_page(
     entries: tuple[tuple[str, str], ...] = (
-        ("2026年1月1日", "元日"),
-        ("2026年1月12日", "成人の日"),
+        ("2026-01-01", "元日"),
+        ("2026-01-12", "成人の日"),
     ),
+    *,
+    extra_years: tuple[str, ...] = (),
 ) -> bytes:
-    body = "".join(f"<p>{date_text} {name}</p>" for date_text, name in entries)
+    """Production-shaped JPX holiday calendar: one ``<h2>YYYY年</h2>`` section
+    per year, each followed by a table of that year's ``YYYY/MM/DD（曜）``
+    rows. ``entries`` are ``(iso_date, holiday_name)``. ``extra_years`` adds
+    additional covered-but-empty year sections (e.g. to prove a later year's
+    coverage without needing a holiday actually falling in it).
+    """
+    import datetime as _dt
+
+    by_year: dict[str, list[tuple[str, str]]] = {}
+    for iso_date, name in entries:
+        year = iso_date.split("-")[0]
+        by_year.setdefault(year, []).append((iso_date, name))
+    for year in extra_years:
+        by_year.setdefault(year, [])
+
+    sections = []
+    for year in sorted(by_year):
+        rows = "".join(
+            (
+                f"<tr><td>{iso_date.replace('-', '/')}"
+                f"（{_JP_WEEKDAY[_dt.date.fromisoformat(iso_date).weekday()]}）</td>"
+                f"<td>{name}</td></tr>"
+            )
+            for iso_date, name in by_year[year]
+        )
+        sections.append(f"<h2>{year}年</h2><table><tbody>{rows}</tbody></table>")
+    body = "".join(sections)
     return f"""<html><head><meta charset="utf-8"></head><body>
 {body}
 </body></html>""".encode("utf-8")

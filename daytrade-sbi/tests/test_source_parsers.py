@@ -283,13 +283,83 @@ def test_jpx_calendar_and_tick_size_parse():
     calendar = jpx.parse_calendar(
         pages.jpx_calendar_page(), DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR")
     )
-    assert calendar.values[0].value == ["2026-01-01", "2026-01-12"]
+    assert calendar.status == "FOUND"
+    non_business_days = next(
+        v for v in calendar.values if v.field_name == "non_business_days"
+    )
+    covered_years = next(
+        v for v in calendar.values if v.field_name == "calendar_covered_years"
+    )
+    assert non_business_days.value == ["2026-01-01", "2026-01-12"]
+    # calendar_covered_years is derived from the YYYY年 section heading, not
+    # from the dates it happens to list, so an unlisted month (August) still
+    # falls inside a confirmed-covered year.
+    assert covered_years.value == ["2026"]
 
     ticks = jpx.parse_tick_size(
         pages.jpx_tick_size_page(), DEFINITIONS["JPX_TICK_SIZE"], _context("JPX_TICK_SIZE")
     )
     assert ticks.status == "FOUND"
     assert ticks.values[0].value[0] == {"price_band": "3000以下", "tick_size": "1"}
+
+
+def test_jpx_calendar_production_slash_date_format():
+    """The real JPX holiday table publishes YYYY/MM/DD（曜）, not YYYY年M月D日;
+    the weekday character is display-only and never drives the parse."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "<tr><td>2026/08/11（火）</td><td>山の日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "FOUND"
+    non_business_days = next(v for v in result.values if v.field_name == "non_business_days")
+    assert non_business_days.value == ["2026-01-01", "2026-08-11"]
+
+
+def test_jpx_calendar_invalid_date_is_parse_failed():
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2026/13/40（木）</td><td>存在しない日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_date_outside_any_year_section_is_parse_failed():
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<p>2026/08/11（火）山の日</p>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2026/01/01（木）</td><td>元日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_date_mismatched_with_its_section_year_is_parse_failed():
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        "<h2>2026年</h2><table><tbody>"
+        "<tr><td>2027/01/01（金）</td><td>元日</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+    result = jpx.parse_calendar(page, DEFINITIONS["JPX_CALENDAR"], _context("JPX_CALENDAR"))
+    assert result.status == "PARSE_FAILED"
+
+
+def test_jpx_calendar_no_year_section_is_not_found():
+    result = jpx.parse_calendar(
+        pages.jpx_calendar_page_unparseable(),
+        DEFINITIONS["JPX_CALENDAR"],
+        _context("JPX_CALENDAR"),
+    )
+    assert result.status == "NOT_FOUND"
 
 
 # ------------------------------------------------------------- dispatch -----

@@ -28,6 +28,7 @@ from src.contracts import validate_json_document
 from src.file_io import atomic_write_text
 from src.research import merge_discovery_candidates, validate_market_research
 from src.source_acquisition import AcquisitionError, AcquisitionResult
+from src.source_matrix import GLOBAL_SOURCE_IDS
 from src.tick_size import TickSizeError, select_tick_size
 
 
@@ -372,7 +373,18 @@ def _ledger_value_records(
                     "source_url": str(attempt["url"]),
                     "retrieved_at": str(attempt["retrieved_at"]),
                     "trading_date": str(value.get("trading_date")),
-                    "ticker": ticker,
+                    # Global Source normalization (FIX-R2-001C section 7):
+                    # a value from a GLOBAL_SOURCE_IDS attempt is one
+                    # canonical Source Record shared by every candidate that
+                    # consumes it, never cloned per candidate under the same
+                    # source_ref -- so it keeps the Attempt Value's own
+                    # ticker=None rather than being attributed to whichever
+                    # candidate happens to be building its record right now.
+                    "ticker": (
+                        None
+                        if str(attempt["source_id"]) in GLOBAL_SOURCE_IDS
+                        else ticker
+                    ),
                     "field_name": str(value["field_name"]),
                     "value": value.get("value"),
                 }
