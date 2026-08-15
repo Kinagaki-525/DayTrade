@@ -393,6 +393,39 @@ def _require_absolute_dir(value: str | Path, label: str) -> Path:
     return path.resolve()
 
 
+def canonical_production_python(value: str | Path) -> str:
+    """FIX-R2-004B: the single canonicalization of the production interpreter.
+
+    Every place that names the production Python -- the managed ``Bash`` allow
+    rule, the managed hook ``command``, ``runtime_security.json``,
+    ``DAYTRADE_PRODUCTION_PYTHON`` and therefore the runtime guard's own
+    comparison -- must agree on *one* identity. A symlink alias
+    (a ``python3`` symlink pointing at a versioned interpreter) is not a second
+    identity: it resolves to the same canonical path here, so an alias invocation can never
+    be mistaken for the allowed interpreter.
+
+    Contract: absolute path required, ``Path.resolve()``-d, and the resolved
+    path must be an existing regular file. Relative and nonexistent paths are
+    rejected.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "production_python must be a non-empty path"
+        )
+    path = Path(value)
+    if not path.is_absolute():
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "production_python must be an absolute path"
+        )
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            f"production_python is not a file: {resolved}",
+        )
+    return str(resolved)
+
+
 def render_managed_settings(
     *,
     project_root: str | Path,
@@ -407,17 +440,7 @@ def render_managed_settings(
     project_root = _require_absolute_dir(project_root, "project_root")
     daytrade_root = _require_absolute_dir(daytrade_root, "daytrade_root")
 
-    python_path = Path(production_python)
-    if not python_path.is_absolute():
-        raise _fail(
-            "CLAUDE_MANAGED_POLICY_INVALID", "production_python must be an absolute path"
-        )
-    python_path = python_path.resolve()
-    if not python_path.is_file():
-        raise _fail(
-            "CLAUDE_MANAGED_POLICY_INVALID",
-            f"production_python is not a file: {python_path}",
-        )
+    canonical_python = canonical_production_python(production_python)
 
     guard_path = Path(guard_path)
     if not guard_path.is_absolute():
@@ -427,7 +450,7 @@ def render_managed_settings(
 
     text = Path(template_path).read_text(encoding="utf-8")
     replacements = {
-        "__PRODUCTION_PYTHON__": str(python_path),
+        "__PRODUCTION_PYTHON__": canonical_python,
         "__PROJECT_ROOT__": str(project_root),
         "__DAYTRADE_ROOT__": str(daytrade_root),
         "__EVENT_EXTRACTION_PATH_PATTERN__": absolute_edit_permission_pattern(

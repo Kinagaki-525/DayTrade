@@ -677,3 +677,48 @@ def test_denials_use_exit_code_two_not_one(production):
     result = _bash(production, "curl https://example.com")
     assert result.returncode == 2
     assert result.returncode != 1
+
+
+# ---------------------- FIX-R2-004B canonical production python identity ---
+
+
+@pytest.fixture()
+def symlinked_production(production, tmp_path):
+    """The production python reached through a symlink alias as well."""
+    real = tmp_path / "bin" / "real_python"
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_bytes(Path(sys.executable).resolve().read_bytes())
+    real.chmod(0o755)
+    alias = tmp_path / "bin" / "python3"
+    alias.symlink_to(real)
+
+    canonical = str(real.resolve())
+    production["python"] = canonical
+    production["env"] = dict(production["env"])
+    production["env"]["DAYTRADE_PRODUCTION_PYTHON"] = canonical
+    production["alias"] = str(alias)
+    production["canonical"] = canonical
+    return production
+
+
+def test_guard_allows_the_canonical_production_python(symlinked_production):
+    command = _cli(
+        symlinked_production,
+        _canonical_commands(symlinked_production)["validate-source-matrix"],
+    )
+    result = _bash(symlinked_production, command)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_guard_denies_a_symlink_alias_of_the_production_python(symlinked_production):
+    alias = symlinked_production["alias"]
+    assert alias != symlinked_production["canonical"]
+    allowed = _cli(
+        symlinked_production,
+        _canonical_commands(symlinked_production)["validate-source-matrix"],
+    )
+    command = allowed.replace(symlinked_production["canonical"], alias, 1)
+    assert command.startswith(alias)
+    result = _bash(symlinked_production, command)
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_BASH_DENIED" in result.stderr

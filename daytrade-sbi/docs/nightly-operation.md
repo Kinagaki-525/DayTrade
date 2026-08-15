@@ -252,6 +252,12 @@ sudo apt-get install bubblewrap socat
        --production-python "$(command -v python3)" > /tmp/managed-settings.json
    ```
 
+   `--production-python`にsymlink（例: `python3 -> python3.11`）を渡しても構いません。
+   `canonical_production_python()`が内部で必ずresolved absolute pathへ正規化するため、
+   Managed Bash allow rule / Hook command / `runtime_security.json` /
+   `DAYTRADE_PRODUCTION_PYTHON` / Runtime Guardの比較はすべて同一identityになります。
+   Humanが事前にsymlinkを手動解決する必要はありません。
+
 5. rendered policyをHumanがreviewする。
 6. root権限でdeployする。
 

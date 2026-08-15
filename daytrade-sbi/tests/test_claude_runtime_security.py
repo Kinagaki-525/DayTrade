@@ -1319,3 +1319,144 @@ def test_the_project_settings_do_not_claim_to_be_the_production_boundary():
     assert "strictAllowlist" not in network
     assert "allowManagedDomainsOnly" not in network
     assert settings["permissions"]["defaultMode"] == "default"
+
+
+# ------------------------------------ FIX-R2-004B canonical python identity ---
+
+
+@pytest.fixture()
+def python_symlink(tmp_path):
+    """``python3 -> real_python``: one interpreter, two path spellings."""
+    real_python = tmp_path / "bin" / "real_python"
+    real_python.parent.mkdir(parents=True)
+    real_python.write_bytes(Path(sys.executable).resolve().read_bytes())
+    os.chmod(real_python, 0o755)
+    alias = tmp_path / "bin" / "python3"
+    alias.symlink_to(real_python)
+    return {"real": real_python, "alias": alias}
+
+
+def test_canonical_production_python_resolves_a_symlink_alias(python_symlink):
+    alias = python_symlink["alias"]
+    real = python_symlink["real"]
+    assert alias.is_symlink()
+    assert str(alias) != str(real)
+    assert crs.canonical_production_python(alias) == str(real.resolve())
+    assert crs.canonical_production_python(real) == str(real.resolve())
+
+
+def test_canonical_production_python_rejects_relative_and_missing(tmp_path):
+    for bad in ("python3", "bin/python3", "", "   "):
+        with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+            crs.canonical_production_python(bad)
+        assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+    with pytest.raises(crs.RuntimeSecurityError):
+        crs.canonical_production_python("/nonexistent/python3")
+    with pytest.raises(crs.RuntimeSecurityError):
+        # a directory is not a regular file
+        crs.canonical_production_python(tmp_path)
+
+
+def test_canonical_production_python_is_idempotent(python_symlink):
+    once = crs.canonical_production_python(python_symlink["alias"])
+    assert crs.canonical_production_python(once) == once
+
+
+def _managed_python_paths(payload):
+    bash_rules = [
+        rule
+        for rule in payload["permissions"]["allow"]
+        if str(rule).startswith("Bash(")
+    ]
+    hook_commands = [
+        hook["command"]
+        for event in ("PreToolUse", "ConfigChange")
+        for entry in payload["hooks"][event]
+        for hook in entry["hooks"]
+    ]
+    return bash_rules, hook_commands
+
+
+def test_render_managed_settings_canonicalizes_a_symlinked_python(python_symlink):
+    real = str(python_symlink["real"].resolve())
+    payload = crs.render_managed_settings(
+        project_root=REPOSITORY_ROOT,
+        daytrade_root=PROJECT_ROOT,
+        production_python=python_symlink["alias"],
+    )
+    bash_rules, hook_commands = _managed_python_paths(payload)
+    assert bash_rules == [f"Bash({real} -B -m src.cli *)"]
+    assert hook_commands == [real, real]
+    assert str(python_symlink["alias"]) not in json.dumps(payload)
+
+
+def test_preflight_uses_one_canonical_python_everywhere(production_world, python_symlink):
+    """Section 6: ``which('python3')`` returns a symlink; everything resolves."""
+    launcher = production_world["launcher"]
+    daytrade_root = production_world["daytrade_root"]
+    kwargs = dict(production_world["kwargs"])
+
+    real = str(python_symlink["real"].resolve())
+    alias = str(python_symlink["alias"])
+
+    # Reinstall the managed policy for this interpreter identity.
+    settings_path = Path(kwargs["managed_settings_path"])
+    payload = crs.render_managed_settings(
+        project_root=daytrade_root.parent,
+        daytrade_root=daytrade_root,
+        production_python=real,
+        guard_path=kwargs["managed_guard_path"],
+    )
+    settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.chmod(settings_path, 0o644)
+
+    # No DAYTRADE_PRODUCTION_PYTHON: the launcher falls back to which("python3"),
+    # which here answers with the *symlink alias*.
+    kwargs["environ"] = {"DAYTRADE_HTTP_USER_AGENT": "daytrade/1.0"}
+    kwargs["which"] = lambda name: alias if name == "python3" else f"/usr/bin/{name}"
+
+    result = launcher.preflight(target_date="2026-08-14", **kwargs)
+
+    assert result["production_python"] == real
+    assert result["document"]["production_python"] == real
+
+    written = json.loads(Path(result["artifact_path"]).read_text("utf-8"))
+    assert written["production_python"] == real
+
+    bash_rules, hook_commands = _managed_python_paths(payload)
+    assert bash_rules == [f"Bash({real} -B -m src.cli *)"]
+    assert hook_commands == [real, real]
+    assert alias not in json.dumps(payload)
+
+
+def test_preflight_canonicalizes_an_env_supplied_symlink(production_world, python_symlink):
+    launcher = production_world["launcher"]
+    daytrade_root = production_world["daytrade_root"]
+    kwargs = dict(production_world["kwargs"])
+    real = str(python_symlink["real"].resolve())
+
+    settings_path = Path(kwargs["managed_settings_path"])
+    payload = crs.render_managed_settings(
+        project_root=daytrade_root.parent,
+        daytrade_root=daytrade_root,
+        production_python=real,
+        guard_path=kwargs["managed_guard_path"],
+    )
+    settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.chmod(settings_path, 0o644)
+
+    kwargs["environ"] = {
+        "DAYTRADE_PRODUCTION_PYTHON": str(python_symlink["alias"]),
+        "DAYTRADE_HTTP_USER_AGENT": "daytrade/1.0",
+    }
+    result = launcher.preflight(target_date="2026-08-14", **kwargs)
+    assert result["production_python"] == real
+
+
+def test_the_deploy_script_relies_on_internal_canonicalization():
+    """Section 8: a human may pass ``$(command -v python3)`` unchanged."""
+    text = (PROJECT_ROOT / "scripts" / "deploy-claude-managed-policy").read_text("utf-8")
+    assert "readlink" not in text
+    doc = (PROJECT_ROOT / "docs" / "nightly-operation.md").read_text("utf-8")
+    assert "readlink -f" not in doc
+    assert '--production-python "$(command -v python3)"' in doc

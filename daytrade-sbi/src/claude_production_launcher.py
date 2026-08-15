@@ -34,6 +34,7 @@ from src.claude_runtime_security import (
     SECCOMP_MARKER_PATH,
     RuntimeSecurityError,
     build_runtime_security_document,
+    canonical_production_python,
     derive_expected_domains,
     render_managed_settings,
     resolve_run_dir,
@@ -131,11 +132,17 @@ def preflight(
 
     # 7-8. expected domains + expected managed policy (in memory)
     allowed_domains = derive_expected_domains(source_matrix_path, issuer_registry_path)
-    production_python = environ.get("DAYTRADE_PRODUCTION_PYTHON") or which("python3")
-    if not production_python:
+    production_python_candidate = environ.get("DAYTRADE_PRODUCTION_PYTHON") or which(
+        "python3"
+    )
+    if not production_python_candidate:
         raise RuntimeSecurityError(
             "CLAUDE_MANAGED_POLICY_INVALID", "no production python3 was found"
         )
+    # FIX-R2-004B: one canonical identity from here on -- the managed Bash allow
+    # rule, the managed hook command, runtime_security.json, the preflight
+    # result and DAYTRADE_PRODUCTION_PYTHON all carry this exact string.
+    production_python = canonical_production_python(production_python_candidate)
     expected = render_managed_settings(
         project_root=project_root,
         daytrade_root=daytrade_root,
@@ -209,7 +216,7 @@ def preflight(
         "run_dir": run_dir,
         "artifact_path": artifact_path,
         "document": document,
-        "production_python": str(production_python),
+        "production_python": production_python,
         "project_root": project_root,
         "daytrade_root": daytrade_root,
     }
