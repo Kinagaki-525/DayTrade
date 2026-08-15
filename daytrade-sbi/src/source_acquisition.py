@@ -35,10 +35,12 @@ from src.network_policy import (
     NetworkPolicyError,
     approved_issuer_hosts,
     load_issuer_domain_registry,
+    validate_request_url,
 )
 from src.source_fetch import (
     SourceFetchError,
     curl_transport,
+    user_agent,
     _fetch_source,
     verify_source_page,
 )
@@ -56,7 +58,9 @@ from src.source_parsers.registry import (
     verify_source_parser_binding,
 )
 from src.request_budget import (
+    RequestBudgetError,
     complete_request,
+    load_request_record,
     reserve_request,
 )
 from src.trading_calendar import verified_previous_trading_date
@@ -229,7 +233,20 @@ def _failed_attempt(
     research_cutoff: str,
     status: str,
     notes: tuple[str, ...],
+    requested_at: str | None = None,
+    retrieved_at: str | None = None,
 ) -> dict[str, Any]:
+    """Build the base Attempt dict.
+
+    ``requested_at``/``retrieved_at`` are timestamp-truth overrides (FIX-R2-002A
+    section 7): when a Physical Request Record already carries the true
+    ``reserved_at``/``completed_at`` for this attempt, the caller passes those
+    values through here rather than letting this function mint a fresh
+    ``utc_now_iso()`` that would misrepresent when the network activity (or
+    lack of it) actually happened. When omitted, ``requested_at`` defaults to
+    "now" (Logical Attempt generation time -- used for pre-network and HIT
+    attempts, which never claim to be the origin's ``reserved_at``).
+    """
     return {
         "attempt_id": attempt_id_for(
             source_id=definition["source_id"],
@@ -245,8 +262,8 @@ def _failed_attempt(
         "candidate_code": candidate_code,
         "target_date": target_date,
         "research_cutoff": research_cutoff,
-        "requested_at": utc_now_iso(),
-        "retrieved_at": None,
+        "requested_at": requested_at if requested_at is not None else utc_now_iso(),
+        "retrieved_at": retrieved_at,
         "url": url,
         "status": status,
         "values": None,
@@ -434,9 +451,78 @@ def acquire_source(
             page_sha = existing_attempt.get("source_page_sha256")
             if page_path and page_sha:
                 verify_source_page(run_dir, str(page_path), str(page_sha))
+            # FIX-R2-002A section 19: reuse of an existing MISS/HIT attempt
+            # is never based on the attempt's own claims alone -- the
+            # Physical Request Record it names must itself be present,
+            # integrity-valid, and COMPLETED. NOT_CACHEABLE attempts never
+            # had a Physical Request, so there is nothing to re-check.
+            existing_cache_status = existing_attempt.get("cache_status")
+            if existing_cache_status in ("MISS", "HIT"):
+                existing_request_id = existing_attempt.get("request_id")
+                if not existing_request_id:
+                    raise AcquisitionError(
+                        "EXACT_ATTEMPT_REQUEST_RECORD_MISSING",
+                        f"attempt {attempt_id} claims cache_status="
+                        f"{existing_cache_status} but carries no request_id",
+                    )
+                existing_record = load_request_record(run_dir, str(existing_request_id))
+                if existing_record is None:
+                    raise AcquisitionError(
+                        "EXACT_ATTEMPT_REQUEST_RECORD_MISSING",
+                        f"attempt {attempt_id} references request "
+                        f"{existing_request_id} but no such Physical Request "
+                        "Record exists on disk",
+                    )
+                if existing_record.get("state") != "COMPLETED":
+                    raise AcquisitionError(
+                        "EXACT_ATTEMPT_REQUEST_RECORD_NOT_COMPLETED",
+                        f"attempt {attempt_id} references request "
+                        f"{existing_request_id} which is not COMPLETED "
+                        f"(state={existing_record.get('state')!r})",
+                    )
             return dict(existing_attempt), _ledger_values_from_attempt(
                 existing_attempt, source_id, definition
             )
+
+    # ---- Pre-Network Failure Boundary (FIX-R2-002A section 5) -------------
+    # Any validation that can determine, without ever touching the
+    # transport, that this request will never be sent must run *before*
+    # reserve_request(): a Physical Request Record must never be created for
+    # something that was always going to fail pre-network.
+    try:
+        validate_request_url(
+            url,
+            source_id=source_id,
+            ticker=candidate_code,
+            issuer_registry=issuer_registry,
+        )
+        # User-Agent presence only matters to the real curl transport (it is
+        # what curl_transport() embeds in the request); a caller-supplied
+        # Fake Transport (every test in this codebase) never reads it, so
+        # this check is scoped to the default transport only.
+        if transport is curl_transport:
+            user_agent()
+    except (NetworkPolicyError, SourceFetchError) as exc:
+        attempt = _failed_attempt(
+            definition=definition,
+            candidate_code=candidate_code,
+            url=url,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+            status="ACCESS_FAILED",
+            notes=(getattr(exc, "code", "PRE_NETWORK_VALIDATION_FAILED"),),
+        )
+        attempt.update(
+            {
+                "request_id": None,
+                "network_request_performed": False,
+                "cache_status": "NOT_CACHEABLE",
+                "reused_from_attempt_id": None,
+            }
+        )
+        if cache is not None:
+            cache.remember(attempt)
+        return attempt, []
 
     # ---- Physical Request: reserve (crash-safe) before any transport call -
     reservation = reserve_request(
@@ -455,6 +541,13 @@ def acquire_source(
         # Shared Physical Request: another attempt (this run or a previous
         # invocation) already consumed the GET for this exact URL. Reuse the
         # outcome; the transport is never called again for it.
+        #
+        # Timestamp truth (FIX-R2-002A section 7): a HIT's retrieved_at is
+        # always the Physical Request's own completed_at -- never a fresh
+        # utc_now_iso(). Its requested_at is this Logical Attempt's own
+        # generation time (documented, not the origin MISS's reserved_at):
+        # the HIT attempt itself was not "requested" at the origin's time,
+        # it is being recorded now as a reuse of that origin's evidence.
         page_path = record.get("source_page_path")
         page_sha = record.get("source_page_sha256")
         stored = b""
@@ -468,6 +561,7 @@ def acquire_source(
             research_cutoff=research_cutoff,
             status=str(record.get("source_status")),
             notes=(),
+            retrieved_at=record.get("completed_at"),
         )
         attempt.update(
             {
@@ -475,7 +569,6 @@ def acquire_source(
                 "http_status": record.get("http_status"),
                 "content_type": record.get("content_type"),
                 "transport_exit_code": record.get("transport_exit_code"),
-                "retrieved_at": record.get("completed_at"),
                 "cache_status": "HIT",
                 "request_id": request_id,
                 "network_request_performed": False,
@@ -508,16 +601,74 @@ def acquire_source(
         return _finish_found_attempt(attempt, parsed, source_id, definition, cache)
 
     # ---- New Physical Request: the transport runs exactly once here -------
-    result = _fetch_source(
-        url,
-        source_id=source_id,
-        candidate_code=candidate_code,
-        ticker=candidate_code,
-        issuer_registry=issuer_registry,
-        run_dir=run_dir,
-        transport=transport,
-    )
-    complete_request(
+    #
+    # FIX-R2-002A sections 17/18: once reserve_request() has written a
+    # RESERVED record, this attempt to invoke the transport must resolve to
+    # exactly one of two outcomes -- never a silent guess:
+    #
+    # * A known-safe launch failure (curl binary missing, permission denied,
+    #   ...) is *known* to mean nothing was ever sent: it is completed as
+    #   EXECUTION_FAILED like any other transport-execution fault.
+    # * Anything else unexpected leaves send/no-send genuinely ambiguous:
+    #   the RESERVED record is left untouched (never guessed at, never
+    #   retried) and REQUEST_BUDGET_STATE_INDETERMINATE is raised.
+    try:
+        result = _fetch_source(
+            url,
+            source_id=source_id,
+            candidate_code=candidate_code,
+            ticker=candidate_code,
+            issuer_registry=issuer_registry,
+            run_dir=run_dir,
+            transport=transport,
+        )
+    except OSError as exc:
+        completed_record = complete_request(
+            run_dir,
+            request_id,
+            source_status="EXECUTION_FAILED",
+            http_status=None,
+            content_type=None,
+            transport_exit_code=-1,
+            source_page_path=None,
+            source_page_sha256=None,
+            source_page_size_bytes=None,
+        )
+        attempt = _failed_attempt(
+            definition=definition,
+            candidate_code=candidate_code,
+            url=url,
+            target_date=target_date,
+            research_cutoff=research_cutoff,
+            status="EXECUTION_FAILED",
+            notes=("TRANSPORT_LAUNCH_FAILED",),
+            requested_at=record.get("reserved_at"),
+            retrieved_at=completed_record.get("completed_at"),
+        )
+        attempt.update(
+            {
+                "acquisition_method": "HTTP_GET",
+                "http_status": None,
+                "content_type": None,
+                "transport_exit_code": -1,
+                "cache_status": "MISS",
+                "request_id": request_id,
+                "network_request_performed": True,
+                "reused_from_attempt_id": None,
+            }
+        )
+        if cache is not None:
+            cache.remember(attempt)
+        return attempt, []
+    except Exception as exc:  # noqa: BLE001 - deliberately broad: see docstring
+        raise RequestBudgetError(
+            "REQUEST_BUDGET_STATE_INDETERMINATE",
+            f"transport invocation for request {request_id} raised an "
+            f"unexpected {type(exc).__name__}; whether the request was sent "
+            "is unknown, so the RESERVED record is left untouched and no "
+            "retry is attempted",
+        ) from exc
+    completed_record = complete_request(
         run_dir,
         request_id,
         source_status=result.status,
@@ -529,6 +680,10 @@ def acquire_source(
         source_page_size_bytes=result.source_page_size_bytes,
     )
 
+    # Timestamp truth (FIX-R2-002A section 7): the origin MISS attempt's
+    # requested_at/retrieved_at are literally the Physical Request Record's
+    # own reserved_at/completed_at -- never a separately generated
+    # utc_now_iso() that could drift from what was actually reserved/completed.
     attempt = _failed_attempt(
         definition=definition,
         candidate_code=candidate_code,
@@ -537,6 +692,8 @@ def acquire_source(
         research_cutoff=research_cutoff,
         status=result.status,
         notes=result.notes,
+        requested_at=record.get("reserved_at"),
+        retrieved_at=completed_record.get("completed_at"),
     )
     attempt.update(
         {
@@ -544,7 +701,6 @@ def acquire_source(
             "http_status": result.http_status,
             "content_type": result.content_type,
             "transport_exit_code": result.transport_exit_code,
-            "retrieved_at": utc_now_iso(),
             "cache_status": "MISS",
             "request_id": request_id,
             "network_request_performed": True,

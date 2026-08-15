@@ -23,8 +23,11 @@ different logic anywhere else in the codebase.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,10 +78,73 @@ def validate_request_record(record: dict[str, Any]) -> None:
 
 
 def load_request_record(run_dir: str | Path, request_id: str) -> dict[str, Any] | None:
+    """Load, and fully verify, the Request Record named ``request_id``.
+
+    A record is never handed back to a caller unverified: this is the sole
+    gate through which a Physical Request Record may be reused. Every check
+    below is a hard error (``REQUEST_RECORD_INTEGRITY_VIOLATION``) -- a
+    record that fails any of them is not "probably fine", it is untrusted
+    evidence and must not be reused, extended, or treated as authoritative.
+    """
     path = network_request_path(run_dir, request_id)
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+
+    raw = path.read_text(encoding="utf-8")
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} is not valid JSON: {exc}",
+        ) from exc
+
+    if not isinstance(record, dict):
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} is not a JSON object",
+        )
+
+    try:
+        validate_request_record(record)
+    except ValueError as exc:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} failed schema validation: {exc}",
+        ) from exc
+
+    for field in ("url", "target_date", "research_cutoff", "request_id"):
+        if field not in record or not isinstance(record[field], str):
+            raise RequestBudgetError(
+                "REQUEST_RECORD_INTEGRITY_VIOLATION",
+                f"request record {path} is missing required field {field!r}",
+            )
+
+    recomputed_id = request_id_for(
+        url=record["url"],
+        target_date=record["target_date"],
+        research_cutoff=record["research_cutoff"],
+    )
+    if recomputed_id != record["request_id"]:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} has request_id {record['request_id']!r} but "
+            f"url+target_date+research_cutoff recompute to {recomputed_id!r}",
+        )
+    if record["request_id"] != request_id:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} has request_id {record['request_id']!r} but "
+            f"filename implies {request_id!r}",
+        )
+    if path.stem != record["request_id"]:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record file name {path.name!r} does not match its own "
+            f"request_id {record['request_id']!r}",
+        )
+
+    return record
 
 
 def _write_record(run_dir: str | Path, record: dict[str, Any]) -> None:
@@ -98,6 +164,34 @@ class ReservationOutcome:
 
     record: dict[str, Any]
     already_completed: bool
+
+
+def _verify_reuse_arguments(
+    record: dict[str, Any],
+    *,
+    url: str,
+    target_date: str,
+    research_cutoff: str,
+) -> None:
+    """A reused ``COMPLETED`` record must agree with the caller's own tuple.
+
+    ``request_id`` matching alone is not proof: it is only proof once we
+    know the record itself is not lying about the tuple it was reserved
+    for, which is exactly what this cross-check exists to catch.
+    """
+    if (
+        record.get("url") != url
+        or record.get("target_date") != target_date
+        or record.get("research_cutoff") != research_cutoff
+    ):
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            "request record tuple mismatch: caller requested "
+            f"({url!r}, {target_date!r}, {research_cutoff!r}) but record "
+            f"{record.get('request_id')!r} holds "
+            f"({record.get('url')!r}, {record.get('target_date')!r}, "
+            f"{record.get('research_cutoff')!r})",
+        )
 
 
 def reserve_request(
@@ -130,6 +224,9 @@ def reserve_request(
     existing = load_request_record(run_dir, request_id)
     if existing is not None:
         if existing.get("state") == "COMPLETED":
+            _verify_reuse_arguments(
+                existing, url=url, target_date=target_date, research_cutoff=research_cutoff
+            )
             return ReservationOutcome(record=existing, already_completed=True)
         raise RequestBudgetError(
             "REQUEST_BUDGET_STATE_INDETERMINATE",
@@ -157,7 +254,39 @@ def reserve_request(
         "source_page_sha256": None,
         "source_page_size_bytes": None,
     }
-    _write_record(run_dir, record)
+    validate_request_record(record)
+    path = network_request_path(run_dir, request_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Concurrency hardening: the RESERVED record is created with an atomic
+    # exclusive open (O_CREAT|O_EXCL). Exactly one process can win this
+    # race for a given request_id; the loser must never proceed to invoke
+    # the transport itself, and must never wait-and-retry.
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+        winner = load_request_record(run_dir, request_id)
+        if winner is None:
+            raise RequestBudgetError(
+                "REQUEST_BUDGET_STATE_INDETERMINATE",
+                f"request {request_id} lost the reservation race and no readable "
+                "record was found afterward; refusing to retry",
+            ) from exc
+        if winner.get("state") == "COMPLETED":
+            _verify_reuse_arguments(
+                winner, url=url, target_date=target_date, research_cutoff=research_cutoff
+            )
+            return ReservationOutcome(record=winner, already_completed=True)
+        raise RequestBudgetError(
+            "REQUEST_BUDGET_STATE_INDETERMINATE",
+            f"request {request_id} lost the reservation race to a concurrent "
+            "process and is still RESERVED; refusing to retry or wait",
+        ) from exc
+
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
     return ReservationOutcome(record=record, already_completed=False)
 
 
@@ -229,6 +358,48 @@ def list_request_records(run_dir: str | Path) -> list[dict[str, Any]]:
     return records
 
 
+_REQUEST_FILENAME_PATTERN = re.compile(r"^req-[0-9a-f]{32}\.json$")
+
+
+def scan_network_requests_directory(
+    run_dir: str | Path,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Strictly scan ``network_requests/`` (FIX-R2-002A section 6/20-22).
+
+    Returns ``(records, violations)``. Only files named exactly
+    ``req-[0-9a-f]{32}.json`` are permitted; anything else (a stray file, a
+    hidden file, a subdirectory, a wrongly-named or malformed/tampered
+    ``.json``) is reported as a violation string and **never** silently
+    skipped -- this is what lets callers (production verification) turn a
+    directory-integrity problem into an ``INVALID_RUN`` check failure
+    instead of either crashing or quietly ignoring it.
+    """
+    directory = Path(run_dir) / NETWORK_REQUESTS_DIRNAME
+    if not directory.is_dir():
+        return [], []
+
+    records: list[dict[str, Any]] = []
+    violations: list[str] = []
+    for path in sorted(directory.iterdir()):
+        if path.is_dir():
+            violations.append(f"unexpected subdirectory in network_requests/: {path.name}")
+            continue
+        if not _REQUEST_FILENAME_PATTERN.match(path.name):
+            violations.append(f"unexpected file in network_requests/: {path.name}")
+            continue
+        request_id = path.stem
+        try:
+            record = load_request_record(run_dir, request_id)
+        except RequestBudgetError as exc:
+            violations.append(f"{path.name}: {exc.code}: {exc.message}")
+            continue
+        if record is None:  # pragma: no cover - defensive, path.is_file() just checked
+            violations.append(f"{path.name}: request record vanished during scan")
+            continue
+        records.append(record)
+    return records, violations
+
+
 __all__ = [
     "NETWORK_REQUESTS_DIRNAME",
     "NETWORK_REQUEST_SCHEMA_NAME",
@@ -240,6 +411,7 @@ __all__ = [
     "network_request_path",
     "request_id_for",
     "reserve_request",
+    "scan_network_requests_directory",
     "utc_now_iso",
     "validate_request_record",
 ]

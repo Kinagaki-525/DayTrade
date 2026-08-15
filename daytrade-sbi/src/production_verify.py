@@ -38,7 +38,10 @@ from src.market import (
     validate_source_ledger,
 )
 from src.ranking_trust import load_and_verify_ranking_trust_chain
-from src.request_budget import list_request_records, request_id_for
+from src.request_budget import (
+    request_id_for,
+    scan_network_requests_directory,
+)
 from src.source_fetch import SourceFetchError, verify_source_page
 from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH, load_source_matrix
 
@@ -129,6 +132,69 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+#: Parser Status Contract (src/source_parsers/*.py): the only statuses a
+#: parser may legitimately return. Read from the parsers themselves, never
+#: guessed -- see FIX-R2-002A section 10.
+_PARSER_LEGAL_STATUSES = frozenset({"FOUND", "NOT_FOUND", "PARSE_FAILED"})
+
+
+def _miss_attempt_link_mismatches(record: dict[str, Any], attempt: dict[str, Any]) -> list[str]:
+    """Field-by-field cross-validation of an origin-MISS Attempt against its
+    own Physical Request Record (FIX-R2-002A sections 4, 9, 10).
+
+    Returns the list of mismatched field names -- empty means the link is
+    fully consistent.
+    """
+    mismatched: list[str] = []
+
+    def _check(name: str, record_value: Any, attempt_value: Any) -> None:
+        if record_value != attempt_value:
+            mismatched.append(name)
+
+    _check("attempt_id", record.get("origin_attempt_id"), attempt.get("attempt_id"))
+    _check("source_id", record.get("origin_source_id"), attempt.get("source_id"))
+    _check(
+        "candidate_code", record.get("origin_candidate_code"), attempt.get("candidate_code")
+    )
+    _check("url", record.get("url"), attempt.get("url"))
+    _check("target_date", record.get("target_date"), attempt.get("target_date"))
+    _check("research_cutoff", record.get("research_cutoff"), attempt.get("research_cutoff"))
+    _check("requested_at", record.get("reserved_at"), attempt.get("requested_at"))
+    _check("retrieved_at", record.get("completed_at"), attempt.get("retrieved_at"))
+    _check("http_status", record.get("http_status"), attempt.get("http_status"))
+    _check("content_type", record.get("content_type"), attempt.get("content_type"))
+    _check(
+        "transport_exit_code",
+        record.get("transport_exit_code"),
+        attempt.get("transport_exit_code"),
+    )
+    _check(
+        "source_page_path",
+        record.get("source_page_path"),
+        attempt.get("source_page_path") or None,
+    )
+    _check(
+        "source_page_sha256",
+        record.get("source_page_sha256"),
+        attempt.get("source_page_sha256") or None,
+    )
+    _check(
+        "source_page_size_bytes",
+        record.get("source_page_size_bytes"),
+        attempt.get("source_page_size_bytes"),
+    )
+
+    record_status = record.get("source_status")
+    attempt_status = attempt.get("status")
+    if record_status != "FOUND":
+        if attempt_status != record_status:
+            mismatched.append("status")
+    elif attempt_status not in _PARSER_LEGAL_STATUSES:
+        mismatched.append("status")
+
+    return mismatched
+
+
 # ---------------------------------------------------------------------------
 # Network audit (FIX-013)
 # ---------------------------------------------------------------------------
@@ -146,7 +212,7 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
     Record files -- not the attempts -- can say how many GETs actually
     happened.
     """
-    requests = list_request_records(run_dir)
+    requests, directory_violations = scan_network_requests_directory(run_dir)
     attempts = [
         attempt
         for attempt in source_payload.get("source_attempts", [])
@@ -183,13 +249,14 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
     ]
 
     duplicate_request_ids = _duplicates([str(r.get("request_id")) for r in requests])
+    # FIX-R2-002A section 23: the physical key is built explicitly as
+    # "url|target_date|research_cutoff" -- never by joining a stringified
+    # tuple's characters, which silently collapses distinct keys.
     physical_keys = [
-        (str(r.get("url", "")), str(r.get("target_date", "")), str(r.get("research_cutoff", "")))
+        f"{r.get('url', '')}|{r.get('target_date', '')}|{r.get('research_cutoff', '')}"
         for r in requests
     ]
-    duplicate_physical_keys = [
-        "|".join(key) for key in _duplicates([str(k) for k in physical_keys])
-    ]
+    duplicate_physical_keys = _duplicates(physical_keys)
 
     # Every COMPLETED request must trace to a real origin Attempt.
     orphan_request_records = [
@@ -205,6 +272,10 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
     requests_by_id = {str(r.get("request_id")): r for r in requests}
     orphan_attempt_request_ids: list[str] = []
     invalid_reuse_links: list[str] = []
+    # FIX-R2-002A section 4/9-11: field-by-field cross-validation between a
+    # MISS/HIT Attempt and the Physical Request Record it claims to be
+    # backed by. Any single-field mismatch is untrusted evidence.
+    invalid_request_attempt_links: list[str] = []
     for attempt in attempts:
         attempt_id = str(attempt.get("attempt_id"))
         cache_status = attempt.get("cache_status")
@@ -229,6 +300,8 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
                 invalid_reuse_links.append(attempt_id)
             elif str(record.get("origin_attempt_id")) != attempt_id:
                 invalid_reuse_links.append(attempt_id)
+            if _miss_attempt_link_mismatches(record, attempt):
+                invalid_request_attempt_links.append(attempt_id)
         elif cache_status == "HIT":
             if performed is not False:
                 invalid_reuse_links.append(attempt_id)
@@ -241,6 +314,15 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
                 or str(origin.get("request_id")) != str(request_id)
             ):
                 invalid_reuse_links.append(attempt_id)
+                continue
+            if _miss_attempt_link_mismatches(record, origin):
+                invalid_request_attempt_links.append(attempt_id)
+            if (
+                attempt.get("url") != record.get("url")
+                or attempt.get("target_date") != record.get("target_date")
+                or attempt.get("research_cutoff") != record.get("research_cutoff")
+            ):
+                invalid_request_attempt_links.append(attempt_id)
 
     duplicate_attempt_ids = _duplicates([str(a.get("attempt_id")) for a in attempts])
     cache_hit_count = sum(1 for a in attempts if a.get("cache_status") == "HIT")
@@ -253,6 +335,8 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
         or orphan_attempt_request_ids
         or invalid_reuse_links
         or invalid_request_ids
+        or invalid_request_attempt_links
+        or directory_violations
     )
     network_audit_complete = request_budget_respected and not reserved_requests
 
@@ -271,6 +355,8 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
         "orphan_attempt_request_ids": orphan_attempt_request_ids,
         "invalid_reuse_links": invalid_reuse_links,
         "invalid_request_ids": invalid_request_ids,
+        "invalid_request_attempt_links": invalid_request_attempt_links,
+        "directory_violations": directory_violations,
         "request_budget_respected": request_budget_respected,
         "network_audit_complete": network_audit_complete,
     }
@@ -358,7 +444,11 @@ def verify_production_run(
             + "; invalid reuse links: "
             + ", ".join(report.network_audit["invalid_reuse_links"])
             + "; invalid request ids: "
-            + ", ".join(report.network_audit["invalid_request_ids"]),
+            + ", ".join(report.network_audit["invalid_request_ids"])
+            + "; invalid request/attempt links: "
+            + ", ".join(report.network_audit["invalid_request_attempt_links"])
+            + "; network_requests directory violations: "
+            + ", ".join(report.network_audit["directory_violations"]),
         )
     else:
         report.record("request_budget", True)

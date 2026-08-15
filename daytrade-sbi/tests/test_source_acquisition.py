@@ -531,3 +531,139 @@ def _stage_with_transport(tmp_path, transport):
         issuer_registry=REGISTRY,
         source_ids=("YAHOO_JP_QUOTE",),
     )
+
+
+# --------------------------------- FIX-R2-002A: Physical Request Trust -----
+
+
+def test_missing_user_agent_creates_zero_request_records(tmp_path, monkeypatch):
+    """DAYTRADE_HTTP_USER_AGENT unset, using the real curl transport: the
+    pre-network boundary must reject before reserve_request() ever runs, so
+    zero Physical Request Records are created."""
+    from src.source_acquisition import acquire_source
+    from src.source_fetch import curl_transport
+
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+
+    def _explode(argv, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("transport must never be invoked")
+
+    monkeypatch.setattr("subprocess.run", _explode)
+
+    attempt, values = acquire_source(
+        DEFINITIONS["YAHOO_JP_QUOTE"],
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=curl_transport,
+    )
+    assert values == []
+    assert attempt["cache_status"] == "NOT_CACHEABLE"
+    assert attempt["network_request_performed"] is False
+    assert attempt["request_id"] is None
+    assert not (tmp_path / "network_requests").exists() or not list(
+        (tmp_path / "network_requests").iterdir()
+    )
+
+
+def test_invalid_host_creates_zero_request_records(tmp_path):
+    """A URL resolving to a host outside the Network Policy allowlist must
+    fail before reserve_request(): zero Physical Request Records, one
+    NOT_CACHEABLE attempt, and the transport is never invoked."""
+    from src.source_acquisition import acquire_source
+
+    bad_definition = dict(DEFINITIONS["YAHOO_JP_QUOTE"])
+    bad_definition["url_template"] = "https://evil.example.com/quote/{ticker}.T"
+
+    transport, calls = _counting_transport(b"", status=200)
+    attempt, values = acquire_source(
+        bad_definition,
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=transport,
+    )
+    assert calls["count"] == 0
+    assert values == []
+    assert attempt["cache_status"] == "NOT_CACHEABLE"
+    assert attempt["network_request_performed"] is False
+    assert attempt["request_id"] is None
+    assert not (tmp_path / "network_requests").exists() or not list(
+        (tmp_path / "network_requests").iterdir()
+    )
+
+
+def test_origin_miss_timestamps_equal_request_record_timestamps(tmp_path):
+    """FIX-R2-002A section 7/8: the origin MISS attempt's requested_at /
+    retrieved_at are literally the Physical Request Record's own
+    reserved_at / completed_at -- not a separately generated timestamp."""
+    from src.request_budget import list_request_records
+    from src.source_acquisition import acquire_source
+
+    transport, _ = _counting_transport(pages.yahoo_quote_page(), status=200)
+    attempt, _ = acquire_source(
+        DEFINITIONS["YAHOO_JP_QUOTE"],
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=transport,
+    )
+    records = list_request_records(tmp_path)
+    assert len(records) == 1
+    record = records[0]
+    assert attempt["cache_status"] == "MISS"
+    assert attempt["requested_at"] == record["reserved_at"]
+    assert attempt["retrieved_at"] == record["completed_at"]
+
+
+def test_exact_attempt_reuse_validates_the_physical_request_record(tmp_path):
+    """FIX-R2-002A section 19: reusing an Exact Logical Attempt (found in the
+    cache from a prior ledger) must not just trust the attempt's own claims
+    -- it must load and integrity-validate the Physical Request Record the
+    attempt names. A missing record for a MISS/HIT attempt is a hard error."""
+    from src.request_budget import network_request_path
+    from src.source_acquisition import AcquisitionError, RequestBudgetCache, acquire_source
+
+    transport, calls = _counting_transport(pages.yahoo_quote_page(), status=200)
+    definition = DEFINITIONS["YAHOO_JP_QUOTE"]
+    first_attempt, _ = acquire_source(
+        definition,
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=transport,
+    )
+    assert calls["count"] == 1
+
+    # Delete the backing Physical Request Record out from under the cached
+    # attempt, simulating a corrupted/lost network_requests/ directory.
+    network_request_path(tmp_path, first_attempt["request_id"]).unlink()
+
+    cache = RequestBudgetCache(tmp_path, {"source_attempts": [first_attempt]})
+    with pytest.raises(AcquisitionError) as excinfo:
+        acquire_source(
+            definition,
+            target_date=TARGET_DATE,
+            trading_date=TARGET_DATE,
+            research_cutoff=CUTOFF,
+            candidate_code="7203",
+            run_dir=tmp_path,
+            issuer_registry=REGISTRY,
+            transport=transport,
+            cache=cache,
+        )
+    assert excinfo.value.code == "EXACT_ATTEMPT_REQUEST_RECORD_MISSING"
+    # The transport must never be invoked again while resolving this reuse.
+    assert calls["count"] == 1

@@ -363,27 +363,159 @@
           "source_attempts": {
             "type": "array",
             "items": {
-              "if": {
-                "properties": {
-                  "status": {
-                    "const": "FOUND"
+              "required": [
+                "cache_status",
+                "request_id",
+                "network_request_performed",
+                "reused_from_attempt_id"
+              ],
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "status": {
+                        "const": "FOUND"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "acquisition_method",
+                      "http_status",
+                      "content_type",
+                      "transport_exit_code",
+                      "source_page_path",
+                      "source_page_sha256",
+                      "source_page_size_bytes"
+                    ]
                   }
                 },
-                "required": [
-                  "status"
-                ]
-              },
-              "then": {
-                "required": [
-                  "acquisition_method",
-                  "http_status",
-                  "content_type",
-                  "transport_exit_code",
-                  "source_page_path",
-                  "source_page_sha256",
-                  "source_page_size_bytes"
-                ]
-              }
+                {
+                  "if": {
+                    "properties": {
+                      "cache_status": {
+                        "const": "MISS"
+                      }
+                    },
+                    "required": [
+                      "cache_status"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "request_id",
+                      "network_request_performed",
+                      "reused_from_attempt_id",
+                      "retrieved_at",
+                      "acquisition_method",
+                      "transport_exit_code",
+                      "http_status",
+                      "content_type"
+                    ],
+                    "properties": {
+                      "request_id": {
+                        "type": "string",
+                        "pattern": "^req-[0-9a-f]{32}$"
+                      },
+                      "network_request_performed": {
+                        "const": true
+                      },
+                      "reused_from_attempt_id": {
+                        "const": null
+                      },
+                      "retrieved_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "acquisition_method": {
+                        "const": "HTTP_GET"
+                      },
+                      "transport_exit_code": {
+                        "type": "integer"
+                      },
+                      "http_status": {
+                        "type": ["integer", "null"]
+                      },
+                      "content_type": {
+                        "type": ["string", "null"]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "cache_status": {
+                        "const": "HIT"
+                      }
+                    },
+                    "required": [
+                      "cache_status"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "request_id",
+                      "network_request_performed",
+                      "reused_from_attempt_id",
+                      "retrieved_at",
+                      "acquisition_method",
+                      "transport_exit_code"
+                    ],
+                    "properties": {
+                      "request_id": {
+                        "type": "string",
+                        "pattern": "^req-[0-9a-f]{32}$"
+                      },
+                      "network_request_performed": {
+                        "const": false
+                      },
+                      "reused_from_attempt_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "retrieved_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "acquisition_method": {
+                        "const": "HTTP_GET"
+                      },
+                      "transport_exit_code": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "cache_status": {
+                        "const": "NOT_CACHEABLE"
+                      }
+                    },
+                    "required": [
+                      "cache_status"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "request_id": {
+                        "const": null
+                      },
+                      "network_request_performed": {
+                        "const": false
+                      },
+                      "reused_from_attempt_id": {
+                        "const": null
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         }
