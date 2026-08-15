@@ -315,3 +315,74 @@ def test_concurrent_reservation_loser_reuses_completed_winner(tmp_path, monkeypa
     assert outcome.already_completed is True
     assert outcome.record["request_id"] == winner["request_id"]
     assert outcome.record["origin_attempt_id"] == "att-winner"
+
+
+# --------------------------------------- FIX-R2-002B: State Exhaustiveness --
+
+
+def test_completed_record_with_null_source_status_is_rejected(tmp_path):
+    record = _reserve_and_complete(tmp_path)
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["source_status"] = None
+    _rewrite_record(path, tampered)
+
+    with pytest.raises(RequestBudgetError) as excinfo:
+        load_request_record(tmp_path, record["request_id"])
+    assert excinfo.value.code == "REQUEST_RECORD_INTEGRITY_VIOLATION"
+
+
+def test_completed_at_before_reserved_at_is_rejected(tmp_path):
+    record = _reserve_and_complete(tmp_path)
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["reserved_at"] = "2026-08-13T12:00:10Z"
+    tampered["completed_at"] = "2026-08-13T12:00:01Z"
+    _rewrite_record(path, tampered)
+
+    with pytest.raises(RequestBudgetError) as excinfo:
+        load_request_record(tmp_path, record["request_id"])
+    assert excinfo.value.code == "REQUEST_RECORD_INTEGRITY_VIOLATION"
+
+
+def test_completed_at_equal_to_reserved_at_is_valid(tmp_path):
+    record = _reserve_and_complete(tmp_path)
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["reserved_at"] = "2026-08-13T12:00:10Z"
+    tampered["completed_at"] = "2026-08-13T12:00:10Z"
+    _rewrite_record(path, tampered)
+
+    loaded = load_request_record(tmp_path, record["request_id"])
+    assert loaded["completed_at"] == "2026-08-13T12:00:10Z"
+
+
+def test_completed_at_after_reserved_at_is_valid(tmp_path):
+    record = _reserve_and_complete(tmp_path)
+    path = network_request_path(tmp_path, record["request_id"])
+    tampered = dict(record)
+    tampered["reserved_at"] = "2026-08-13T12:00:01Z"
+    tampered["completed_at"] = "2026-08-13T12:00:10Z"
+    _rewrite_record(path, tampered)
+
+    loaded = load_request_record(tmp_path, record["request_id"])
+    assert loaded["completed_at"] == "2026-08-13T12:00:10Z"
+
+
+def test_invalid_utf8_bytes_are_rejected_not_crashed(tmp_path):
+    record = _reserve_and_complete(tmp_path)
+    path = network_request_path(tmp_path, record["request_id"])
+    path.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+
+    with pytest.raises(RequestBudgetError) as excinfo:
+        load_request_record(tmp_path, record["request_id"])
+    assert excinfo.value.code == "REQUEST_RECORD_INTEGRITY_VIOLATION"
+
+
+def test_network_requests_as_regular_file_is_a_directory_violation(tmp_path):
+    import src.request_budget as rb
+
+    (tmp_path / rb.NETWORK_REQUESTS_DIRNAME).write_text("not a directory", encoding="utf-8")
+    records, violations = rb.scan_network_requests_directory(tmp_path)
+    assert records == []
+    assert violations

@@ -77,6 +77,24 @@ def validate_request_record(record: dict[str, Any]) -> None:
     validate_json_document(record, NETWORK_REQUEST_SCHEMA_NAME)
 
 
+def _parse_iso_datetime(value: str):
+    """Timezone-aware ``datetime`` from an ISO-8601 string, or ``None``.
+
+    ``None`` (never an exception) signals "unparsable" to callers, which
+    treat it as an integrity violation -- an invalid or missing timezone is
+    never silently coerced into "now" or compared as a naive string.
+    """
+    from datetime import datetime as _datetime
+
+    try:
+        parsed = _datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
 def load_request_record(run_dir: str | Path, request_id: str) -> dict[str, Any] | None:
     """Load, and fully verify, the Request Record named ``request_id``.
 
@@ -90,7 +108,13 @@ def load_request_record(run_dir: str | Path, request_id: str) -> dict[str, Any] 
     if not path.is_file():
         return None
 
-    raw = path.read_text(encoding="utf-8")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        raise RequestBudgetError(
+            "REQUEST_RECORD_INTEGRITY_VIOLATION",
+            f"request record {path} could not be read: {exc}",
+        ) from exc
     try:
         record = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -143,6 +167,25 @@ def load_request_record(run_dir: str | Path, request_id: str) -> dict[str, Any] 
             f"request record file name {path.name!r} does not match its own "
             f"request_id {record['request_id']!r}",
         )
+
+    # FIX-R2-002B section 5: a COMPLETED record's completed_at can never
+    # precede its own reserved_at. Compared as timezone-aware datetimes, not
+    # ISO strings -- an unparsable or naive timestamp is itself a violation.
+    if record.get("state") == "COMPLETED":
+        reserved_at = _parse_iso_datetime(str(record.get("reserved_at")))
+        completed_at = _parse_iso_datetime(str(record.get("completed_at")))
+        if reserved_at is None or completed_at is None:
+            raise RequestBudgetError(
+                "REQUEST_RECORD_INTEGRITY_VIOLATION",
+                f"request record {path} has an unparsable reserved_at/completed_at "
+                f"timestamp: {record.get('reserved_at')!r} / {record.get('completed_at')!r}",
+            )
+        if completed_at < reserved_at:
+            raise RequestBudgetError(
+                "REQUEST_RECORD_INTEGRITY_VIOLATION",
+                f"request record {path} has completed_at {record.get('completed_at')!r} "
+                f"before its own reserved_at {record.get('reserved_at')!r}",
+            )
 
     return record
 
@@ -375,8 +418,10 @@ def scan_network_requests_directory(
     instead of either crashing or quietly ignoring it.
     """
     directory = Path(run_dir) / NETWORK_REQUESTS_DIRNAME
-    if not directory.is_dir():
+    if not directory.exists():
         return [], []
+    if not directory.is_dir():
+        return [], [f"network_requests exists but is not a directory: {directory}"]
 
     records: list[dict[str, Any]] = []
     violations: list[str] = []

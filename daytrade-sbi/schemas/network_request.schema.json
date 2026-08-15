@@ -79,7 +79,10 @@
       "then": {
         "required": ["completed_at", "source_status"],
         "properties": {
-          "completed_at": {"type": "string", "format": "date-time"}
+          "completed_at": {"type": "string", "format": "date-time"},
+          "source_status": {
+            "enum": ["FOUND", "NOT_FOUND", "ACCESS_FAILED", "EXECUTION_FAILED"]
+          }
         }
       }
     }

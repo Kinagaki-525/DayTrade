@@ -369,6 +369,11 @@
                 "network_request_performed",
                 "reused_from_attempt_id"
               ],
+              "properties": {
+                "cache_status": {
+                  "enum": ["MISS", "HIT", "NOT_CACHEABLE"]
+                }
+              },
               "allOf": [
                 {
                   "if": {
@@ -511,7 +516,26 @@
                       },
                       "reused_from_attempt_id": {
                         "const": null
+                      },
+                      "retrieved_at": {
+                        "const": null
+                      },
+                      "status": {
+                        "not": {
+                          "const": "FOUND"
+                        }
                       }
+                    },
+                    "not": {
+                      "anyOf": [
+                        {"required": ["acquisition_method"]},
+                        {"required": ["http_status"]},
+                        {"required": ["content_type"]},
+                        {"required": ["transport_exit_code"]},
+                        {"required": ["source_page_path"]},
+                        {"required": ["source_page_sha256"]},
+                        {"required": ["source_page_size_bytes"]}
+                      ]
                     }
                   }
                 }

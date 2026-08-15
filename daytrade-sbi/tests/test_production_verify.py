@@ -445,6 +445,10 @@ def test_network_audit_counts_requests_not_attempts(tmp_path):
                 "http_status": tdnet_record["http_status"],
                 "content_type": tdnet_record["content_type"],
                 "transport_exit_code": tdnet_record["transport_exit_code"],
+                "acquisition_method": "HTTP_GET",
+                "source_page_path": tdnet_record.get("source_page_path"),
+                "source_page_sha256": tdnet_record.get("source_page_sha256"),
+                "source_page_size_bytes": tdnet_record.get("source_page_size_bytes"),
             },
             _full_miss_attempt(yahoo_record, "att-3"),
         ]
@@ -951,4 +955,179 @@ def test_network_audit_flags_a_record_origin_tamper(tmp_path, field_name):
     )
     audit = network_audit(tmp_path, {"source_attempts": [attempt]})
     assert audit["invalid_request_attempt_links"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+# --------------------------------------- FIX-R2-002B: State Exhaustiveness --
+
+
+def test_network_audit_flags_stale_cache_status_in_v3(tmp_path):
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": "FOUND",
+        "cache_status": "STALE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+    }
+    audit = network_audit(tmp_path, {"schema_version": 3, "source_attempts": [attempt]})
+    assert audit["invalid_cache_states"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_not_cacheable_claiming_found(tmp_path):
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": "FOUND",
+        "cache_status": "NOT_CACHEABLE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [attempt]})
+    assert audit["invalid_not_cacheable_attempts"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_not_cacheable_with_source_page_sha256(tmp_path):
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": "ACCESS_FAILED",
+        "cache_status": "NOT_CACHEABLE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+        "source_page_sha256": "a" * 64,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [attempt]})
+    assert audit["invalid_not_cacheable_attempts"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_not_cacheable_with_http_status(tmp_path):
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": "ACCESS_FAILED",
+        "cache_status": "NOT_CACHEABLE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+        "http_status": 403,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [attempt]})
+    assert audit["invalid_not_cacheable_attempts"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_hit_forged_to_found_off_a_failed_request(tmp_path):
+    """A 403 Physical Request cannot back a HIT Attempt that claims FOUND."""
+    record = _complete_request(
+        tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1", source_status="ACCESS_FAILED"
+    )
+    origin = {
+        "attempt_id": "att-1",
+        "source_id": record["origin_source_id"],
+        "candidate_code": record["origin_candidate_code"],
+        "url": record["url"],
+        "target_date": record["target_date"],
+        "research_cutoff": record["research_cutoff"],
+        "status": "ACCESS_FAILED",
+        "cache_status": "MISS",
+        "request_id": record["request_id"],
+        "network_request_performed": True,
+        "reused_from_attempt_id": None,
+        "requested_at": record["reserved_at"],
+        "retrieved_at": record["completed_at"],
+        "http_status": record["http_status"],
+        "content_type": record["content_type"],
+        "transport_exit_code": record["transport_exit_code"],
+    }
+    hit = {
+        "attempt_id": "att-2",
+        "url": record["url"],
+        "target_date": record["target_date"],
+        "research_cutoff": record["research_cutoff"],
+        "status": "FOUND",  # forged
+        "cache_status": "HIT",
+        "request_id": record["request_id"],
+        "network_request_performed": False,
+        "reused_from_attempt_id": "att-1",
+        "requested_at": "2026-08-13T00:00:00Z",
+        "retrieved_at": record["completed_at"],
+        "http_status": record["http_status"],
+        "content_type": record["content_type"],
+        "transport_exit_code": record["transport_exit_code"],
+        "acquisition_method": "HTTP_GET",
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [origin, hit]})
+    assert "att-2" in audit["invalid_request_attempt_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_hit_http_status_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    origin = _full_miss_attempt(record, "att-1")
+    hit = {
+        **{k: v for k, v in origin.items() if k not in ("attempt_id", "cache_status", "network_request_performed", "reused_from_attempt_id")},
+        "attempt_id": "att-2",
+        "cache_status": "HIT",
+        "network_request_performed": False,
+        "reused_from_attempt_id": "att-1",
+        "http_status": 999,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [origin, hit]})
+    assert "att-2" in audit["invalid_request_attempt_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_hit_source_page_sha256_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    origin = _full_miss_attempt(record, "att-1")
+    hit = {
+        **{k: v for k, v in origin.items() if k not in ("attempt_id", "cache_status", "network_request_performed", "reused_from_attempt_id")},
+        "attempt_id": "att-2",
+        "cache_status": "HIT",
+        "network_request_performed": False,
+        "reused_from_attempt_id": "att-1",
+        "source_page_sha256": "f" * 64,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [origin, hit]})
+    assert "att-2" in audit["invalid_request_attempt_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_audit_flags_hit_retrieved_at_tamper(tmp_path):
+    record = _complete_request(tmp_path, url="https://www.jpx.co.jp/a", origin_attempt_id="att-1")
+    origin = _full_miss_attempt(record, "att-1")
+    hit = {
+        **{k: v for k, v in origin.items() if k not in ("attempt_id", "cache_status", "network_request_performed", "reused_from_attempt_id")},
+        "attempt_id": "att-2",
+        "cache_status": "HIT",
+        "network_request_performed": False,
+        "reused_from_attempt_id": "att-1",
+        "retrieved_at": "2099-01-01T00:00:00Z",
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [origin, hit]})
+    assert "att-2" in audit["invalid_request_attempt_links"]
+    assert audit["request_budget_respected"] is False
+
+
+def test_invalid_utf8_network_request_produces_invalid_run_not_crash(tmp_path):
+    _write_network_request_file(tmp_path, "req-" + "d" * 32 + ".json", "placeholder")
+    path = tmp_path / "network_requests" / ("req-" + "d" * 32 + ".json")
+    path.write_bytes(b"\xff\xfe not utf-8 \x80")
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert audit["directory_violations"]
+    assert audit["network_audit_complete"] is False
+    assert audit["request_budget_respected"] is False
+
+
+def test_network_requests_regular_file_produces_invalid_run(tmp_path):
+    (tmp_path / "network_requests").write_text("not a directory", encoding="utf-8")
+    audit = network_audit(tmp_path, {"source_attempts": []})
+    assert audit["directory_violations"]
     assert audit["request_budget_respected"] is False

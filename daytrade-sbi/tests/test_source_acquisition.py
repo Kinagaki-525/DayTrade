@@ -667,3 +667,15 @@ def test_exact_attempt_reuse_validates_the_physical_request_record(tmp_path):
     assert excinfo.value.code == "EXACT_ATTEMPT_REQUEST_RECORD_MISSING"
     # The transport must never be invoked again while resolving this reuse.
     assert calls["count"] == 1
+
+
+# --------------------------------------- FIX-R2-002B: State Exhaustiveness --
+
+
+def test_schema_v3_rejects_stale_cache_status(tmp_path):
+    """Production v3 never mints STALE; the schema must reject it outright."""
+    result = _stage("TURNOVER", tmp_path, pages.yahoo_quote_page())
+    ledger = result.as_ledger()
+    ledger["source_attempts"][0]["cache_status"] = "STALE"
+    with pytest.raises(ValueError):
+        validate_json_document(ledger, "sources.schema.json")

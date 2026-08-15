@@ -195,6 +195,68 @@ def _miss_attempt_link_mismatches(record: dict[str, Any], attempt: dict[str, Any
     return mismatched
 
 
+def _hit_attempt_link_mismatches(record: dict[str, Any], attempt: dict[str, Any]) -> list[str]:
+    """Field-by-field cross-validation of a HIT Attempt against its own
+    Physical Request Record (FIX-R2-002B section 3).
+
+    Unlike the origin MISS, a HIT's own ``requested_at`` is its own Logical
+    Attempt generation time, not the record's ``reserved_at`` (FIX-R2-002A
+    section 7), so it is deliberately not compared here. A HIT's ``status``
+    is checked against ``record.source_status`` using the same rule as a
+    MISS, but never against its origin's status: different candidates can
+    legitimately get different Parser outcomes off the same shared page.
+    """
+    mismatched: list[str] = []
+
+    def _check(name: str, record_value: Any, attempt_value: Any) -> None:
+        if record_value != attempt_value:
+            mismatched.append(name)
+
+    _check("url", record.get("url"), attempt.get("url"))
+    _check("target_date", record.get("target_date"), attempt.get("target_date"))
+    _check("research_cutoff", record.get("research_cutoff"), attempt.get("research_cutoff"))
+    _check("retrieved_at", record.get("completed_at"), attempt.get("retrieved_at"))
+    _check("http_status", record.get("http_status"), attempt.get("http_status"))
+    _check("content_type", record.get("content_type"), attempt.get("content_type"))
+    _check(
+        "transport_exit_code",
+        record.get("transport_exit_code"),
+        attempt.get("transport_exit_code"),
+    )
+    _check(
+        "source_page_path",
+        record.get("source_page_path"),
+        attempt.get("source_page_path") or None,
+    )
+    _check(
+        "source_page_sha256",
+        record.get("source_page_sha256"),
+        attempt.get("source_page_sha256") or None,
+    )
+    _check(
+        "source_page_size_bytes",
+        record.get("source_page_size_bytes"),
+        attempt.get("source_page_size_bytes"),
+    )
+    if attempt.get("acquisition_method") != "HTTP_GET":
+        mismatched.append("acquisition_method")
+
+    record_status = record.get("source_status")
+    attempt_status = attempt.get("status")
+    if record_status != "FOUND":
+        if attempt_status != record_status:
+            mismatched.append("status")
+    elif attempt_status not in _PARSER_LEGAL_STATUSES:
+        mismatched.append("status")
+
+    return mismatched
+
+
+#: FIX-R2-002B section 1: Production v3 acquisition never mints STALE;
+#: it survives only as historical schema_version=1 baggage.
+_V3_LEGAL_CACHE_STATUSES = frozenset({"MISS", "HIT", "NOT_CACHEABLE"})
+
+
 # ---------------------------------------------------------------------------
 # Network audit (FIX-013)
 # ---------------------------------------------------------------------------
@@ -276,6 +338,24 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
     # MISS/HIT Attempt and the Physical Request Record it claims to be
     # backed by. Any single-field mismatch is untrusted evidence.
     invalid_request_attempt_links: list[str] = []
+    # FIX-R2-002B section 1: defense-in-depth against a v3 attempt carrying a
+    # cache_status the schema should already have rejected (e.g. STALE) --
+    # never silently `continue` past it.
+    invalid_cache_states: list[str] = []
+    # FIX-R2-002B section 2: a NOT_CACHEABLE attempt never touched the
+    # transport, so it can never legitimately be FOUND or carry any
+    # network/evidence metadata.
+    invalid_not_cacheable_attempts: list[str] = []
+    schema_version = source_payload.get("schema_version")
+    _NOT_CACHEABLE_FORBIDDEN_FIELDS = (
+        "acquisition_method",
+        "http_status",
+        "content_type",
+        "transport_exit_code",
+        "source_page_path",
+        "source_page_sha256",
+        "source_page_size_bytes",
+    )
     for attempt in attempts:
         attempt_id = str(attempt.get("attempt_id"))
         cache_status = attempt.get("cache_status")
@@ -283,9 +363,20 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
         performed = attempt.get("network_request_performed")
         reused_from = attempt.get("reused_from_attempt_id")
 
+        if schema_version == 3 and cache_status not in _V3_LEGAL_CACHE_STATUSES:
+            invalid_cache_states.append(attempt_id)
+            continue
+
         if cache_status == "NOT_CACHEABLE":
-            if request_id is not None or performed is not False or reused_from is not None:
-                invalid_reuse_links.append(attempt_id)
+            if (
+                request_id is not None
+                or performed is not False
+                or reused_from is not None
+                or attempt.get("retrieved_at") is not None
+                or attempt.get("status") == "FOUND"
+                or any(field in attempt for field in _NOT_CACHEABLE_FORBIDDEN_FIELDS)
+            ):
+                invalid_not_cacheable_attempts.append(attempt_id)
             continue
         if cache_status not in ("MISS", "HIT"):
             continue
@@ -315,13 +406,7 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
             ):
                 invalid_reuse_links.append(attempt_id)
                 continue
-            if _miss_attempt_link_mismatches(record, origin):
-                invalid_request_attempt_links.append(attempt_id)
-            if (
-                attempt.get("url") != record.get("url")
-                or attempt.get("target_date") != record.get("target_date")
-                or attempt.get("research_cutoff") != record.get("research_cutoff")
-            ):
+            if _hit_attempt_link_mismatches(record, attempt):
                 invalid_request_attempt_links.append(attempt_id)
 
     duplicate_attempt_ids = _duplicates([str(a.get("attempt_id")) for a in attempts])
@@ -337,6 +422,8 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
         or invalid_request_ids
         or invalid_request_attempt_links
         or directory_violations
+        or invalid_cache_states
+        or invalid_not_cacheable_attempts
     )
     network_audit_complete = request_budget_respected and not reserved_requests
 
@@ -357,6 +444,8 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
         "invalid_request_ids": invalid_request_ids,
         "invalid_request_attempt_links": invalid_request_attempt_links,
         "directory_violations": directory_violations,
+        "invalid_cache_states": invalid_cache_states,
+        "invalid_not_cacheable_attempts": invalid_not_cacheable_attempts,
         "request_budget_respected": request_budget_respected,
         "network_audit_complete": network_audit_complete,
     }
@@ -448,7 +537,11 @@ def verify_production_run(
             + "; invalid request/attempt links: "
             + ", ".join(report.network_audit["invalid_request_attempt_links"])
             + "; network_requests directory violations: "
-            + ", ".join(report.network_audit["directory_violations"]),
+            + ", ".join(report.network_audit["directory_violations"])
+            + "; invalid cache states: "
+            + ", ".join(report.network_audit["invalid_cache_states"])
+            + "; invalid NOT_CACHEABLE attempts: "
+            + ", ".join(report.network_audit["invalid_not_cacheable_attempts"]),
         )
     else:
         report.record("request_budget", True)
