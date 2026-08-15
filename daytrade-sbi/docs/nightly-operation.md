@@ -170,7 +170,10 @@ Risk Engineが`REJECTED`の場合は、提案値を変更せず`REJECTED`とし�
   Risk評価入力を使用しないため必ず`null` / `null`へ正規化される。
 - `input_hashes`: 上流Artifactの**生バイト**SHA256をちょうど12キー記録する。
   `selection_sha256`はCase A/Bでは`null`、Case Cでは実際の`selection.json`のハッシュ。
-  `market_research_sha256`は`--market-research`を渡した場合だけ非`null`になる。
+  `market_research_sha256`はCase C `TRADE`で`--market-research`を渡した場合だけ非`null`になる。
+  Case A・Case B・Case C `NO_TRADE`ではRiskが`market_research.json`を読まないため、
+  `--market-research`を渡しても`evaluation_context`と同じく`null`へ正規化される
+  （FIX-R2-003A）。
 
 `config_schema_version`が6未満の履歴Runは従来どおり`risk_result.schema_version: 1`のままで、
 引き続きスキーマ的に有効である。

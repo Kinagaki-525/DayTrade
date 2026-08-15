@@ -38,7 +38,9 @@ from src.production_verify import (
     verify_production_run,
 )
 from tests.production_run_fixtures import (
+    CASE_A_SOURCE_MATRIX,
     HISTORICAL_SOURCE_MATRIX,
+    build_case_a_run,
     build_case_b_run,
     build_case_c_run,
     sha256_file,
@@ -83,6 +85,17 @@ def _assert_downstream_trust_rejected(report):
     assert any(
         check in error for error in report.errors for check in _DOWNSTREAM_TRUST_CHECKS
     ), report.errors
+
+
+def _verify_case_a(run_dir: Path):
+    """Case A fixtures are pinned to the live Source Matrix, not the historical
+    one the Ranking/Selection regression fixtures were produced under."""
+    return verify_production_run(run_dir, source_matrix_path=CASE_A_SOURCE_MATRIX)
+
+
+@pytest.fixture()
+def case_a(tmp_path):
+    return build_case_a_run(tmp_path)
 
 
 @pytest.fixture()
@@ -1279,13 +1292,59 @@ def test_case_c_trade_risk_rejected_is_valid_and_a_happy_path(case_c_trade_rejec
     assert happy.status == VERIFIED_CASE_C_TRADE_RISK_REJECTED, happy.errors
 
 
-def test_case_a_is_not_a_production_happy_path(case_b):
-    """Case A shares Case B's rule: a valid run, but not the production happy
-    path. (Case A's own artifacts are exercised at the trust-layer level in
-    tests/test_downstream_trust.py.)"""
+# ---------------------------------------------------------------------------
+# FIX-R2-003A section 1: Case A Production E2E
+#
+# A complete Case A run directory -- every REQUIRED_ARTIFACT present, produced
+# by the real Builders -- not a constant-only assertion about status names.
+# ---------------------------------------------------------------------------
+
+
+def test_case_a_is_valid_production_run(case_a):
+    """Ranking genuinely reached DATA_UNAVAILABLE (the turnover evidence was
+    unavailable), and the whole downstream chain terminated correctly."""
+    assert not missing_required_artifacts(case_a)
+
+    ranking = _read(case_a, "ranking.json")
+    assert ranking["ranking_status"] == "DATA_UNAVAILABLE"
+    assert _read(case_a, "recommendation.json")["decision"] == "DATA_UNAVAILABLE"
+
+    report = _verify_case_a(case_a)
+    assert report.status == VERIFIED_CASE_A, report.errors
+    assert report.errors == []
+    assert report.status in VERIFIED_STATUSES
+
+
+def test_case_a_is_valid_run_but_not_production_happy_path(case_a):
+    """Case A shares Case B's rule: a legitimate, correctly terminated RUN --
+    but not the *production* happy path, which only exists once Selection is
+    active."""
+    assert _verify_case_a(case_a).status == VERIFIED_CASE_A
+
+    report = verify_production_happy_path(
+        case_a, source_matrix_path=CASE_A_SOURCE_MATRIX
+    )
+    assert report.status == INVALID_RUN
+    assert any("happy_path" in error for error in report.errors)
     assert VERIFIED_CASE_A not in HAPPY_PATH_STATUSES
-    assert VERIFIED_CASE_B not in HAPPY_PATH_STATUSES
-    assert HAPPY_PATH_STATUSES < VERIFIED_STATUSES
+
+
+def test_case_a_risk_result_is_v2_and_not_applicable(case_a):
+    risk = _read(case_a, "risk_result.json")
+    assert risk["schema_version"] == 2
+    assert risk["status"] == "NOT_APPLICABLE"
+    assert risk["input_hashes"]["selection_sha256"] is None
+    assert risk["input_hashes"]["ranking_sha256"] == sha256_file(
+        case_a / "ranking.json"
+    )
+    assert risk["evaluation_context"] == {
+        "current_positions": None,
+        "trades_today": None,
+    }
+
+
+def missing_required_artifacts(run_dir: Path) -> list[str]:
+    return [name for name in REQUIRED_ARTIFACTS if not (run_dir / name).is_file()]
 
 
 # ------------------------------------------------- optional market research ---
@@ -1319,6 +1378,66 @@ def test_market_research_hash_without_the_file_is_invalid(tmp_path):
     assert any("risk_market_research_hash" in error for error in report.errors)
 
 
+# ---------------------------------------------------------------------------
+# FIX-R2-003A section 5/6: market_research is a Risk INPUT only in Case C TRADE
+#
+# In every other case the Risk Engine never reads it, so recording its hash
+# would claim a dependency that does not exist. It is normalized to null,
+# exactly like evaluation_context's current_positions / trades_today.
+# ---------------------------------------------------------------------------
+
+
+def test_case_a_market_research_hash_is_null_even_when_supplied(tmp_path):
+    run_dir = build_case_a_run(tmp_path, market_research=True)
+    assert (run_dir / "market_research.json").is_file()
+    risk = _read(run_dir, "risk_result.json")
+    assert risk["input_hashes"]["market_research_sha256"] is None
+    assert _verify_case_a(run_dir).status == VERIFIED_CASE_A
+
+
+def test_case_b_market_research_hash_is_null_even_when_supplied(tmp_path):
+    run_dir = build_case_b_run(tmp_path, market_research=True)
+    assert (run_dir / "market_research.json").is_file()
+    risk = _read(run_dir, "risk_result.json")
+    assert risk["input_hashes"]["market_research_sha256"] is None
+    assert _verify(run_dir).status == VERIFIED_CASE_B
+
+
+def test_case_c_no_trade_market_research_hash_is_null_even_when_supplied(tmp_path):
+    run_dir = build_case_c_run(
+        tmp_path, selection_status="NO_TRADE", market_research=True
+    )
+    assert (run_dir / "market_research.json").is_file()
+    risk = _read(run_dir, "risk_result.json")
+    assert risk["input_hashes"]["market_research_sha256"] is None
+    assert _verify(run_dir).status == VERIFIED_CASE_C_NO_TRADE
+
+
+def test_case_c_trade_market_research_is_validated_and_fails_closed(tmp_path):
+    """Case C TRADE is the ONE case that consumes market_research.json, so it
+    is the one case where the research can change the outcome.
+
+    Without it the very same chain PASSes. With it, Market Research Validation
+    and Market/Research Alignment both run against the run's own sources.json,
+    the shipped research does not line up with this fixture's ledger, and the
+    real Risk Engine fails closed (REJECTED) instead of ignoring the mismatch.
+    """
+    without = build_case_c_run(tmp_path / "without", selection_status="SELECTED")
+    assert _read(without, "risk_result.json")["status"] == "PASS"
+
+    run_dir = build_case_c_run(
+        tmp_path / "with", selection_status="SELECTED", market_research=True
+    )
+    risk = _read(run_dir, "risk_result.json")
+    assert risk["status"] == "REJECTED", risk
+    assert risk["violations"]
+    # Hash-pinned to the exact bytes Risk actually read.
+    assert risk["input_hashes"]["market_research_sha256"] == sha256_file(
+        run_dir / "market_research.json"
+    )
+    assert _verify(run_dir).status == VERIFIED_CASE_C_TRADE_RISK_REJECTED
+
+
 def test_market_research_tamper_is_invalid(tmp_path):
     run_dir = build_case_c_run(
         tmp_path, selection_status="SELECTED", market_research=True
@@ -1341,23 +1460,87 @@ def test_market_research_tamper_is_invalid(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _forge_hash_chain(run_dir: Path, *, ticker: str) -> tuple[dict, dict, dict, str]:
+    """Re-point the whole superficial SHA chain at the forged artifacts.
+
+    Selection is hashed AFTER it was rewritten, that hash is written into
+    recommendation.selection_sha256, the recommendation is hashed AFTER *that*
+    edit, and both hashes are written into risk_result.input_hashes -- every
+    other recorded input hash is left genuine. The result is a run whose
+    Selection <-> Recommendation <-> Risk SHA links, ticker and decision all
+    agree, which is exactly what a link-comparing verifier checks.
+    """
+    new_selection_sha = sha256_file(run_dir / "selection.json")
+
+    recommendation = _read(run_dir, "recommendation.json")
+    recommendation["ticker"] = ticker
+    recommendation["selection_sha256"] = new_selection_sha
+    _write(run_dir, "recommendation.json", recommendation)
+    new_recommendation_sha = sha256_file(run_dir / "recommendation.json")
+
+    risk = _read(run_dir, "risk_result.json")
+    risk["ticker"] = ticker
+    risk["decision"] = recommendation["decision"]
+    risk["input_hashes"]["selection_sha256"] = new_selection_sha
+    risk["input_hashes"]["recommendation_sha256"] = new_recommendation_sha
+    _write(run_dir, "risk_result.json", risk)
+
+    selection = _read(run_dir, "selection.json")
+    return selection, recommendation, risk, new_selection_sha
+
+
+def _assert_superficial_links_all_agree(selection, recommendation, risk, selection_sha):
+    """The forgery really does satisfy the OLD, weaker cross-artifact checks."""
+    from src.contracts import (
+        validate_recommendation_risk_link,
+        validate_recommendation_selection_link,
+    )
+
+    validate_recommendation_selection_link(
+        recommendation=recommendation,
+        selection=selection,
+        selection_sha256=selection_sha,
+    )
+    validate_recommendation_risk_link(recommendation, risk)
+    assert risk["input_hashes"]["selection_sha256"] == selection_sha
+    assert recommendation["selection_sha256"] == selection_sha
+
+
 def test_attack_selection_evaluated_ticker_forgery_is_invalid(case_c_selected):
-    """Attack 1: ranking.json untouched; selection/recommendation/risk all
-    rewritten to a ticker Ranking never put at Rank 1."""
+    """Attack 1 (FIX-R2-003A section 2): ranking.json untouched;
+    selection/recommendation/risk all rewritten to a ticker Ranking never put
+    at Rank 1 -- AND every SHA in the chain re-pointed at the forged bytes.
+
+    Nothing superficial is left to catch it: the Selection <-> Recommendation
+    hash link, the Recommendation <-> Risk hash link, the ticker and the
+    decision all agree. Only re-running the real Selection Builder against the
+    genuine ranking.json exposes it, so the run must fail specifically on
+    selection_output_contract -- not merely on a link or an input-hash check.
+    """
     selection = _read(case_c_selected, "selection.json")
+    genuine_ticker = selection["evaluated_ticker"]
     selection["evaluated_ticker"] = "9999"
     selection["selected_ticker"] = "9999"
     _write(case_c_selected, "selection.json", selection)
 
-    recommendation = _read(case_c_selected, "recommendation.json")
-    recommendation["ticker"] = "9999"
-    _write(case_c_selected, "recommendation.json", recommendation)
+    selection, recommendation, risk, selection_sha = _forge_hash_chain(
+        case_c_selected, ticker="9999"
+    )
+    assert genuine_ticker != "9999"
+    assert selection_sha == sha256_file(case_c_selected / "selection.json")
+    _assert_superficial_links_all_agree(selection, recommendation, risk, selection_sha)
 
-    risk = _read(case_c_selected, "risk_result.json")
-    risk["ticker"] = "9999"
-    _write(case_c_selected, "risk_result.json", risk)
-
-    _assert_downstream_trust_rejected(_verify(case_c_selected))
+    report = _verify(case_c_selected)
+    assert report.status == INVALID_RUN
+    assert any(
+        "selection_output_contract" in error for error in report.errors
+    ), report.errors
+    # Not merely "some downstream check tripped": the Builder recompute did.
+    assert not any(
+        "recommendation_selection_link" in error for error in report.errors
+    ), report.errors
+    assert not any("risk_input_hashes" in error for error in report.errors), report.errors
+    _assert_downstream_trust_rejected(report)
 
 
 def test_attack_selection_threshold_result_forgery_is_invalid(tmp_path):
@@ -1410,7 +1593,24 @@ def test_attack_selection_threshold_result_forgery_is_invalid(tmp_path):
         risk[field] = donor_risk[field]
     _write(victim, "risk_result.json", risk)
 
-    _assert_downstream_trust_rejected(_verify(victim))
+    # FIX-R2-003A section 3: the threshold forgery gets the same strong
+    # treatment -- every SHA in the chain is re-pointed at the forged bytes, so
+    # the surface-level hash chain is fully self-consistent.
+    selection, recommendation, risk, selection_sha = _forge_hash_chain(
+        victim, ticker=ticker
+    )
+    _assert_superficial_links_all_agree(selection, recommendation, risk, selection_sha)
+
+    report = _verify(victim)
+    assert report.status == INVALID_RUN
+    assert any(
+        "selection_output_contract" in error for error in report.errors
+    ), report.errors
+    assert not any(
+        "recommendation_selection_link" in error for error in report.errors
+    ), report.errors
+    assert not any("risk_input_hashes" in error for error in report.errors), report.errors
+    _assert_downstream_trust_rejected(report)
 
 
 def test_attack_recommendation_price_and_risk_forgery_is_invalid(case_c_selected):

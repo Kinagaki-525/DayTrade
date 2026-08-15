@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import load_strategy_config, strategy_config_sha256
+from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -259,7 +260,13 @@ def _build_upstream_chain(run_dir: Path, snapshot: str) -> Path:
     return config_path
 
 
-def _risk_check_argv(run_dir: Path, config_path: Path, extra: list[str]) -> list[str]:
+def _risk_check_argv(
+    run_dir: Path,
+    config_path: Path,
+    extra: list[str],
+    *,
+    source_matrix_path: Path = HISTORICAL_SOURCE_MATRIX,
+) -> list[str]:
     return [
         "risk-check",
         "--recommendation", str(run_dir / "recommendation.json"),
@@ -267,7 +274,7 @@ def _risk_check_argv(run_dir: Path, config_path: Path, extra: list[str]) -> list
         "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
         "--market-data", str(run_dir / "market_data.json"),
         "--sources", str(run_dir / "sources.json"),
-        "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+        "--source-matrix", str(source_matrix_path),
         "--config", str(config_path),
         "--ranking", str(run_dir / "ranking.json"),
         "--event-gate", str(run_dir / "event_gate.json"),
@@ -277,7 +284,83 @@ def _risk_check_argv(run_dir: Path, config_path: Path, extra: list[str]) -> list
     ]
 
 
-def build_case_b_run(tmp_path: Path) -> Path:
+#: Case A is built from the shared Terminal-Recommendation fixture helper,
+#: which pins itself to the *live* Source Matrix / config snapshot rather than
+#: the historical one the Ranking/Selection regression fixtures use.
+CASE_A_SOURCE_MATRIX = DEFAULT_SOURCE_MATRIX_PATH
+
+CASE_A_SPECS = [
+    {"ticker": "AA01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}
+]
+
+
+def build_case_a_run(tmp_path: Path, *, market_research: bool = False) -> Path:
+    """Case A: the canonical turnover source genuinely failed, so the real
+    Ranking Builder produced ``ranking_status == DATA_UNAVAILABLE``.
+
+    ``ranking.json`` is NEVER hand-edited into DATA_UNAVAILABLE: the existing
+    Case A fixture helper makes the *upstream evidence* unavailable
+    (``sources`` ACCESS_FAILED, null turnover) and the real ``build-ranking``
+    CLI reaches DATA_UNAVAILABLE on its own. Recommendation and Risk are then
+    produced by the real ``build-ranking-terminal-recommendation`` and
+    ``risk-check`` CLIs, so the run carries every REQUIRED_ARTIFACT with
+    genuine, hash-chained content.
+    """
+    from src import cli
+    from tests.ranking_terminal_recommendation_fixtures import (
+        build_terminal_recommendation_run_dir,
+    )
+
+    run_dir = build_terminal_recommendation_run_dir(
+        tmp_path / "runs", CASE_A_SPECS, data_unavailable=True
+    )
+    config_path = run_dir / "strategy_snapshot.yaml"
+    config = load_strategy_config(config_path)
+    assert config.get("config_schema_version") == 6
+    assert not (config.get("selection") or {}).get("enabled"), (
+        "Case A here is a Terminal (Ranking-driven) case"
+    )
+    ranking = _read(run_dir / "ranking.json")
+    assert ranking["ranking_status"] == "DATA_UNAVAILABLE", ranking["ranking_status"]
+
+    _write(
+        run_dir / "event_research.json",
+        _event_research(run_dir, _read(run_dir / "event_gate.json"), config),
+    )
+
+    cli.main(
+        [
+            "build-ranking-terminal-recommendation",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(CASE_A_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "recommendation.json"),
+        ]
+    )
+    recommendation = _read(run_dir / "recommendation.json")
+    assert recommendation["decision"] == "DATA_UNAVAILABLE", recommendation["decision"]
+
+    extra: list[str] = []
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(
+        _risk_check_argv(
+            run_dir, config_path, extra, source_matrix_path=CASE_A_SOURCE_MATRIX
+        )
+    )
+    return run_dir
+
+
+def build_case_b_run(tmp_path: Path, *, market_research: bool = False) -> Path:
     """Case B: config v6, ranking COMPLETE, Selection not yet activated.
 
     Every artifact -- including recommendation.json and risk_result.json --
@@ -320,7 +403,13 @@ def build_case_b_run(tmp_path: Path) -> Path:
             "--output", str(run_dir / "recommendation.json"),
         ]
     )
-    cli.main(_risk_check_argv(run_dir, config_path, []))
+    extra: list[str] = []
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(_risk_check_argv(run_dir, config_path, extra))
     return run_dir
 
 
@@ -422,9 +511,11 @@ def build_case_c_run(
 
 
 __all__ = [
+    "CASE_A_SOURCE_MATRIX",
     "HISTORICAL_SOURCE_MATRIX",
     "RANKING_FIXTURE",
     "SELECTION_FIXTURE",
+    "build_case_a_run",
     "build_case_b_run",
     "build_case_c_run",
     "sha256_file",

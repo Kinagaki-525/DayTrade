@@ -406,6 +406,50 @@ def test_risk_result_v2_terminal_case_selection_hash_is_null(tmp_path):
     }
 
 
+def _market_research_stub(tmp_path, ticker="AA01"):
+    """A minimal, schema-valid-shaped market_research.json stand-in.
+
+    It is never read in a non-TRADE case -- which is exactly the point: its
+    hash must not be recorded even though it exists and was supplied.
+    """
+    path = tmp_path / "market_research.json"
+    _write_json(path, {"discovery_candidates": [{"ticker": ticker}]})
+    return path
+
+
+@pytest.mark.parametrize("data_unavailable", [True, False])
+def test_risk_result_v2_terminal_case_market_research_hash_is_null(
+    tmp_path, data_unavailable
+):
+    """FIX-R2-003A section 5: Case A / Case B never consume market_research."""
+    chain = _terminal_chain(tmp_path, data_unavailable=data_unavailable)
+    bundle = _verify(chain)
+    payload = build_risk_result_v2(
+        bundle=bundle,
+        current_positions=None,
+        trades_today=None,
+        market_research_path=_market_research_stub(tmp_path),
+    )
+    assert payload["input_hashes"]["market_research_sha256"] is None
+
+
+def test_risk_result_v2_case_c_no_trade_market_research_hash_is_null(tmp_path):
+    chain = _case_c_chain(tmp_path, minimum_turnover_yen=10**15)
+    bundle = _verify(chain)
+    assert bundle.case_id == CASE_C_NO_TRADE
+    payload = build_risk_result_v2(
+        bundle=bundle,
+        current_positions=0,
+        trades_today=0,
+        market_research_path=_market_research_stub(tmp_path),
+    )
+    assert payload["input_hashes"]["market_research_sha256"] is None
+    assert payload["evaluation_context"] == {
+        "current_positions": None,
+        "trades_today": None,
+    }
+
+
 @pytest.mark.parametrize("bad", [None, True, -1, "0", 1.0])
 def test_risk_result_v2_trade_requires_non_negative_int_context(tmp_path, bad):
     chain = _case_c_chain(tmp_path)

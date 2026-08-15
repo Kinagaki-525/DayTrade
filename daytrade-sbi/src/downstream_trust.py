@@ -275,9 +275,19 @@ def verify_downstream_recommendation_chain(
     market_data = ranking_bundle.market_data
     source_payload = ranking_bundle.source_payload
 
-    validate_recommendation_candidate_link(recommendation, candidates)
-    validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
-    validate_recommendation_sources(recommendation, source_payload)
+    def _validate_recommendation_links() -> None:
+        """The Recommendation's own cross-artifact links.
+
+        FIX-R2-003A section 2: in Case C these deliberately run *after*
+        selection.json has been re-derived by the real Selection Builder. A
+        forger who rewrites Selection, Recommendation and Risk together can
+        make every cross-artifact link agree with every other, so a link
+        failure must never be what a Case C forgery is reported as -- the
+        Builder recompute of the first downstream artifact is.
+        """
+        validate_recommendation_candidate_link(recommendation, candidates)
+        validate_recommendation_pipeline_link(recommendation, candidate_pipeline)
+        validate_recommendation_sources(recommendation, source_payload)
 
     recommendation_schema_version = recommendation.get("schema_version")
     selection: dict[str, Any] | None = None
@@ -321,6 +331,7 @@ def verify_downstream_recommendation_chain(
         # Only a fully-verified selection.json earns a trusted hash.
         selection_sha256 = sha256_file_bytes(selection_path)
 
+        _validate_recommendation_links()
         validate_recommendation_selection_link(
             recommendation=recommendation,
             selection=selection,
@@ -372,6 +383,7 @@ def verify_downstream_recommendation_chain(
                 f"{case} requires recommendation.schema_version == 1; got "
                 f"{recommendation_schema_version!r}",
             )
+        _validate_recommendation_links()
         validate_ranking_terminal_recommendation_preconditions(
             ranking=ranking,
             event_gate=ranking_bundle.event_gate,
@@ -471,15 +483,26 @@ def build_risk_result_v2(
     paths = bundle.paths
 
     input_hashes: dict[str, str | None] = dict(bundle.actual_hashes)
-    input_hashes["market_research_sha256"] = (
-        sha256_file_bytes(market_research_path) if market_research_path is not None else None
-    )
+    # FIX-R2-003A section 5: market_research.json is an *input to Risk* only in
+    # a Case C TRADE evaluation -- that is the only branch that loads it,
+    # validates it and lets it decide market_data_valid. In Case A / Case B /
+    # Case C NO_TRADE the Risk Engine never reads it, so recording its hash
+    # would claim an input dependency that does not exist. It is normalized to
+    # null exactly like evaluation_context's current_positions / trades_today.
+    input_hashes["market_research_sha256"] = None
     if set(input_hashes) != set(RISK_INPUT_HASH_KEYS):  # pragma: no cover - guard
         raise DownstreamTrustError(
             "RISK_INPUT_HASHES_KEYSET_INVALID: unexpected Risk input hash key set"
         )
 
     if bundle.case_id == CASE_C_TRADE:
+        # Only here is market_research.json genuinely consumed, so only here
+        # does it earn a recorded (and therefore pinned) hash.
+        input_hashes["market_research_sha256"] = (
+            sha256_file_bytes(market_research_path)
+            if market_research_path is not None
+            else None
+        )
         positions = _require_non_negative_int(current_positions, "current_positions")
         trades = _require_non_negative_int(trades_today, "trades_today")
         evaluation_context: dict[str, Any] = {
