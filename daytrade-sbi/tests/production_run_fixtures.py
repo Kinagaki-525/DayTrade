@@ -187,119 +187,23 @@ def _candidate_pipeline(
     }
 
 
-def _no_trade_recommendation(
-    target_date: str,
-    previous_trading_day: str,
-    config: dict[str, Any],
-    reasons: list[str],
-    pipeline_summary: dict[str, Any],
-) -> dict[str, Any]:
-    """Reuse the shipped NO_TRADE recommendation, re-pinned to this run."""
-    payload = _read(NO_TRADE_FIXTURE / "recommendation.json")
-    payload["target_date"] = target_date
-    payload["strategy_version"] = config["strategy_version"]
-    payload["config_sha256"] = strategy_config_sha256(config)
-    payload["research_cutoff"] = f"{previous_trading_day}T20:00:00+09:00"
-    payload["selection_reasons"] = reasons
-    payload["pipeline_summary"] = pipeline_summary
-    return payload
+def _build_upstream_chain(run_dir: Path, snapshot: str) -> Path:
+    """Regenerate candidates -> event_gate -> ranking through the real CLIs
+    under ``snapshot``.
 
-
-def _risk_result(
-    recommendation: dict[str, Any],
-    *,
-    status: str,
-) -> dict[str, Any]:
-    payload = _read(NO_TRADE_FIXTURE / "risk_result.json")
-    payload["target_date"] = recommendation["target_date"]
-    payload["strategy_version"] = recommendation["strategy_version"]
-    payload["config_sha256"] = recommendation["config_sha256"]
-    payload["decision"] = recommendation["decision"]
-    payload["status"] = status
-    payload["ticker"] = recommendation["ticker"]
-    return payload
-
-
-def build_case_b_run(tmp_path: Path) -> Path:
-    """Case B: ranking COMPLETE, Selection not yet activated -> NO_TRADE."""
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True)
-    for name in (*SHARED_ARTIFACTS, "ranking.json", "strategy_snapshot.yaml"):
-        shutil.copy(RANKING_FIXTURE / name, run_dir / name)
-
-    config = load_strategy_config(run_dir / "strategy_snapshot.yaml")
-    assert not (config.get("selection") or {}).get("enabled"), (
-        "Case B requires selection disabled"
-    )
-
-    ranking = _read(run_dir / "ranking.json")
-    event_gate = _read(run_dir / "event_gate.json")
-    candidates = _read(run_dir / "candidates.json")
-    target_date = ranking["target_date"]
-
-    _write(
-        run_dir / "research_window.json",
-        _research_window(target_date, ranking["previous_trading_day"]),
-    )
-    _write(
-        run_dir / "candidate_pipeline.json",
-        _candidate_pipeline(target_date, config, candidates),
-    )
-    _write(run_dir / "event_research.json", _event_research(run_dir, event_gate, config))
-
-    recommendation = _no_trade_recommendation(
-        target_date,
-        ranking["previous_trading_day"],
-        config,
-        ["SELECTION_NOT_ACTIVE_PENDING_CALIBRATION"],
-        _read(run_dir / "candidate_pipeline.json")["summary"],
-    )
-    _write(run_dir / "recommendation.json", recommendation)
-    _write(
-        run_dir / "risk_result.json",
-        _risk_result(recommendation, status="NOT_APPLICABLE"),
-    )
-    return run_dir
-
-
-def build_case_c_run(tmp_path: Path, *, selection_status: str = "NO_TRADE") -> Path:
-    """Case C: Selection is active.
-
-    Activating Selection changes the strategy snapshot, which invalidates every
-    downstream artifact produced under the previous one. So this deliberately
-    does NOT graft the ranking fixture's event_gate/ranking onto the selection
-    snapshot: their recorded config SHA would disagree, and rewriting it would
-    be exactly the forgery the verifier exists to catch. It regenerates the
-    chain through the real CLIs under the selection-enabled snapshot instead.
+    Any snapshot change invalidates every artifact produced under the previous
+    one (their recorded config SHA would disagree), so nothing is ever grafted
+    across snapshots and no recorded hash is ever rewritten.
     """
     from src import cli
 
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     for name in ("market_data.json", "sources.json"):
         shutil.copy(RANKING_FIXTURE / name, run_dir / name)
-    snapshot = (SELECTION_FIXTURE / "strategy_snapshot.yaml").read_text(
-        encoding="utf-8"
-    )
-    if selection_status == "NO_TRADE":
-        # Raise the human-approved turnover threshold in this FIXTURE snapshot
-        # so Rank 1 legitimately fails the rule. Nothing is weakened and the
-        # live config/strategy.yaml is untouched -- this exercises the normal
-        # NO_TRADE termination, which is a correct outcome, not a failure.
-        assert "threshold_yen: 1000000000" in snapshot
-        snapshot = snapshot.replace(
-            "threshold_yen: 1000000000", "threshold_yen: 999000000000"
-        )
-    (run_dir / "strategy_snapshot.yaml").write_text(snapshot, encoding="utf-8")
-
     config_path = run_dir / "strategy_snapshot.yaml"
+    config_path.write_text(snapshot, encoding="utf-8")
     config = load_strategy_config(config_path)
-    assert (config.get("selection") or {}).get("enabled") is True, (
-        "Case C requires selection enabled"
-    )
 
-    # Screening is re-run under the new snapshot, because candidates.json
-    # records the config SHA it was screened under.
     cli.main(
         [
             "screen-market",
@@ -352,6 +256,117 @@ def build_case_c_run(tmp_path: Path, *, selection_status: str = "NO_TRADE") -> P
             "--output", str(run_dir / "ranking.json"),
         ]
     )
+    return config_path
+
+
+def _risk_check_argv(run_dir: Path, config_path: Path, extra: list[str]) -> list[str]:
+    return [
+        "risk-check",
+        "--recommendation", str(run_dir / "recommendation.json"),
+        "--candidates", str(run_dir / "candidates.json"),
+        "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+        "--market-data", str(run_dir / "market_data.json"),
+        "--sources", str(run_dir / "sources.json"),
+        "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+        "--config", str(config_path),
+        "--ranking", str(run_dir / "ranking.json"),
+        "--event-gate", str(run_dir / "event_gate.json"),
+        "--research-window", str(run_dir / "research_window.json"),
+        *extra,
+        "--output", str(run_dir / "risk_result.json"),
+    ]
+
+
+def build_case_b_run(tmp_path: Path) -> Path:
+    """Case B: config v6, ranking COMPLETE, Selection not yet activated.
+
+    Every artifact -- including recommendation.json and risk_result.json --
+    is produced by the real CLIs, so the Production Verifier's
+    recompute-and-compare has genuine data to check (FIX-R2-003 s42).
+    """
+    from src import cli
+
+    run_dir = tmp_path / "run"
+    snapshot = (SELECTION_FIXTURE / "strategy_snapshot.yaml").read_text(
+        encoding="utf-8"
+    )
+    # Case B is exactly "config v6 with Selection not yet activated". Only the
+    # FIXTURE snapshot's selection.enabled flag moves; no rule is weakened and
+    # the live config/strategy.yaml is untouched.
+    assert "selection:\n  enabled: true\n" in snapshot
+    snapshot = snapshot.replace(
+        "selection:\n  enabled: true\n", "selection:\n  enabled: false\n"
+    )
+    config_path = _build_upstream_chain(run_dir, snapshot)
+
+    config = load_strategy_config(config_path)
+    assert config.get("config_schema_version") == 6
+    assert not (config.get("selection") or {}).get("enabled"), (
+        "Case B requires selection disabled"
+    )
+
+    cli.main(
+        [
+            "build-ranking-terminal-recommendation",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "recommendation.json"),
+        ]
+    )
+    cli.main(_risk_check_argv(run_dir, config_path, []))
+    return run_dir
+
+
+def build_case_c_run(
+    tmp_path: Path,
+    *,
+    selection_status: str = "NO_TRADE",
+    current_positions: int = 0,
+    trades_today: int = 0,
+    market_research: bool = False,
+) -> Path:
+    """Case C: Selection is active.
+
+    Activating Selection changes the strategy snapshot, which invalidates every
+    downstream artifact produced under the previous one. So this deliberately
+    does NOT graft the ranking fixture's event_gate/ranking onto the selection
+    snapshot: their recorded config SHA would disagree, and rewriting it would
+    be exactly the forgery the verifier exists to catch. It regenerates the
+    chain through the real CLIs under the selection-enabled snapshot instead.
+
+    ``current_positions`` / ``trades_today`` are handed to the real risk-check
+    CLI unchanged: the Risk Engine -- not this fixture -- decides PASS vs
+    REJECTED from them.
+    """
+    from src import cli
+
+    run_dir = tmp_path / "run"
+    snapshot = (SELECTION_FIXTURE / "strategy_snapshot.yaml").read_text(
+        encoding="utf-8"
+    )
+    if selection_status == "NO_TRADE":
+        # Raise the human-approved turnover threshold in this FIXTURE snapshot
+        # so Rank 1 legitimately fails the rule. Nothing is weakened and the
+        # live config/strategy.yaml is untouched -- this exercises the normal
+        # NO_TRADE termination, which is a correct outcome, not a failure.
+        assert "threshold_yen: 1000000000" in snapshot
+        snapshot = snapshot.replace(
+            "threshold_yen: 1000000000", "threshold_yen: 999000000000"
+        )
+    config_path = _build_upstream_chain(run_dir, snapshot)
+
+    config = load_strategy_config(config_path)
+    assert (config.get("selection") or {}).get("enabled") is True, (
+        "Case C requires selection enabled"
+    )
+
     cli.main(
         [
             "build-selection",
@@ -391,25 +406,18 @@ def build_case_c_run(tmp_path: Path, *, selection_status: str = "NO_TRADE") -> P
             "--output", str(run_dir / "recommendation.json"),
         ]
     )
-    cli.main(
-        [
-            "risk-check",
-            "--recommendation", str(run_dir / "recommendation.json"),
-            "--candidates", str(run_dir / "candidates.json"),
-            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
-            "--market-data", str(run_dir / "market_data.json"),
-            "--sources", str(run_dir / "sources.json"),
-            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
-            "--config", str(config_path),
-            "--selection", str(run_dir / "selection.json"),
-            "--ranking", str(run_dir / "ranking.json"),
-            "--event-gate", str(run_dir / "event_gate.json"),
-            "--research-window", str(run_dir / "research_window.json"),
-            "--current-positions", "0",
-            "--trades-today", "0",
-            "--output", str(run_dir / "risk_result.json"),
-        ]
-    )
+
+    extra = [
+        "--selection", str(run_dir / "selection.json"),
+        "--current-positions", str(current_positions),
+        "--trades-today", str(trades_today),
+    ]
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(_risk_check_argv(run_dir, config_path, extra))
     return run_dir
 
 

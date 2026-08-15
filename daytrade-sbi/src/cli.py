@@ -45,6 +45,13 @@ from src.contracts import (
     validate_selection_recommendation_output_contract,
     validate_selection_recommendation_preconditions,
 )
+from src.downstream_trust import (
+    alignment_error_messages as shared_alignment_error_messages,
+    build_risk_result_v2,
+    load_market_bundle as shared_load_market_bundle,
+    load_market_research_alignment as shared_load_market_research_alignment,
+    verify_downstream_recommendation_chain,
+)
 from src.execution import append_trade, build_trade_row
 from src.file_io import atomic_write_text
 from src.market import (
@@ -1194,140 +1201,88 @@ def _risk_check(
             f"(recommendation.schema_version == 2); got schema_version={recommendation_schema_version!r}"
         )
 
-    # For a config_schema_version 6 Selection-driven recommendation
-    # (schema_version == 2, covering both TRADE and NO_TRADE outcomes),
-    # --selection and --ranking are both required and Risk independently
-    # recomputes the real Selection trust chain: raw-byte SHA256 of
-    # ranking.json/selection.json/the config snapshot,
-    # validate_selection_preconditions, validate_selection_output_contract
-    # (recompute-and-compare against a forged selection.json), and
-    # validate_recommendation_selection_link using the ACTUAL selection.json
-    # SHA256 (never the string recorded inside recommendation.json). Risk
-    # never re-derives a decision from Ranking on its own, and a Risk
-    # REJECTED never falls back to any other candidate (Selection already
-    # only ever considered Rank 1, and Risk cannot second-guess that).
-    selection_driven_v6 = config_schema_version == 6 and recommendation_schema_version == 2
-    selection: dict[str, Any] | None = None
-    if selection_driven_v6:
-        if selection_path is None:
+    if config_schema_version == 6:
+        # ---- Config v6: the ONE shared Downstream Trust Chain -------------
+        # Every Selection / Recommendation trust rule lives in
+        # src/downstream_trust.py, which the Production Verifier calls too, so
+        # the two can never drift. risk-check itself only checks that the
+        # arguments the chain needs were actually supplied, then hands over.
+        #
+        # The Case (A/B/C) is decided by the shared layer from the VERIFIED
+        # ranking.json + config alone -- never from recommendation.decision or
+        # risk_result.status. recommendation.schema_version is used here only
+        # to pick which missing-argument error code to report.
+        selection_shaped = recommendation_schema_version == 2
+        if selection_shaped and selection_path is None:
             raise ValueError(
                 "RISK_SELECTION_REQUIRED: --selection is required for a config_schema_version 6 "
                 "Selection-driven (recommendation.schema_version == 2) recommendation"
             )
         if ranking_path is None:
             raise ValueError(
-                "RISK_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
-                "Selection-driven (recommendation.schema_version == 2) recommendation"
+                (
+                    "RISK_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
+                    "Selection-driven (recommendation.schema_version == 2) recommendation"
+                )
+                if selection_shaped
+                else (
+                    "RISK_TERMINAL_RANKING_REQUIRED: --ranking is required for a "
+                    "config_schema_version 6 Terminal (Case A/B) recommendation"
+                )
             )
         if event_gate_path is None:
             raise ValueError(
-                "RISK_SELECTION_EVENT_GATE_REQUIRED: --event-gate is required for a "
-                "config_schema_version 6 Selection-driven (recommendation.schema_version == 2) "
-                "recommendation"
+                (
+                    "RISK_SELECTION_EVENT_GATE_REQUIRED: --event-gate is required for a "
+                    "config_schema_version 6 Selection-driven recommendation"
+                )
+                if selection_shaped
+                else (
+                    "RISK_TERMINAL_EVENT_GATE_REQUIRED: --event-gate is required for a "
+                    "config_schema_version 6 Terminal (Case A/B) recommendation"
+                )
             )
         if research_window_path is None:
             raise ValueError(
-                "RISK_SELECTION_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
-                "config_schema_version 6 Selection-driven (recommendation.schema_version == 2) "
-                "recommendation"
+                (
+                    "RISK_SELECTION_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
+                    "config_schema_version 6 Selection-driven recommendation"
+                )
+                if selection_shaped
+                else (
+                    "RISK_TERMINAL_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
+                    "config_schema_version 6 Terminal (Case A/B) recommendation"
+                )
             )
 
-        # Full re-verification of the Ranking Trust Chain BEFORE any of
-        # Selection's own business logic is trusted -- mirrors
-        # build-selection/build-selection-recommendation exactly, via the
-        # SAME shared helper, so Risk can never be tricked by a forged
-        # ranking.json whose downstream selection/recommendation hashes were
-        # also faked to stay self-consistent.
-        bundle = load_and_verify_ranking_trust_chain(
-            ranking_path=ranking_path,
-            event_gate_path=event_gate_path,
+        bundle = verify_downstream_recommendation_chain(
+            recommendation_path=recommendation_path,
             candidates_path=candidates_path,
+            candidate_pipeline_path=candidate_pipeline_path,
             market_data_path=market_data_path,
             sources_path=sources_path,
             source_matrix_path=source_matrix_path,
             config_path=config_path,
+            ranking_path=ranking_path,
+            event_gate_path=event_gate_path,
+            research_window_path=research_window_path,
+            selection_path=selection_path,
         )
-        ranking = bundle.ranking
+        payload = build_risk_result_v2(
+            bundle=bundle,
+            current_positions=current_positions,
+            trades_today=trades_today,
+            market_research_path=market_research_path,
+        )
+        # Atomic: nothing is written unless the whole chain above succeeded.
+        _write_json(output_path, payload, "risk_result.schema.json")
+        return 0
 
-        ranking_sha256 = _sha256_bytes(ranking_path.read_bytes())
-        selection_sha256 = _sha256_bytes(selection_path.read_bytes())
-        strategy_snapshot_sha256 = bundle.actual_ranking_input_hashes["strategy_snapshot_sha256"]
-
-        selection = load_json_document(selection_path, "selection.schema.json")
-
-        actual_selection_input_hashes = {
-            "ranking_sha256": ranking_sha256,
-            "strategy_snapshot_sha256": strategy_snapshot_sha256,
-        }
-        validate_selection_preconditions(
-            ranking=ranking,
-            config=config,
-            input_hashes=actual_selection_input_hashes,
-        )
-        validate_selection_output_contract(
-            selection=selection,
-            ranking=ranking,
-            config=config,
-            input_hashes=actual_selection_input_hashes,
-        )
-        validate_recommendation_selection_link(
-            recommendation=recommendation,
-            selection=selection,
-            selection_sha256=selection_sha256,
-        )
-
-        research_window = load_json_document(
-            research_window_path, "research_window.schema.json"
-        )
-        selection_candidates = load_json_document(candidates_path, "candidates.schema.json")
-        selection_candidate_pipeline = load_json_document(
-            candidate_pipeline_path, "candidate_pipeline.schema.json"
-        )
-        selection_market_data = load_json_document(market_data_path, "market_data.schema.json")
-        selection_source_payload = load_json_document(sources_path, "sources.schema.json")
-
-        # Broad cross-artifact consistency check across ALL of
-        # build-selection-recommendation's inputs (not just what feeds the
-        # recompute-and-compare below): catches mismatches like
-        # research_window.previous_trading_day/target_date not matching
-        # selection.json, or a candidate_pipeline that is not actually
-        # complete -- fields build_selection_recommendation() itself never
-        # consumes, so the recompute-and-compare check below cannot see them.
-        validate_selection_recommendation_preconditions(
-            selection=selection,
-            ranking=ranking,
-            candidates=selection_candidates,
-            candidate_pipeline=selection_candidate_pipeline,
-            market_data=selection_market_data,
-            research_window=research_window,
-            source_payload=selection_source_payload,
-            config=config,
-        )
-
-        # Recompute-and-compare the entire Selection Recommendation itself:
-        # catches a Recommendation whose Selection-link fields are each
-        # individually correct but where some OTHER field (notes,
-        # source_urls, order values, selection_reasons, ...) was
-        # independently hand-tampered. Runs for BOTH TRADE and NO_TRADE
-        # Selection-driven recommendations -- proving the NO_TRADE
-        # recommendation itself is genuine before Risk even says
-        # NOT_APPLICABLE.
-        validate_selection_recommendation_output_contract(
-            recommendation=recommendation,
-            selection=selection,
-            candidates=selection_candidates,
-            candidate_pipeline=selection_candidate_pipeline,
-            market_data=selection_market_data,
-            research_window=research_window,
-            source_payload=selection_source_payload,
-            config=config,
-            selection_sha256=selection_sha256,
-        )
-    elif selection_path is not None:
-        # Non-Selection-driven caller (pre-v6 config, or a v6 recommendation
-        # that is not schema_version 2 -- already rejected above for TRADE)
-        # still passed --selection: keep the previous, superficial
-        # cross-checks for backward compatibility.
+    # ---- Pre-v6 (historical) Risk Result v1 path --------------------------
+    if selection_path is not None:
+        # Non-Selection-driven caller (pre-v6 config) still passed
+        # --selection: keep the previous, superficial cross-checks for
+        # backward compatibility.
         selection = load_json_document(selection_path, "selection.schema.json")
         if decision == "TRADE":
             if selection.get("selection_status") != "SELECTED":
@@ -1347,111 +1302,6 @@ def _risk_check(
                 raise ValueError(
                     "RISK_SELECTION_STATUS_MISMATCH: --selection is SELECTED but recommendation decision is not TRADE"
                 )
-
-    # Config v6 Case A/B (Terminal Recommendation) trust chain: a v6
-    # recommendation.schema_version == 1 whose decision is NO_TRADE or
-    # DATA_UNAVAILABLE was produced by build-ranking-terminal-recommendation,
-    # NOT the Selection-driven Case C path. Risk independently re-derives and
-    # re-verifies the ENTIRE Ranking trust chain here -- raw-byte hashes of
-    # every upstream artifact, the same Ranking Contract functions
-    # build-ranking/build-ranking-terminal-recommendation themselves call,
-    # and a deterministic recomputation of the Terminal Recommendation itself
-    # -- so a hand-written, merely schema-valid recommendation.json can never
-    # bypass Risk without a genuine Ranking -> Terminal-Builder chain having
-    # actually run. Mirrors build-ranking-terminal-recommendation's exact
-    # fixed processing order.
-    terminal_driven_v6 = (
-        config_schema_version == 6
-        and recommendation_schema_version == 1
-        and decision in ("NO_TRADE", "DATA_UNAVAILABLE")
-    )
-    if terminal_driven_v6:
-        if ranking_path is None:
-            raise ValueError(
-                "RISK_TERMINAL_RANKING_REQUIRED: --ranking is required for a config_schema_version 6 "
-                "Terminal (Case A/B, recommendation.schema_version == 1, "
-                "decision in {NO_TRADE, DATA_UNAVAILABLE}) recommendation"
-            )
-        if event_gate_path is None:
-            raise ValueError(
-                "RISK_TERMINAL_EVENT_GATE_REQUIRED: --event-gate is required for a config_schema_version 6 "
-                "Terminal (Case A/B) recommendation"
-            )
-        if research_window_path is None:
-            raise ValueError(
-                "RISK_TERMINAL_RESEARCH_WINDOW_REQUIRED: --research-window is required for a "
-                "config_schema_version 6 Terminal (Case A/B) recommendation"
-            )
-
-        actual_ranking_input_hashes = {
-            "event_gate_sha256": _sha256_bytes(event_gate_path.read_bytes()),
-            "candidates_sha256": _sha256_bytes(candidates_path.read_bytes()),
-            "market_data_sha256": _sha256_bytes(market_data_path.read_bytes()),
-            "sources_sha256": _sha256_bytes(sources_path.read_bytes()),
-            "source_matrix_sha256": _sha256_bytes(source_matrix_path.read_bytes()),
-            "strategy_snapshot_sha256": _sha256_bytes(config_path.read_bytes()),
-        }
-
-        ranking = load_json_document(ranking_path, "ranking.schema.json")
-        event_gate = load_json_document(event_gate_path, "event_gate.schema.json")
-        terminal_market_data = load_json_document(market_data_path, "market_data.schema.json")
-        research_window = load_json_document(
-            research_window_path, "research_window.schema.json"
-        )
-        terminal_source_payload = load_json_document(sources_path, "sources.schema.json")
-        terminal_source_matrix = load_source_matrix(source_matrix_path)
-        validate_source_matrix(terminal_source_matrix)
-
-        if ranking.get("input_hashes") != actual_ranking_input_hashes:
-            mismatched_keys = sorted(
-                key
-                for key in set(actual_ranking_input_hashes)
-                | set(ranking.get("input_hashes") or {})
-                if (ranking.get("input_hashes") or {}).get(key)
-                != actual_ranking_input_hashes.get(key)
-            )
-            raise ValueError(
-                "RISK_TERMINAL_INPUT_HASHES_MISMATCH: ranking.input_hashes does not match the "
-                "actual SHA256 of the --event-gate/--candidates/--market-data/--sources/"
-                "--source-matrix/--config files supplied here; mismatched keys: "
-                + ", ".join(mismatched_keys)
-            )
-
-        validate_ranking_preconditions(
-            event_gate=event_gate,
-            candidates=candidates,
-            market_data=terminal_market_data,
-            source_payload=terminal_source_payload,
-            source_matrix=terminal_source_matrix,
-            config=config,
-            input_hashes=actual_ranking_input_hashes,
-            source_base_dir=sources_path.parent,
-        )
-        validate_ranking_output_contract(
-            ranking=ranking,
-            event_gate=event_gate,
-            candidates=candidates,
-            market_data=terminal_market_data,
-            source_payload=terminal_source_payload,
-            config=config,
-        )
-        validate_ranking_terminal_recommendation_preconditions(
-            ranking=ranking,
-            event_gate=event_gate,
-            candidates=candidates,
-            candidate_pipeline=candidate_pipeline,
-            market_data=terminal_market_data,
-            research_window=research_window,
-            source_payload=terminal_source_payload,
-            config=config,
-        )
-        validate_ranking_terminal_recommendation_output_contract(
-            recommendation=recommendation,
-            ranking=ranking,
-            candidate_pipeline=candidate_pipeline,
-            research_window=research_window,
-            config=config,
-        )
 
     (
         market_target_date,
@@ -1830,19 +1680,12 @@ def _load_market_bundle(
     dict[str, Any],
     dict[str, Any],
 ]:
-    source_matrix = load_source_matrix(source_matrix_path)
-    load_json_document(market_data_path, "market_data.schema.json")
-    source_payload = load_json_document(sources_path, "sources.schema.json")
-    target_date, records = load_market_data(market_data_path)
-    assert target_date is not None
-    ledger_result = validate_source_ledger(
-        target_date,
-        records,
-        source_payload,
-        source_matrix,
-        source_base_dir=sources_path.parent,
-    )
-    return target_date, records, ledger_result, source_payload, source_matrix
+    """Thin wrapper over the shared implementation in src/downstream_trust.py.
+
+    The CLI and the Production Verifier must load Market Data / Sources /
+    Source Matrix through exactly the same code path.
+    """
+    return shared_load_market_bundle(market_data_path, sources_path, source_matrix_path)
 
 
 def _load_unvalidated_json_object(path: Path) -> dict[str, Any]:
@@ -1859,32 +1702,16 @@ def _load_market_research_alignment(
     source_matrix: dict[str, Any],
     source_payload: dict[str, Any] | None = None,
 ) -> MarketDataResearchAlignmentResult | None:
-    if market_research_path is None:
-        return None
-    market_research = load_json_document(
-        market_research_path,
-        "market_research.schema.json",
-    )
-    research_result = validate_market_research(
-        market_research,
-        source_matrix,
-        source_payload,
-    )
-    alignment_result = validate_market_records_against_research(records, market_research)
-    return MarketDataResearchAlignmentResult(
-        research_result.valid and alignment_result.valid,
-        (*research_result.errors, *alignment_result.global_errors),
-        alignment_result.errors_by_ticker,
+    """Thin wrapper over the shared implementation in src/downstream_trust.py."""
+    return shared_load_market_research_alignment(
+        records, market_research_path, source_matrix, source_payload
     )
 
 
 def _alignment_error_messages(
     result: MarketDataResearchAlignmentResult,
 ) -> list[str]:
-    messages = list(result.global_errors)
-    for ticker, errors in sorted(result.errors_by_ticker.items()):
-        messages.extend(f"{ticker}: {error}" for error in errors)
-    return messages
+    return shared_alignment_error_messages(result)
 
 
 def _init_event_research(

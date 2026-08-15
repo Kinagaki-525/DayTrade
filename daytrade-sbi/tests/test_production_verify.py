@@ -107,12 +107,17 @@ def test_case_c_trade_is_valid(case_c_selected):
     assert report.status == VERIFIED_CASE_C_TRADE_RISK_PASS, report.errors
 
 
-def test_happy_path_does_not_require_a_forced_trade(case_b):
-    """Case B is a legitimate terminal state for the happy-path verifier."""
+def test_case_b_is_valid_run_but_not_production_happy_path(case_b):
+    """Case B (Selection not yet activated) is a legitimate, correctly
+    terminated RUN -- but it is not the *production* happy path, which only
+    exists once Selection is active."""
+    assert _verify(case_b).status == VERIFIED_CASE_B
+
     report = verify_production_happy_path(
         case_b, source_matrix_path=HISTORICAL_SOURCE_MATRIX
     )
-    assert report.status == VERIFIED_CASE_B, report.errors
+    assert report.status == INVALID_RUN
+    assert any("happy_path" in error for error in report.errors)
 
 
 def test_verification_is_read_only(case_c_no_trade):
@@ -224,7 +229,9 @@ def test_forged_selection_ranking_link_is_invalid(case_c_no_trade):
 
     report = _verify(case_c_no_trade)
     assert report.status == INVALID_RUN
-    assert any("selection_ranking_link" in error for error in report.errors)
+    # The Selection recompute sees it first: the recomputed selection payload
+    # records the REAL ranking hash, so the forged one can never match.
+    assert any("selection_output_contract" in error for error in report.errors)
 
 
 def test_forged_recommendation_is_invalid(case_c_no_trade):
@@ -346,7 +353,10 @@ def test_case_b_requires_the_pending_calibration_reason(case_b):
 
     report = _verify(case_b)
     assert report.status == INVALID_RUN
-    assert any("case_b_reason" in error for error in report.errors)
+    assert any(
+        "ranking_terminal_recommendation_output_contract" in error
+        for error in report.errors
+    )
 
 
 def test_case_b_with_a_selection_artifact_is_invalid(tmp_path):

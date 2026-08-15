@@ -167,7 +167,7 @@ def test_hash_mutation_of_upstream_file_is_hard_error(tmp_path, filename):
     target.write_bytes(original + b"\n")
 
     output_path = tmp_path / "risk_result.json"
-    with pytest.raises(ValueError, match="RISK_TERMINAL_INPUT_HASHES_MISMATCH"):
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH"):
         cli.main(_risk_check_args(run_dir, recommendation_path, output_path))
     assert not output_path.exists()
 
@@ -186,7 +186,7 @@ def test_source_matrix_mutation_is_hard_error(tmp_path):
     args = _risk_check_args(run_dir, recommendation_path, output_path)
     args[args.index("--source-matrix") + 1] = str(tampered_path)
 
-    with pytest.raises(ValueError, match="RISK_TERMINAL_INPUT_HASHES_MISMATCH"):
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH"):
         cli.main(args)
     assert not output_path.exists()
 
@@ -220,7 +220,7 @@ def test_atomic_write_leaves_preexisting_output_untouched_on_hard_error(tmp_path
     sentinel = b"sentinel-bytes-do-not-touch"
     output_path.write_bytes(sentinel)
 
-    with pytest.raises(ValueError, match="RISK_TERMINAL_INPUT_HASHES_MISMATCH"):
+    with pytest.raises(ValueError, match="RANKING_INPUT_HASHES_MISMATCH"):
         cli.main(_risk_check_args(run_dir, recommendation_path, output_path))
 
     assert output_path.read_bytes() == sentinel

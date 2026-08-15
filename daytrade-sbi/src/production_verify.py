@@ -37,6 +37,17 @@ from src.market import (
     validate_market_data,
     validate_source_ledger,
 )
+from src.downstream_trust import (
+    CASE_A,
+    CASE_B,
+    CASE_C_NO_TRADE,
+    CASE_C_TRADE,
+    RISK_INPUT_HASH_KEYS,
+    build_risk_result_v2,
+    determine_downstream_case,
+    sha256_file_bytes,
+    verify_downstream_recommendation_chain,
+)
 from src.ranking_trust import load_and_verify_ranking_trust_chain
 from src.request_budget import (
     request_id_for,
@@ -64,6 +75,36 @@ VERIFIED_STATUSES = frozenset(
         VERIFIED_CASE_C_TRADE_RISK_REJECTED,
     }
 )
+
+#: verify-production-happy-path is about the *production* happy path, which
+#: only exists once Selection is active (Case C). Case A (no tradable data)
+#: and Case B (Selection not yet calibrated) are valid RUNS, but they are not
+#: production happy paths.
+HAPPY_PATH_STATUSES = frozenset(
+    {
+        VERIFIED_CASE_C_NO_TRADE,
+        VERIFIED_CASE_C_TRADE_RISK_PASS,
+        VERIFIED_CASE_C_TRADE_RISK_REJECTED,
+    }
+)
+
+#: Maps a Downstream Trust Chain error code prefix onto the verification
+#: report check it belongs to, so a failure is attributed to the specific
+#: contract that rejected the run rather than to a catch-all.
+_DOWNSTREAM_CHECK_BY_CODE = {
+    "DOWNSTREAM_SELECTION_REQUIRED": "case_c_selection",
+    "DOWNSTREAM_SELECTION_FORBIDDEN_FOR_TERMINAL_CASE": "terminal_case_selection",
+    "DOWNSTREAM_TERMINAL_CASE_INVALID": "downstream_terminal_case",
+    "DOWNSTREAM_RECOMMENDATION_SCHEMA_VERSION_INVALID": "recommendation_schema_version",
+    "SELECTION_OUTPUT_CONTRACT_MISMATCH": "selection_output_contract",
+    "SELECTION_RECOMMENDATION_OUTPUT_CONTRACT_MISMATCH": (
+        "selection_recommendation_output_contract"
+    ),
+    "RECOMMENDATION_SELECTION_LINK": "recommendation_selection_link",
+    "RISK_TERMINAL_RECOMMENDATION_CONTRACT_MISMATCH": (
+        "ranking_terminal_recommendation_output_contract"
+    ),
+}
 
 SELECTION_NOT_ACTIVE_REASON = "SELECTION_NOT_ACTIVE_PENDING_CALIBRATION"
 
@@ -611,9 +652,183 @@ def verify_production_run(
     except ValueError as exc:
         report.record("recommendation_risk_link", False, str(exc))
 
-    # ---- 11. terminal case -------------------------------------------------
-    report.status = _terminal_status(run_dir, payloads, config, report)
+    # ---- 11. Downstream Trust Chain: Selection -> Recommendation ----------
+    # Delegated wholesale to src/downstream_trust.py -- the SAME module
+    # risk-check uses -- so Selection/Recommendation business rules are never
+    # duplicated here and the two callers cannot drift apart.
+    bundle = _verify_downstream(run_dir, payloads, config, source_matrix_path, report)
+
+    # ---- 12. Risk Result: recomputed, never trusted as written ------------
+    if bundle is not None:
+        _verify_risk_result(run_dir, bundle, payloads["risk_result.json"], config, report)
+
+    # ---- 13. terminal case -------------------------------------------------
+    report.status = _terminal_status(bundle, payloads, report)
     return report
+
+
+def _verify_downstream(
+    run_dir: Path,
+    payloads: dict[str, dict[str, Any]],
+    config: dict[str, Any],
+    source_matrix_path: Path,
+    report: VerificationReport,
+) -> Any:
+    """Re-derive selection.json / recommendation.json through the shared
+    Downstream Trust Layer. Returns the verified bundle, or None on failure."""
+    selection_path = run_dir / "selection.json"
+    selection_exists = selection_path.is_file()
+
+    # The Case is decided from the VERIFIED ranking.json + config only --
+    # never from recommendation.decision or risk_result.status.
+    try:
+        case = determine_downstream_case(payloads["ranking.json"], config)
+    except ValueError as exc:
+        report.record("downstream_terminal_case", False, str(exc))
+        return None
+    report.record("downstream_terminal_case", True, case)
+
+    if case == "CASE_C" and not selection_exists:
+        report.record(
+            "case_c_selection",
+            False,
+            "selection is enabled but the run has no selection.json",
+        )
+        return None
+    if case in (CASE_A, CASE_B) and selection_exists:
+        report.record(
+            "terminal_case_selection",
+            False,
+            f"{case} must not carry a selection.json",
+        )
+        return None
+
+    try:
+        bundle = verify_downstream_recommendation_chain(
+            recommendation_path=run_dir / "recommendation.json",
+            candidates_path=run_dir / "candidates.json",
+            candidate_pipeline_path=run_dir / "candidate_pipeline.json",
+            market_data_path=run_dir / "market_data.json",
+            sources_path=run_dir / "sources.json",
+            source_matrix_path=Path(source_matrix_path),
+            config_path=run_dir / "strategy_snapshot.yaml",
+            ranking_path=run_dir / "ranking.json",
+            event_gate_path=run_dir / "event_gate.json",
+            research_window_path=run_dir / "research_window.json",
+            selection_path=selection_path if selection_exists else None,
+        )
+    except (ValueError, OSError) as exc:
+        code = str(exc).split(":", 1)[0].strip()
+        report.record(
+            _DOWNSTREAM_CHECK_BY_CODE.get(code, "downstream_recommendation_trust"),
+            False,
+            str(exc),
+        )
+        return None
+
+    if bundle.selection is not None:
+        report.record("selection_preconditions", True)
+        report.record("selection_output_contract", True)
+        report.record("recommendation_selection_link", True)
+        report.record("selection_recommendation_preconditions", True)
+        report.record("selection_recommendation_output_contract", True)
+        _verify_selection_hash_link(run_dir, bundle.selection, report)
+    else:
+        report.record("ranking_terminal_recommendation_preconditions", True)
+        report.record("ranking_terminal_recommendation_output_contract", True)
+    return bundle
+
+
+def _verify_risk_result(
+    run_dir: Path,
+    bundle: Any,
+    risk_result: dict[str, Any],
+    config: dict[str, Any],
+    report: VerificationReport,
+) -> None:
+    """Recompute risk_result.json with the official Risk Engine and compare.
+
+    Nothing inside risk_result.json is treated as authoritative: its recorded
+    input hashes are re-derived from the real files, and its business result
+    is rebuilt by ``build_risk_result_v2`` from the run's own evaluation
+    context.
+    """
+    if config.get("config_schema_version") != 6:
+        # Historical (pre-v6) runs keep their v1 Risk contract untouched.
+        return
+
+    if risk_result.get("schema_version") != 2:
+        report.record(
+            "risk_schema_version",
+            False,
+            "a config_schema_version 6 run must carry risk_result.schema_version 2; "
+            f"got {risk_result.get('schema_version')!r}",
+        )
+        return
+    report.record("risk_schema_version", True)
+
+    recorded_hashes = risk_result.get("input_hashes") or {}
+    recorded_market_research = recorded_hashes.get("market_research_sha256")
+    market_research_path: Path | None = None
+    if recorded_market_research is not None:
+        candidate = run_dir / "market_research.json"
+        if not candidate.is_file():
+            report.record(
+                "risk_market_research_hash",
+                False,
+                "risk_result records a market_research_sha256 but the run has no "
+                "market_research.json",
+            )
+            return
+        actual_market_research = sha256_file_bytes(candidate)
+        if actual_market_research != recorded_market_research:
+            report.record(
+                "risk_market_research_hash",
+                False,
+                f"market_research.json hashes to {actual_market_research}, "
+                f"risk_result records {recorded_market_research}",
+            )
+            return
+        report.record("risk_market_research_hash", True)
+        market_research_path = candidate
+
+    context = risk_result.get("evaluation_context")
+    if not isinstance(context, dict):
+        report.record("risk_evaluation_context", False, "evaluation_context missing")
+        return
+    try:
+        recomputed = build_risk_result_v2(
+            bundle=bundle,
+            current_positions=context.get("current_positions"),
+            trades_today=context.get("trades_today"),
+            market_research_path=market_research_path,
+        )
+    except (ValueError, OSError) as exc:
+        report.record("risk_evaluation_context", False, str(exc))
+        return
+    report.record("risk_evaluation_context", True)
+
+    actual_hashes = recomputed["input_hashes"]
+    mismatched = [
+        key for key in RISK_INPUT_HASH_KEYS if recorded_hashes.get(key) != actual_hashes[key]
+    ]
+    unexpected = sorted(set(recorded_hashes) - set(RISK_INPUT_HASH_KEYS))
+    report.record(
+        "risk_input_hashes",
+        not mismatched and not unexpected,
+        "mismatched: " + ", ".join(mismatched) + "; unexpected: " + ", ".join(unexpected)
+        if (mismatched or unexpected)
+        else "",
+    )
+
+    report.record(
+        "risk_output_contract",
+        risk_result == recomputed,
+        ""
+        if risk_result == recomputed
+        else "risk_result.json does not match the recomputed Risk Result for the "
+        "same genuinely re-verified inputs",
+    )
 
 
 def verify_raw_evidence(
@@ -697,152 +912,36 @@ def _verify_selection_hash_link(
 
 
 def _terminal_status(
-    run_dir: Path,
+    bundle: Any,
     payloads: dict[str, dict[str, Any]],
-    config: dict[str, Any],
     report: VerificationReport,
 ) -> str:
     """Classify the run's terminal case.
 
-    A NO_TRADE outcome is a normal, correct termination -- not a failure. The
-    verifier's job is to confirm the run reached its terminal state *through a
-    sound chain*, never to insist that the terminal state be a TRADE.
+    By the time this runs, every business contract has already been re-derived
+    by the shared Downstream Trust Layer and the Risk recompute, so there is
+    nothing left to re-check here: this function only names the outcome. A
+    NO_TRADE outcome is a normal, correct termination -- not a failure.
     """
-    if report.errors:
+    if report.errors or bundle is None:
         return INVALID_RUN
 
-    ranking = payloads["ranking.json"]
-    recommendation = payloads["recommendation.json"]
-    risk_result = payloads["risk_result.json"]
-    selection = payloads.get("selection.json")
-
-    ranking_status = ranking.get("ranking_status")
-    decision = recommendation.get("decision")
-    risk_status = risk_result.get("status")
-    selection_enabled = bool((config.get("selection") or {}).get("enabled"))
-
-    # ---- Case A: no tradable data at all ----------------------------------
-    if ranking_status == "DATA_UNAVAILABLE":
-        if decision != "DATA_UNAVAILABLE":
-            report.record(
-                "case_a_decision",
-                False,
-                "ranking DATA_UNAVAILABLE requires recommendation "
-                f"DATA_UNAVAILABLE, got {decision}",
-            )
-            return INVALID_RUN
-        if risk_status != "NOT_APPLICABLE":
-            report.record(
-                "case_a_risk",
-                False,
-                f"Case A requires risk NOT_APPLICABLE, got {risk_status}",
-            )
-            return INVALID_RUN
+    if bundle.case_id == CASE_A:
         return VERIFIED_CASE_A
-
-    if ranking_status != "COMPLETE":
-        report.record(
-            "ranking_status", False, f"unexpected ranking_status {ranking_status!r}"
-        )
-        return INVALID_RUN
-
-    # ---- Case B: ranking complete, Selection not yet activated ------------
-    if not selection_enabled:
-        if selection is not None:
-            report.record(
-                "case_b_selection",
-                False,
-                "selection.json exists but selection.enabled is false",
-            )
-            return INVALID_RUN
-        if decision != "NO_TRADE":
-            report.record(
-                "case_b_decision",
-                False,
-                f"Case B requires recommendation NO_TRADE, got {decision}",
-            )
-            return INVALID_RUN
-        reasons = recommendation.get("selection_reasons") or []
-        if SELECTION_NOT_ACTIVE_REASON not in reasons:
-            report.record(
-                "case_b_reason",
-                False,
-                f"Case B requires reason {SELECTION_NOT_ACTIVE_REASON}, got {reasons}",
-            )
-            return INVALID_RUN
-        if risk_status != "NOT_APPLICABLE":
-            report.record(
-                "case_b_risk",
-                False,
-                f"Case B requires risk NOT_APPLICABLE, got {risk_status}",
-            )
-            return INVALID_RUN
+    if bundle.case_id == CASE_B:
         return VERIFIED_CASE_B
-
-    # ---- Case C: Selection is active --------------------------------------
-    if selection is None:
-        report.record(
-            "case_c_selection",
-            False,
-            "selection is enabled but the run has no selection.json",
-        )
-        return INVALID_RUN
-
-    _verify_selection_hash_link(run_dir, selection, report)
-    if report.errors:
-        return INVALID_RUN
-
-    selection_status = selection.get("selection_status")
-
-    if selection_status == "NO_TRADE":
-        # A normal happy path: Selection evaluated Rank 1 and it did not clear
-        # the thresholds. There is deliberately no Rank-2 fallback.
-        if decision != "NO_TRADE":
-            report.record(
-                "case_c_no_trade_decision",
-                False,
-                f"selection NO_TRADE requires recommendation NO_TRADE, got {decision}",
-            )
-            return INVALID_RUN
-        if risk_status != "NOT_APPLICABLE":
-            report.record(
-                "case_c_no_trade_risk",
-                False,
-                f"Case C NO_TRADE requires risk NOT_APPLICABLE, got {risk_status}",
-            )
-            return INVALID_RUN
+    if bundle.case_id == CASE_C_NO_TRADE:
         return VERIFIED_CASE_C_NO_TRADE
 
-    if selection_status == "SELECTED":
-        if decision != "TRADE":
-            report.record(
-                "case_c_trade_decision",
-                False,
-                f"selection SELECTED requires recommendation TRADE, got {decision}",
-            )
-            return INVALID_RUN
-        if selection.get("selected_ticker") != recommendation.get("ticker"):
-            report.record(
-                "case_c_trade_ticker",
-                False,
-                "selection.selected_ticker does not match recommendation.ticker",
-            )
-            return INVALID_RUN
-        if risk_status == "PASS":
-            return VERIFIED_CASE_C_TRADE_RISK_PASS
-        if risk_status == "REJECTED":
-            return VERIFIED_CASE_C_TRADE_RISK_REJECTED
-        report.record(
-            "case_c_trade_risk",
-            False,
-            f"Case C TRADE requires risk PASS or REJECTED, got {risk_status}",
-        )
-        return INVALID_RUN
-
+    risk_status = payloads["risk_result.json"].get("status")
+    if risk_status == "PASS":
+        return VERIFIED_CASE_C_TRADE_RISK_PASS
+    if risk_status == "REJECTED":
+        return VERIFIED_CASE_C_TRADE_RISK_REJECTED
     report.record(
-        "case_c_selection_status",
+        "case_c_trade_risk",
         False,
-        f"unexpected selection_status {selection_status!r}",
+        f"Case C TRADE requires risk PASS or REJECTED, got {risk_status}",
     )
     return INVALID_RUN
 
@@ -852,19 +951,23 @@ def verify_production_happy_path(
     *,
     source_matrix_path: Path = DEFAULT_SOURCE_MATRIX_PATH,
 ) -> VerificationReport:
-    """Confirm the run terminated correctly through a sound chain.
+    """Confirm the *production* happy path: a Case C run that terminated
+    correctly through a sound chain.
 
-    The goal is a **correct** termination, not a TRADE. Case C NO_TRADE is a
-    valid happy path, and so are Case A and Case B: demanding a TRADE would
-    mean the verifier could only be satisfied by weakening Selection or Risk.
+    The goal is still a **correct** termination, not a TRADE -- Case C
+    NO_TRADE and Case C TRADE/Risk REJECTED are both valid happy paths, and
+    demanding a TRADE would mean the verifier could only be satisfied by
+    weakening Selection or Risk. What it does require is that Selection was
+    actually active: Case A and Case B are valid RUNS (see
+    ``verify_production_run``) but not production happy paths.
     """
     report = verify_production_run(run_dir, source_matrix_path=source_matrix_path)
-    if report.status not in VERIFIED_STATUSES:
+    if report.status not in HAPPY_PATH_STATUSES:
         report.record(
             "happy_path",
             False,
             f"run terminal status is {report.status}, expected one of "
-            + ", ".join(sorted(VERIFIED_STATUSES)),
+            + ", ".join(sorted(HAPPY_PATH_STATUSES)),
         )
         report.status = INVALID_RUN
     return report
@@ -890,6 +993,7 @@ __all__ = [
     "VERIFIED_CASE_C_TRADE_RISK_PASS",
     "VERIFIED_CASE_C_TRADE_RISK_REJECTED",
     "VERIFIED_STATUSES",
+    "HAPPY_PATH_STATUSES",
     "VerificationReport",
     "network_audit",
     "verify_raw_evidence",
