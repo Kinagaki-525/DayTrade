@@ -1,0 +1,97 @@
+{
+  "requiredMinimumVersion": "2.1.219",
+
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
+
+    "allow": [
+      "Bash(__PRODUCTION_PYTHON__ -B -m src.cli *)",
+      "Edit(__EVENT_EXTRACTION_PATH_PATTERN__)"
+    ],
+
+    "deny": [
+      "WebSearch",
+      "WebFetch",
+      "Agent",
+      "mcp__*"
+    ]
+  },
+
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+
+  "allowedMcpServers": [],
+
+  "disableClaudeAiConnectors": true,
+  "disableAgentView": true,
+  "disableArtifact": true,
+  "disableBrowserExternalNavigation": true,
+  "disableDeepLinkRegistration": "disable",
+  "disableSkillShellExecution": true,
+
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": [],
+
+    "filesystem": {
+      "disabled": false,
+      "denyWrite": [
+        "__DAYTRADE_ROOT__/src",
+        "__DAYTRADE_ROOT__/config",
+        "__DAYTRADE_ROOT__/schemas",
+        "__DAYTRADE_ROOT__/ops",
+        "__DAYTRADE_ROOT__/scripts",
+        "__PROJECT_ROOT__/.claude"
+      ]
+    },
+
+    "network": {
+      "strictAllowlist": true,
+      "allowManagedDomainsOnly": true,
+      "allowLocalBinding": false,
+      "allowAllUnixSockets": false,
+      "allowedDomains": __ALLOWED_DOMAINS_JSON__
+    }
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PRODUCTION_PYTHON__",
+            "args": [
+              "-I",
+              "-B",
+              "__MANAGED_GUARD_PATH__"
+            ]
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "matcher": "user_settings|project_settings|local_settings|skills|policy_settings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__PRODUCTION_PYTHON__",
+            "args": [
+              "-I",
+              "-B",
+              "__MANAGED_GUARD_PATH__"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

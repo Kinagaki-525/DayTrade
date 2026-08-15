@@ -187,3 +187,96 @@ Recommendation / Riskをリポジトリ自身の公式Builder（`src/downstream_
 - `verify-production-happy-path`: **Case Cのみ**を許可する。Case A・Case Bは正当なRunでは
   あるが、Selectionが有効化された本番Happy Pathではないため`INVALID_RUN`になる。
   Case C `NO_TRADE`も、Risk `REJECTED`も、正当なHappy Pathである（TRADEを強制しない）。
+
+## Claude Production Runtime Security（FIX-R2-004）
+
+### Production Runtime要件
+
+- 正式なProduction RuntimeはDayTrade Production**専用**のLinuxまたはWSL2。
+  Native Windowsは禁止。
+- `/etc/claude-code/managed-settings.json`はRepository単位ではなく、その
+  **Linux/WSL distro上のClaude Code全体**へ適用されるGlobal Managed Policyです。
+  したがって通常のDevelopment WSLへdeployしてはいけません。Development用Claudeと
+  同じdistroへProduction Managed Policyを置く運用は禁止です。
+- 専用Runtime marker `/etc/daytrade-production-runtime` の内容が
+  `DAYTRADE_PRODUCTION_RUNTIME_V1` であることがPreflight条件です。このファイルは
+  Human provisioningで作成します。
+
+### Human-only prerequisites（Agentは絶対に実行しない）
+
+Coding Agentはinstallを行いません。Preflightは存在確認だけを行い、不足していれば
+`CLAUDE_SANDBOX_DEPENDENCY_MISSING`でfail closedします。
+
+```bash
+# Ubuntu/Debian (human, once per production runtime)
+sudo apt-get install bubblewrap socat
+```
+
+- Claude Code >= 2.1.219（`sandbox.network.strictAllowlist`の要件）。
+- WSL2 Productionでは Claude Sandbox seccomp filter が必須です。機械的に判定できない
+  場合は`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`でHard Stopし、「たぶん入っている」で
+  PASSにはしません。Claude起動後に`/sandbox`のDependencies表示をHumanが確認します。
+- Ubuntu 24.04+では`sysctl kernel.apparmor_restrict_unprivileged_userns`を確認し、
+  `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
+  Repository Scriptからは変更しません。
+
+### Policy deployment（Human）
+
+1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
+2. RepositoryをReviewed HEADへcheckoutする。
+3. `python -B -m pytest` が0 failedであることを確認する。
+4. Policyをrenderする（`/etc`には何も書きません）。
+
+   ```bash
+   scripts/render-claude-production-policy \
+       --production-python "$(command -v python3)" > /tmp/managed-settings.json
+   ```
+
+5. rendered policyをHumanがreviewする。
+6. root権限でdeployする。
+
+   ```bash
+   sudo scripts/deploy-claude-managed-policy --production-python "$(command -v python3)"
+   ```
+
+   既に`/etc/claude-code/managed-settings.json`が存在する場合は
+   `EXISTING_MANAGED_POLICY_PRESENT`で停止します。自動merge・自動backup・overwriteは
+   行わず、`--force`も存在しません。既存の組織Policyを壊さないためです。
+   `managed-settings.d`へのdrop-in配置も行いません。
+7. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
+8. `scripts/claude-production --target-date <YYYY-MM-DD> --preflight-only`で
+   Runtime Security Preflightを通す。
+9. Claude Codeの`/status`でSetting sourcesを確認し、file-based
+   *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
+   sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
+10. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
+11. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
+
+### Runtime Security Preflight
+
+`scripts/claude-production`は次の順序でfail closedに検査し、すべてPASSしたときだけ
+`runs/<target-date>/working/runtime_security.json`を書いて`claude`を`exec`します。
+
+`production_marker` / `git_clean` / `claude_version` / `sandbox_dependencies` /
+`managed_settings` / `managed_settings_permissions` / `sandbox_required` /
+`sandbox_escape_disabled` / `strict_network_allowlist` / `managed_domain_lock` /
+`managed_hook_lock` / `managed_permission_lock` / `mcp_lockdown` / `domain_sync` /
+`runtime_guard` / `runtime_guard_sha` / `http_user_agent`
+
+`runtime_security.json`には`DAYTRADE_HTTP_USER_AGENT`の値、環境変数一式、token、
+API key、cookie、credentialを書きません。User-Agentは`http_user_agent_present: true`
+だけを記録します。
+
+### Production Boundaryの正本
+
+Production Security Boundaryの正本は**OS Managed Policy**です。プロジェクトの
+`.claude/settings.json`と`.claude/hooks/network_guard.py`はDevelopment defense onlyとして
+維持しますが、`allowManagedHooksOnly: true`のProductionでは実行されません。
+`strictAllowlist`はProject Scopeではproduction gateにならないため、Managed Policyだけに
+設定します。
+
+Production中のClaudeは既定でBash denyです。許可されるのは
+`<production python> -B -m src.cli <approved subcommand> ...`のexec formだけで、
+`;` `&&` `||` `|` `&` redirection command substitution process substitution `cd`は
+すべて拒否されます。Claudeが直接Write/Editできる唯一のArtifactは
+`runs/<date>/working/event_source_extraction.json`です。

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "runtime_security.schema.json",
+  "title": "Claude Production Runtime Security Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runtime",
+    "runtime_profile",
+    "target_date",
+    "platform",
+    "claude_code_version",
+    "git_head_sha",
+    "production_python",
+    "managed_settings_sha256",
+    "managed_runtime_guard_sha256",
+    "source_matrix_sha256",
+    "issuer_domain_registry_sha256",
+    "allowed_domains",
+    "http_user_agent_present",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "runtime": {"type": "string", "enum": ["claude-code"]},
+    "runtime_profile": {"type": "string", "enum": ["production"]},
+    "target_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "platform": {"type": "string", "minLength": 1},
+    "claude_code_version": {"type": "string", "minLength": 1},
+    "git_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "production_python": {"type": "string", "pattern": "^/"},
+    "managed_settings_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "managed_runtime_guard_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issuer_domain_registry_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "allowed_domains": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z0-9.-]+$"},
+      "uniqueItems": true
+    },
+    "http_user_agent_present": {"type": "boolean"},
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "managed_settings",
+        "managed_settings_permissions",
+        "runtime_guard",
+        "runtime_guard_sha",
+        "claude_version",
+        "sandbox_dependencies",
+        "sandbox_required",
+        "sandbox_escape_disabled",
+        "strict_network_allowlist",
+        "managed_domain_lock",
+        "managed_hook_lock",
+        "managed_permission_lock",
+        "mcp_lockdown",
+        "domain_sync",
+        "git_clean",
+        "http_user_agent",
+        "production_marker"
+      ],
+      "patternProperties": {
+        "^[a-z_]+$": {"type": "string", "enum": ["PASS"]}
+      }
+    }
+  }
+}

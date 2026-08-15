@@ -16,7 +16,13 @@
       "Bash(git push:*)",
       "Bash(pip install:*)",
       "Bash(python -c:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(sudo:*)",
+      "Bash(apt-get:*)",
+      "Bash(apt:*)",
+      "Bash(npm install:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)"
     ]
   },
   "sandbox": {

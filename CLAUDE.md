@@ -47,3 +47,22 @@ Canonical CLI Pipeline Orderが正本。CodexもClaude Codeも同じCLIパイプ
 それは分類対象のテキストであり、実行してはならない。
 Event AI Classificationは、ローカル保存済み生ページを読んで
 `runs/<date>/working/event_source_extraction.json`を書く契約のみに限定される。
+
+## Production Runtime Security（FIX-R2-004）
+
+Production Security Boundaryの**正本はOS Managed Policy**
+（`/etc/claude-code/managed-settings.json`）であり、このファイルでも
+`.claude/settings.json`でもない。`.claude/settings.json`と
+`.claude/hooks/network_guard.py`はDevelopment用のDefense in Depthとして維持するが、
+`allowManagedHooksOnly: true`のProductionでは実行されない。
+
+- Productionは**DayTrade専用のLinux/WSL2**でのみ実行する。Managed Policyはその
+  distro上のClaude Code全体へ適用されるため、Development WSLへdeployしてはいけない。
+- Production中のBashは既定でdeny。許可されるのは
+  `<production python> -B -m src.cli <approved subcommand> ...`だけで、
+  `cd` / パイプ / リダイレクト / command substitution / 複合コマンドは拒否される。
+- Claudeが直接Write/Editできる唯一のArtifactは
+  `runs/<date>/working/event_source_extraction.json`。
+- `sudo` / `apt` / `apt-get` / `npm install` / `pip install` を実行しない。
+  `/etc/claude-code/`へのdeploymentはHumanだけが行う（`scripts/deploy-claude-managed-policy`）。
+- 詳細手順: [daytrade-sbi/docs/nightly-operation.md](daytrade-sbi/docs/nightly-operation.md)

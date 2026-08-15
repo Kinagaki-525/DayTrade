@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""HUMAN-ONLY: install the DayTrade Claude Code Managed Policy.
+
+Requires root. There is deliberately no --force: if a managed policy already
+exists on this host, the deployment stops so a human can review whether the
+existing (possibly organisational) policy may be replaced at all.
+
+A coding agent must never run this script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.claude_runtime_security import (  # noqa: E402
+    DEFAULT_MANAGED_ROOT,
+    MANAGED_GUARD_PATH,
+    RuntimeSecurityError,
+    deploy_managed_policy,
+    render_managed_settings,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    daytrade_root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--production-python", required=True)
+    parser.add_argument("--project-root", default=str(daytrade_root.parent))
+    parser.add_argument("--daytrade-root", default=str(daytrade_root))
+    parser.add_argument("--target-root", default=str(DEFAULT_MANAGED_ROOT))
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    if not args.dry_run and os.geteuid() != 0:
+        sys.stderr.write("ERROR: deploy-claude-managed-policy must run as root\n")
+        return 1
+
+    try:
+        rendered = render_managed_settings(
+            project_root=args.project_root,
+            daytrade_root=args.daytrade_root,
+            production_python=args.production_python,
+            guard_path=MANAGED_GUARD_PATH,
+        )
+        result = deploy_managed_policy(
+            target_root=args.target_root,
+            rendered_settings=rendered,
+            dry_run=args.dry_run,
+        )
+    except RuntimeSecurityError as error:
+        sys.stderr.write(f"ERROR: {error}\n")
+        return 2
+
+    for key, value in sorted(result.items()):
+        sys.stdout.write(f"{key}={value}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

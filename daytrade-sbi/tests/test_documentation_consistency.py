@@ -175,3 +175,101 @@ def test_documented_commands_all_exist_in_the_cli():
     }
     missing = sorted(step for step in documented if step not in choices)
     assert missing == [], f"documented but non-existent CLI command(s): {missing}"
+
+
+# ------------------------------- FIX-R2-004: Claude Runtime Security Gate ---
+
+
+def test_canonical_doc_places_the_runtime_security_gate_before_the_pipeline():
+    text = _text("docs/canonical-pipeline.md")
+    assert "Runtime Security Gate" in text
+    assert "Business Canonical Pipeline" in text
+    assert text.index("Runtime Security Gate  →  Business Canonical Pipeline") > 0
+
+
+@pytest.mark.parametrize(
+    "name", ["docs/canonical-pipeline.md", "docs/nightly-operation.md"]
+)
+def test_docs_name_the_os_managed_policy_as_the_production_boundary(name):
+    text = _text(name)
+    assert "/etc/claude-code/managed-settings.json" in text
+    assert "Defense in Depth" in text or "Development defense only" in text
+
+
+def test_nightly_operation_documents_the_dedicated_production_runtime():
+    text = _text("docs/nightly-operation.md")
+    for required in (
+        "専用",
+        "WSL2",
+        "/etc/daytrade-production-runtime",
+        "DAYTRADE_PRODUCTION_RUNTIME_V1",
+    ):
+        assert required in text
+
+
+def test_nightly_operation_documents_human_only_provisioning():
+    text = _text("docs/nightly-operation.md")
+    for required in (
+        "sudo apt-get install bubblewrap socat",
+        "seccomp",
+        "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
+        "apparmor_restrict_unprivileged_userns",
+        "2.1.219",
+    ):
+        assert required in text
+
+
+def test_nightly_operation_documents_the_deployment_and_acceptance_steps():
+    text = _text("docs/nightly-operation.md")
+    for required in (
+        "render-claude-production-policy",
+        "deploy-claude-managed-policy",
+        "claude doctor",
+        "/status",
+        "EXISTING_MANAGED_POLICY_PRESENT",
+        "claude-production",
+        "runtime_security.json",
+    ):
+        assert required in text
+
+
+def test_nightly_operation_defers_real_network_smoke_to_the_next_fix():
+    text = _text("docs/nightly-operation.md")
+    assert "FIX-R2-005" in text
+
+
+def test_nightly_operation_forbids_recording_the_user_agent_value():
+    text = _text("docs/nightly-operation.md")
+    assert "http_user_agent_present" in text
+    assert "credential" in text
+
+
+def test_claude_md_states_the_production_runtime_security_rules():
+    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    for required in (
+        "/etc/claude-code/managed-settings.json",
+        "event_source_extraction.json",
+        "deploy-claude-managed-policy",
+        "sudo",
+    ):
+        assert required in text
+
+
+def test_every_new_runtime_security_file_exists():
+    expected = [
+        PROJECT_ROOT / "src" / "claude_runtime_security.py",
+        PROJECT_ROOT / "schemas" / "runtime_security.schema.json",
+        PROJECT_ROOT / "ops" / "claude" / "managed-settings.template.json",
+        PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py",
+        PROJECT_ROOT / "scripts" / "render-claude-production-policy",
+        PROJECT_ROOT / "scripts" / "deploy-claude-managed-policy",
+        PROJECT_ROOT / "scripts" / "claude-production",
+        PROJECT_ROOT / "tests" / "test_claude_runtime_security.py",
+        PROJECT_ROOT / "tests" / "test_claude_runtime_guard.py",
+    ]
+    missing = [str(path) for path in expected if not path.is_file()]
+    assert missing == []
+
+
+def test_the_project_network_guard_is_not_deleted():
+    assert (REPO_ROOT / ".claude" / "hooks" / "network_guard.py").is_file()

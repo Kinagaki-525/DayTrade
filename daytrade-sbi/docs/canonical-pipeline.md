@@ -63,3 +63,26 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 | `acquire-stage2-market-sources` | Stage 1 `PASS` 候補 |
 | `acquire-actual-turnover` | Stage 2 対象集合（= Stage 1 `PASS`） |
 | `acquire-event-sources` | `candidates.json` / `candidate_pipeline.json` の `status=ELIGIBLE` かつ `screening_status=PASS` |
+
+## Claude Code Executor: Runtime Security Gate（FIX-R2-004）
+
+Business Canonical Pipelineそのものは、どのAgentで実行しても同一であり、Claude依存では
+ありません。Claude Codeを**Production executor**として使う場合にだけ、パイプラインの前に
+Runtime Security Gateが挟まります。
+
+```
+Runtime Security Gate  →  Business Canonical Pipeline
+```
+
+- Runtime Security Gate = OS Managed Policy（`/etc/claude-code/managed-settings.json`）と
+  OS Managed Runtime Guard（`/etc/claude-code/daytrade-runtime-guard.py`）、および
+  `scripts/claude-production` Preflight。
+- Production Security Boundaryの**正本はOS Managed Policy**であり、プロジェクトの
+  `.claude/settings.json`ではありません。`.claude/settings.json`と
+  `.claude/hooks/network_guard.py`はDevelopment用のDefense in Depthとして残しますが、
+  `allowManagedHooksOnly: true`のProductionでは実行されません。
+- Managed Policyのsandbox allowlistは`config/source_matrix.yaml`と
+  `config/issuer_domain_registry.yaml`から決定論的に導出されます
+  （`src/claude_runtime_security.derive_expected_domains`）。Hostを手で書き足す運用は
+  ありません。
+- 手順の詳細は[docs/nightly-operation.md](nightly-operation.md)を参照してください。

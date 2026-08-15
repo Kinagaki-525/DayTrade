@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""HUMAN-ONLY entry point for a DayTrade production nightly Claude Code run.
+
+Runs the FIX-R2-004 runtime security preflight in a fixed order and only then
+``exec``s Claude Code. Every check is fail-closed: on the first violation the
+launcher stops with the corresponding CLAUDE_* error code and Claude is never
+started.
+
+A coding agent must never run this script.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.claude_runtime_security import (  # noqa: E402
+    MANAGED_GUARD_PATH,
+    MANAGED_SETTINGS_PATH,
+    PRODUCTION_MARKER_PATH,
+    REQUIRED_SANDBOX_BINARIES,
+    RUNTIME_SECURITY_CHECKS,
+    RuntimeSecurityError,
+    build_runtime_security_document,
+    derive_expected_domains,
+    render_managed_settings,
+    verify_claude_version,
+    verify_http_user_agent,
+    verify_installed_managed_settings,
+    verify_installed_runtime_guard,
+    verify_platform,
+    verify_production_marker,
+    verify_sandbox_dependencies,
+    verify_source_tree_clean,
+)
+
+
+def _run(argv: list[str], cwd: Path) -> str:
+    completed = subprocess.run(
+        argv, cwd=str(cwd), capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        raise RuntimeSecurityError(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            f"command failed: {' '.join(argv)}: {completed.stderr.strip()}",
+        )
+    return completed.stdout
+
+
+def main(argv: list[str] | None = None) -> int:
+    daytrade_root = Path(__file__).resolve().parents[1]
+    project_root = daytrade_root.parent
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target-date", required=True)
+    parser.add_argument("--managed-settings", default=str(MANAGED_SETTINGS_PATH))
+    parser.add_argument("--managed-guard", default=str(MANAGED_GUARD_PATH))
+    parser.add_argument("--marker", default=str(PRODUCTION_MARKER_PATH))
+    parser.add_argument("--preflight-only", action="store_true")
+    args = parser.parse_args(argv)
+
+    checks: dict[str, str] = {}
+    try:
+        # 1-2. repository identity + platform
+        project_root = project_root.resolve()
+        verify_platform(platform.system())
+
+        # 3. dedicated production runtime marker
+        verify_production_marker(args.marker)
+        checks["production_marker"] = "PASS"
+
+        # 4. protected tree must be clean
+        verify_source_tree_clean(
+            _run(["git", "status", "--porcelain"], cwd=project_root)
+        )
+        checks["git_clean"] = "PASS"
+
+        # 5. Claude Code version
+        claude_version = _run(["claude", "--version"], cwd=project_root).strip()
+        verify_claude_version(claude_version)
+        checks["claude_version"] = "PASS"
+
+        # 6. sandbox dependencies (never installed here)
+        verify_sandbox_dependencies(
+            {name: shutil.which(name) for name in REQUIRED_SANDBOX_BINARIES}
+        )
+        checks["sandbox_dependencies"] = "PASS"
+
+        # 7-8. expected domains + expected managed policy (in memory)
+        allowed_domains = derive_expected_domains()
+        production_python = os.environ.get("DAYTRADE_PRODUCTION_PYTHON") or shutil.which(
+            "python3"
+        )
+        if not production_python:
+            raise RuntimeSecurityError(
+                "CLAUDE_MANAGED_POLICY_INVALID", "no production python3 was found"
+            )
+        expected = render_managed_settings(
+            project_root=project_root,
+            daytrade_root=daytrade_root,
+            production_python=production_python,
+            guard_path=args.managed_guard,
+        )
+
+        # 9. installed managed policy
+        settings_sha = verify_installed_managed_settings(
+            args.managed_settings, expected=expected
+        )
+        for name in (
+            "managed_settings",
+            "managed_settings_permissions",
+            "sandbox_required",
+            "sandbox_escape_disabled",
+            "strict_network_allowlist",
+            "managed_domain_lock",
+            "managed_hook_lock",
+            "managed_permission_lock",
+            "mcp_lockdown",
+            "domain_sync",
+        ):
+            checks[name] = "PASS"
+
+        # 10. installed runtime guard
+        guard_sha = verify_installed_runtime_guard(args.managed_guard)
+        checks["runtime_guard"] = "PASS"
+        checks["runtime_guard_sha"] = "PASS"
+
+        # 11. HTTP User-Agent (value is never recorded)
+        verify_http_user_agent(os.environ)
+        checks["http_user_agent"] = "PASS"
+
+        # 12. runtime_security.json
+        head = _run(["git", "rev-parse", "HEAD"], cwd=project_root).strip()
+        run_dir = daytrade_root / "runs" / args.target_date
+        document = build_runtime_security_document(
+            target_date=args.target_date,
+            platform_name=platform.platform(),
+            claude_code_version=claude_version,
+            git_head_sha=head,
+            production_python=production_python,
+            managed_settings_sha256=settings_sha,
+            managed_runtime_guard_sha256=guard_sha,
+            allowed_domains=allowed_domains,
+            checks={name: checks[name] for name in RUNTIME_SECURITY_CHECKS},
+            http_user_agent_present=True,
+        )
+        working = run_dir / "working"
+        working.mkdir(parents=True, exist_ok=True)
+        (working / "runtime_security.json").write_text(
+            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except RuntimeSecurityError as error:
+        sys.stderr.write(f"{error}\n")
+        return 2
+
+    if args.preflight_only:
+        sys.stdout.write("runtime security preflight PASS\n")
+        return 0
+
+    # 13-14. cd DAYTRADE_ROOT, then exec claude
+    env = dict(os.environ)
+    env.update(
+        {
+            "DAYTRADE_RUNTIME_PROFILE": "production",
+            "DAYTRADE_PROJECT_ROOT": str(project_root),
+            "DAYTRADE_ROOT": str(daytrade_root),
+            "DAYTRADE_RUN_DIR": str(run_dir),
+            "DAYTRADE_TARGET_DATE": args.target_date,
+            "DAYTRADE_PRODUCTION_PYTHON": str(production_python),
+        }
+    )
+    os.chdir(daytrade_root)
+    os.execvpe("claude", ["claude"], env)  # pragma: no cover
+    return 0  # pragma: no cover
+
+
+if __name__ == "__main__":
+    sys.exit(main())
