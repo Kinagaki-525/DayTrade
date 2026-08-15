@@ -21,6 +21,7 @@ Code, or opens a network connection.
 
 from __future__ import annotations
 
+import datetime as _datetime
 import hashlib
 import ipaddress
 import json
@@ -50,6 +51,12 @@ MANAGED_GUARD_PATH = DEFAULT_MANAGED_ROOT / MANAGED_GUARD_FILENAME
 
 PRODUCTION_MARKER_PATH = Path("/etc/daytrade-production-runtime")
 PRODUCTION_MARKER_CONTENT = "DAYTRADE_PRODUCTION_RUNTIME_V1"
+
+#: FIX-R2-004A section 12: a root-owned attestation that a human confirmed the
+#: Claude Sandbox seccomp filter via ``/sandbox`` Dependencies. Nothing in this
+#: repository ever creates it -- it is a Human Runtime Acceptance artifact.
+SECCOMP_MARKER_PATH = Path("/etc/daytrade-seccomp-verified")
+SECCOMP_MARKER_CONTENT = "DAYTRADE_SECCOMP_VERIFIED_V1"
 
 REQUIRED_SANDBOX_BINARIES = ("bwrap", "socat")
 
@@ -91,6 +98,7 @@ RUNTIME_SECURITY_CHECKS = (
     "git_clean",
     "http_user_agent",
     "production_marker",
+    "sandbox_seccomp",
 )
 
 ERROR_CODES = (
@@ -98,6 +106,8 @@ ERROR_CODES = (
     "CLAUDE_RUNTIME_VERSION_INVALID",
     "CLAUDE_RUNTIME_VERSION_UNSUPPORTED",
     "CLAUDE_PRODUCTION_MARKER_MISSING",
+    "CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID",
+    "CLAUDE_TARGET_DATE_INVALID",
     "CLAUDE_SANDBOX_DEPENDENCY_MISSING",
     "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
     "CLAUDE_MANAGED_SETTINGS_MISSING",
@@ -150,6 +160,99 @@ def sha256_bytes(payload: bytes) -> str:
 
 def sha256_file(path: str | Path) -> str:
     return sha256_bytes(Path(path).read_bytes())
+
+
+# ------------------------------------------------ permission path forms ---
+
+
+def absolute_edit_permission_pattern(path: str | Path) -> str:
+    """Render an absolute filesystem path as a Claude permission-rule path.
+
+    A Claude Code permission rule addresses an absolute filesystem path with a
+    **double** leading slash (``Edit(//home/...)``); a single leading slash is
+    interpreted relative to the settings file. A filesystem path string must
+    therefore never be pasted into ``Edit(...)`` unchanged.
+    """
+    text = str(path)
+    if not text.startswith("/"):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            f"permission pattern requires an absolute path: {text!r}",
+        )
+    return "//" + text.lstrip("/")
+
+
+# ---------------------------------------------------- target date input ---
+
+_TARGET_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_target_date(value: str) -> str:
+    """Return ``value`` if it is exactly one real ``YYYY-MM-DD`` calendar date.
+
+    This is the launcher's only accepted form of untrusted human input, so it
+    is deliberately total: no whitespace, no separators, no path segment, no
+    non-existent calendar date.
+    """
+    if not isinstance(value, str):
+        raise _fail("CLAUDE_TARGET_DATE_INVALID", "--target-date must be a string")
+    if not _TARGET_DATE_RE.match(value):
+        raise _fail(
+            "CLAUDE_TARGET_DATE_INVALID",
+            f"--target-date must be exactly YYYY-MM-DD: {value!r}",
+        )
+    try:
+        parsed = _datetime.date.fromisoformat(value)
+    except ValueError:
+        raise _fail(
+            "CLAUDE_TARGET_DATE_INVALID", f"not a real calendar date: {value!r}"
+        ) from None
+    if parsed.isoformat() != value:
+        raise _fail(
+            "CLAUDE_TARGET_DATE_INVALID", f"not a canonical ISO date: {value!r}"
+        )
+    return value
+
+
+def resolve_run_dir(daytrade_root: str | Path, target_date: str) -> Path:
+    """Return ``<daytrade_root>/runs/<target_date>``, containment-checked."""
+    target_date = validate_target_date(target_date)
+    runs_root = (Path(daytrade_root) / "runs").resolve()
+    run_dir = (runs_root / target_date).resolve()
+    if run_dir.parent != runs_root or run_dir.name != target_date:
+        raise _fail(
+            "CLAUDE_TARGET_DATE_INVALID",
+            f"run directory escapes {runs_root}: {run_dir}",
+        )
+    return run_dir
+
+
+# --------------------------------------------------------- WSL2 / Linux ---
+
+
+def detect_wsl2(osrelease_text: str = "", version_text: str = "") -> bool:
+    """Deterministic WSL2 detection from existing Linux kernel strings.
+
+    Only the documented ``microsoft``/``WSL`` markers are looked at; there is
+    no heuristic scoring. The production preflight requires the seccomp
+    attestation marker on *every* Linux host regardless of this answer, so a
+    false negative can never weaken the gate.
+    """
+    blob = f"{osrelease_text}\n{version_text}".lower()
+    return "microsoft" in blob or "wsl" in blob
+
+
+def read_wsl2_marker(
+    osrelease_path: str | Path = "/proc/sys/kernel/osrelease",
+    version_path: str | Path = "/proc/version",
+) -> bool:
+    def _read(path: str | Path) -> str:
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
+    return detect_wsl2(_read(osrelease_path), _read(version_path))
 
 
 # ---------------------------------------------------- domain derivation ---
@@ -327,7 +430,7 @@ def render_managed_settings(
         "__PRODUCTION_PYTHON__": str(python_path),
         "__PROJECT_ROOT__": str(project_root),
         "__DAYTRADE_ROOT__": str(daytrade_root),
-        "__EVENT_EXTRACTION_PATH_PATTERN__": str(
+        "__EVENT_EXTRACTION_PATH_PATTERN__": absolute_edit_permission_pattern(
             daytrade_root / "runs" / "*" / "working" / "event_source_extraction.json"
         ),
         "__MANAGED_GUARD_PATH__": str(guard_path),
@@ -385,18 +488,74 @@ def verify_platform(system: str) -> str:
     return system
 
 
-def verify_production_marker(marker_path: str | Path = PRODUCTION_MARKER_PATH) -> None:
-    path = Path(marker_path)
-    if not path.is_file():
+def _verify_root_owned_marker(
+    path: str | Path,
+    *,
+    expected_content: str,
+    missing_code: str,
+    permission_code: str,
+    expected_uid: int,
+    label: str,
+) -> None:
+    """A marker is an OS attestation: root-owned, not writable by anyone else."""
+    target = Path(path)
+    verify_file_ownership(
+        target,
+        missing_code=missing_code,
+        permission_code=permission_code,
+        expected_uid=expected_uid,
+    )
+    if target.read_text(encoding="utf-8").strip() != expected_content:
         raise _fail(
-            "CLAUDE_PRODUCTION_MARKER_MISSING",
-            f"dedicated production runtime marker missing: {path}",
+            missing_code,
+            f"{label} content must be exactly {expected_content}",
         )
-    if path.read_text(encoding="utf-8").strip() != PRODUCTION_MARKER_CONTENT:
-        raise _fail(
-            "CLAUDE_PRODUCTION_MARKER_MISSING",
-            f"marker content must be exactly {PRODUCTION_MARKER_CONTENT}",
+
+
+def verify_production_marker(
+    marker_path: str | Path = PRODUCTION_MARKER_PATH, *, expected_uid: int = 0
+) -> None:
+    _verify_root_owned_marker(
+        marker_path,
+        expected_content=PRODUCTION_MARKER_CONTENT,
+        missing_code="CLAUDE_PRODUCTION_MARKER_MISSING",
+        permission_code="CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID",
+        expected_uid=expected_uid,
+        label="production runtime marker",
+    )
+
+
+def verify_seccomp_marker(
+    marker_path: str | Path = SECCOMP_MARKER_PATH, *, expected_uid: int = 0
+) -> None:
+    """Verify the Human-created seccomp attestation marker (section 12/13).
+
+    The Claude Sandbox seccomp state is never *guessed* here. A human confirms
+    it via ``/sandbox`` Dependencies and records that acceptance as a
+    root-owned marker file; the preflight only verifies that attestation.
+    """
+    attested: bool | None
+    detail = ""
+    try:
+        _verify_root_owned_marker(
+            marker_path,
+            expected_content=SECCOMP_MARKER_CONTENT,
+            missing_code="CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
+            permission_code="CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
+            expected_uid=expected_uid,
+            label="seccomp attestation marker",
         )
+    except RuntimeSecurityError as failure:
+        attested, detail = False, failure.message
+    else:
+        attested = True
+
+    # The attestation marker is the *only* accepted evidence; the seccomp gate
+    # itself stays a single fail-closed contract.
+    try:
+        verify_sandbox_seccomp(attested)
+    except RuntimeSecurityError as failure:
+        raise _fail(failure.code, f"{failure.message} ({detail})") from None
 
 
 def verify_sandbox_dependencies(available: Mapping[str, str | None]) -> None:
@@ -479,6 +638,17 @@ def verify_managed_settings_contract(
                 "CLAUDE_MANAGED_POLICY_INVALID", f"permissions.deny must contain {rule}"
             )
 
+    verify_edit_permission_rules(permissions.get("allow") or [])
+
+    if payload.get("disableSideloadFlags") is not True:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "disableSideloadFlags must be true"
+        )
+    if payload.get("disableRemoteControl") is not True:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "disableRemoteControl must be true"
+        )
+
     if payload.get("allowManagedPermissionRulesOnly") is not True:
         raise _fail(
             "CLAUDE_PERMISSIONS_NOT_MANAGED_ONLY",
@@ -560,6 +730,37 @@ def verify_managed_settings_contract(
             raise _fail(
                 "CLAUDE_MANAGED_POLICY_INVALID", f"managed hooks.{event} is missing"
             )
+
+
+_EDIT_RULE_RE = re.compile(r"^Edit\((?P<target>.*)\)$")
+
+
+def verify_edit_permission_rules(allow_rules: Iterable[str]) -> tuple[str, ...]:
+    """Every ``Edit(...)`` allow rule must use the ``//absolute`` path form."""
+    edit_rules: list[str] = []
+    for rule in allow_rules:
+        match = _EDIT_RULE_RE.match(str(rule))
+        if not match:
+            continue
+        target = match.group("target")
+        if not target.startswith("//"):
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_INVALID",
+                "an absolute Edit permission rule must start with '//': "
+                f"{rule!r}",
+            )
+        if target.startswith("///"):
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_INVALID",
+                f"malformed absolute Edit permission rule: {rule!r}",
+            )
+        edit_rules.append(str(rule))
+    if not edit_rules:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "permissions.allow must contain the event_source_extraction Edit rule",
+        )
+    return tuple(edit_rules)
 
 
 def verify_domain_sync(

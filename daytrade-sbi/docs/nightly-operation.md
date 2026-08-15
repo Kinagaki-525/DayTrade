@@ -213,9 +213,29 @@ sudo apt-get install bubblewrap socat
 ```
 
 - Claude Code >= 2.1.219（`sandbox.network.strictAllowlist`の要件）。
-- WSL2 Productionでは Claude Sandbox seccomp filter が必須です。機械的に判定できない
-  場合は`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`でHard Stopし、「たぶん入っている」で
-  PASSにはしません。Claude起動後に`/sandbox`のDependencies表示をHumanが確認します。
+- Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
+  seccompの有無を推測しません。次のHuman Runtime Acceptanceの結果だけを検証します。
+
+  1. Humanが`claude`を起動し`/sandbox`のDependencies表示でseccomp filterが有効で
+     あることを確認する。
+  2. 確認できた場合のみ、Humanがroot権限でattestation markerを作成する。
+
+     ```bash
+     sudo sh -c 'echo DAYTRADE_SECCOMP_VERIFIED_V1 > /etc/daytrade-seccomp-verified'
+     sudo chown root:root /etc/daytrade-seccomp-verified
+     sudo chmod 644 /etc/daytrade-seccomp-verified
+     ```
+
+  3. Preflightは`/etc/daytrade-seccomp-verified`が regular file / uid 0 /
+     group・other非writable / 内容が`DAYTRADE_SECCOMP_VERIFIED_V1`であることを
+     検証します。ひとつでも満たさなければ`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`で
+     Hard Stopし、`claude`は起動せず`runtime_security.json`も書きません。
+
+  このmarkerはHuman専用です。Coding AgentもRepository Scriptも作成しません。
+  Native LinuxでもWSL2でも同一の要件です（判断分岐を増やさないため）。
+- `/etc/daytrade-production-runtime`も同様に regular file / uid 0 /
+  group・other非writable / 内容一致 を要求します（content-only verificationでは
+  ありません）。
 - Ubuntu 24.04+では`sysctl kernel.apparmor_restrict_unprivileged_userns`を確認し、
   `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
   Repository Scriptからは変更しません。
@@ -257,7 +277,16 @@ sudo apt-get install bubblewrap socat
 `scripts/claude-production`は次の順序でfail closedに検査し、すべてPASSしたときだけ
 `runs/<target-date>/working/runtime_security.json`を書いて`claude`を`exec`します。
 
-`production_marker` / `git_clean` / `claude_version` / `sandbox_dependencies` /
+検査順序は platform → `production_marker` → `sandbox_seccomp` → `git_clean` →
+`claude_version` → `sandbox_dependencies` → managed policy … です。`--target-date`は
+最初にYYYY-MM-DD（実在日付）としてvalidateされ、run directoryが
+`runs/<target-date>`直下であることを確認します。違反は`CLAUDE_TARGET_DATE_INVALID`で、
+このときfilesystemには何も書きません。Security Boundaryのpath
+（`/etc/claude-code/managed-settings.json`・`/etc/claude-code/daytrade-runtime-guard.py`・
+`/etc/daytrade-production-runtime`・`/etc/daytrade-seccomp-verified`）はCLIから
+差し替えできません。`--target-date`と`--preflight-only`だけがHuman入力です。
+
+`production_marker` / `sandbox_seccomp` / `git_clean` / `claude_version` / `sandbox_dependencies` /
 `managed_settings` / `managed_settings_permissions` / `sandbox_required` /
 `sandbox_escape_disabled` / `strict_network_allowlist` / `managed_domain_lock` /
 `managed_hook_lock` / `managed_permission_lock` / `mcp_lockdown` / `domain_sync` /

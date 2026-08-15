@@ -60,7 +60,8 @@
         "domain_sync",
         "git_clean",
         "http_user_agent",
-        "production_marker"
+        "production_marker",
+        "sandbox_seccomp"
       ],
       "patternProperties": {
         "^[a-z_]+$": {"type": "string", "enum": ["PASS"]}

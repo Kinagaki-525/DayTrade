@@ -233,6 +233,24 @@ def test_nightly_operation_documents_the_deployment_and_acceptance_steps():
         assert required in text
 
 
+def test_nightly_operation_documents_the_human_seccomp_attestation_marker():
+    text = _text("docs/nightly-operation.md")
+    for required in (
+        "/etc/daytrade-seccomp-verified",
+        "DAYTRADE_SECCOMP_VERIFIED_V1",
+        "/sandbox",
+        "uid 0",
+        "sandbox_seccomp",
+    ):
+        assert required in text
+    assert "機械的に判定できない" not in text
+
+
+def test_nightly_operation_documents_the_target_date_gate():
+    text = _text("docs/nightly-operation.md")
+    assert "CLAUDE_TARGET_DATE_INVALID" in text
+
+
 def test_nightly_operation_defers_real_network_smoke_to_the_next_fix():
     text = _text("docs/nightly-operation.md")
     assert "FIX-R2-005" in text

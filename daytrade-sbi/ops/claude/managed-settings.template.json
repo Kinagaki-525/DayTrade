@@ -31,6 +31,8 @@
   "disableBrowserExternalNavigation": true,
   "disableDeepLinkRegistration": "disable",
   "disableSkillShellExecution": true,
+  "disableSideloadFlags": true,
+  "disableRemoteControl": true,
 
   "sandbox": {
     "enabled": true,

@@ -332,6 +332,136 @@ def test_the_expected_domain_set_is_not_hardcoded_in_production_code():
             assert host not in text, f"{path.name} hardcodes {host}"
 
 
+# ------------------------------------------- absolute permission paths ---
+
+
+def test_absolute_edit_permission_pattern_uses_a_double_slash():
+    assert crs.absolute_edit_permission_pattern(Path("/home/a/x")) == "//home/a/x"
+    assert crs.absolute_edit_permission_pattern("/tmp/y.json") == "//tmp/y.json"
+
+
+@pytest.mark.parametrize("value", ["runs/x.json", "", "./x", "../x"])
+def test_a_relative_permission_pattern_is_a_hard_error(value):
+    with pytest.raises(crs.RuntimeSecurityError):
+        crs.absolute_edit_permission_pattern(value)
+
+
+def test_the_rendered_edit_rule_uses_the_absolute_permission_form(rendered):
+    edit_rules = [
+        rule for rule in rendered["permissions"]["allow"] if rule.startswith("Edit(")
+    ]
+    assert edit_rules, "the event extraction Edit rule disappeared"
+    expected = "Edit(" + crs.absolute_edit_permission_pattern(
+        PROJECT_ROOT / "runs" / "*" / "working" / "event_source_extraction.json"
+    ) + ")"
+    assert edit_rules == [expected]
+    for rule in edit_rules:
+        assert rule.startswith("Edit(//")
+        assert not rule.startswith("Edit(///")
+
+
+def test_a_single_slash_edit_rule_is_rejected(rendered):
+    single = "Edit(" + str(
+        PROJECT_ROOT / "runs" / "*" / "working" / "event_source_extraction.json"
+    ) + ")"
+    assert single not in rendered["permissions"]["allow"]
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_edit_permission_rules(["Bash(x *)", single])
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+def test_a_policy_whose_edit_rule_was_downgraded_is_rejected(rendered):
+    payload = json.loads(json.dumps(rendered))
+    payload["permissions"]["allow"] = [
+        rule.replace("Edit(//", "Edit(/") for rule in payload["permissions"]["allow"]
+    ]
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+def test_a_policy_without_any_edit_rule_is_rejected(rendered):
+    payload = json.loads(json.dumps(rendered))
+    payload["permissions"]["allow"] = ["Bash(x *)"]
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+# ------------------------------------------------- managed hardening ---
+
+
+def test_the_rendered_policy_disables_sideload_flags_and_remote_control(rendered):
+    assert rendered["disableSideloadFlags"] is True
+    assert rendered["disableRemoteControl"] is True
+
+
+@pytest.mark.parametrize(
+    "key", ["disableSideloadFlags", "disableRemoteControl"]
+)
+@pytest.mark.parametrize("mutate", ["false", "missing"])
+def test_a_policy_without_the_new_hardening_flags_is_rejected(rendered, key, mutate):
+    payload = json.loads(json.dumps(rendered))
+    if mutate == "false":
+        payload[key] = False
+    else:
+        payload.pop(key)
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+# ---------------------------------------------------------- target date ---
+
+
+def test_a_canonical_target_date_is_accepted():
+    assert crs.validate_target_date("2026-08-15") == "2026-08-15"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "../config",
+        "../../src",
+        "/tmp",
+        "2026-8-15",
+        "2026-02-30",
+        "2026-08-15/../../config",
+        " 2026-08-15",
+        "2026-08-15 ",
+        "",
+        "2026-13-01",
+        "20260815",
+        "2026-08-15/foo",
+        "2026-08-15\n",
+    ],
+)
+def test_every_non_canonical_target_date_is_a_hard_error(value):
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.validate_target_date(value)
+    assert excinfo.value.code == "CLAUDE_TARGET_DATE_INVALID"
+
+
+def test_run_dir_stays_directly_under_runs(tmp_path):
+    run_dir = crs.resolve_run_dir(tmp_path, "2026-08-15")
+    assert run_dir == (tmp_path / "runs" / "2026-08-15").resolve()
+    assert run_dir.parent == (tmp_path / "runs").resolve()
+    assert run_dir.name == "2026-08-15"
+
+
+@pytest.mark.parametrize("value", ["../config", "2026-08-15/../../config", "/tmp"])
+def test_run_dir_refuses_to_escape_the_runs_root(tmp_path, value):
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.resolve_run_dir(tmp_path, value)
+    assert excinfo.value.code == "CLAUDE_TARGET_DATE_INVALID"
+
+
 # ------------------------------------------------------------- versions ---
 
 
@@ -367,15 +497,139 @@ def test_non_linux_platforms_are_unsupported():
 def test_production_marker_must_exist_with_exact_content(tmp_path):
     marker = tmp_path / "daytrade-production-runtime"
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
-        crs.verify_production_marker(marker)
+        crs.verify_production_marker(marker, expected_uid=UID)
     assert excinfo.value.code == "CLAUDE_PRODUCTION_MARKER_MISSING"
 
     marker.write_text("SOMETHING ELSE\n", encoding="utf-8")
     with pytest.raises(crs.RuntimeSecurityError):
-        crs.verify_production_marker(marker)
+        crs.verify_production_marker(marker, expected_uid=UID)
 
     marker.write_text(crs.PRODUCTION_MARKER_CONTENT + "\n", encoding="utf-8")
-    crs.verify_production_marker(marker)
+    os.chmod(marker, 0o644)
+    crs.verify_production_marker(marker, expected_uid=UID)
+
+
+# --------------------------------------- root-owned attestation markers ---
+
+
+def _marker(tmp_path, name, content, mode=0o644):
+    path = tmp_path / name
+    path.write_text(content + "\n", encoding="utf-8")
+    os.chmod(path, mode)
+    return path
+
+
+def test_the_production_marker_must_be_root_owned(tmp_path):
+    marker = _marker(
+        tmp_path, "daytrade-production-runtime", crs.PRODUCTION_MARKER_CONTENT
+    )
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_production_marker(marker, expected_uid=UID + 4242)
+    assert excinfo.value.code == "CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID"
+
+
+@pytest.mark.parametrize("mode", [0o666, 0o646, 0o664])
+def test_a_group_or_world_writable_production_marker_fails(tmp_path, mode):
+    marker = _marker(
+        tmp_path, "daytrade-production-runtime", crs.PRODUCTION_MARKER_CONTENT, mode
+    )
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_production_marker(marker, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID"
+
+
+def test_a_production_marker_directory_is_not_a_marker(tmp_path):
+    directory = tmp_path / "daytrade-production-runtime"
+    directory.mkdir()
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_production_marker(directory, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_PRODUCTION_MARKER_MISSING"
+
+
+def test_the_seccomp_attestation_marker_contract():
+    assert crs.SECCOMP_MARKER_PATH == Path("/etc/daytrade-seccomp-verified")
+    assert crs.SECCOMP_MARKER_CONTENT == "DAYTRADE_SECCOMP_VERIFIED_V1"
+
+
+def test_a_valid_seccomp_marker_passes(tmp_path):
+    marker = _marker(tmp_path, "daytrade-seccomp-verified", crs.SECCOMP_MARKER_CONTENT)
+    crs.verify_seccomp_marker(marker, expected_uid=UID)
+
+
+def test_a_missing_seccomp_marker_is_unverified(tmp_path):
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(tmp_path / "absent", expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_a_seccomp_marker_with_wrong_content_is_unverified(tmp_path):
+    marker = _marker(tmp_path, "daytrade-seccomp-verified", "SECCOMP_PROBABLY_FINE")
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(marker, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_a_non_root_owned_seccomp_marker_is_unverified(tmp_path):
+    marker = _marker(tmp_path, "daytrade-seccomp-verified", crs.SECCOMP_MARKER_CONTENT)
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(marker, expected_uid=UID + 4242)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+@pytest.mark.parametrize("mode", [0o666, 0o646, 0o664])
+def test_a_writable_seccomp_marker_is_unverified(tmp_path, mode):
+    marker = _marker(
+        tmp_path, "daytrade-seccomp-verified", crs.SECCOMP_MARKER_CONTENT, mode
+    )
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(marker, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_a_seccomp_marker_directory_is_unverified(tmp_path):
+    directory = tmp_path / "daytrade-seccomp-verified"
+    directory.mkdir()
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(directory, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_the_repository_never_creates_the_seccomp_marker():
+    """Section 12: the marker is a Human Runtime Acceptance artifact only."""
+    for path in (
+        PROJECT_ROOT / "src" / "claude_runtime_security.py",
+        PROJECT_ROOT / "src" / "claude_production_launcher.py",
+        PROJECT_ROOT / "scripts" / "claude-production",
+        PROJECT_ROOT / "scripts" / "deploy-claude-managed-policy",
+    ):
+        text = path.read_text("utf-8")
+        for creator in ("write_text(", "write_bytes(", "touch("):
+            for line in text.splitlines():
+                if creator in line and "seccomp" in line.lower():
+                    raise AssertionError(f"{path.name} may create the marker: {line}")
+
+
+def test_seccomp_is_never_guessed_from_the_running_kernel():
+    text = (PROJECT_ROOT / "src" / "claude_production_launcher.py").read_text("utf-8")
+    assert "verify_seccomp_marker" in text
+    for guess in ("SCMP_", "prctl", "/proc/self/status"):
+        assert guess not in text
+
+
+# ------------------------------------------------------------------ wsl ---
+
+
+def test_wsl2_is_detected_from_existing_kernel_strings():
+    assert crs.detect_wsl2("5.15.153.1-microsoft-standard-WSL2", "") is True
+    assert crs.detect_wsl2("", "Linux version 5.15.0 (Microsoft@WSL)") is True
+    assert crs.detect_wsl2("6.6.0-generic", "Linux version 6.6.0 (ubuntu)") is False
+
+
+def test_native_linux_also_requires_the_seccomp_attestation():
+    """Section 14: one rule for every Linux host -- the marker is mandatory."""
+    text = (PROJECT_ROOT / "src" / "claude_production_launcher.py").read_text("utf-8")
+    assert "detect_wsl2" not in text
+    assert "read_wsl2_marker" not in text
 
 
 def test_missing_sandbox_dependencies_halt_instead_of_installing():
@@ -767,6 +1021,245 @@ def test_the_artifact_never_records_a_secret_or_the_user_agent_value():
         assert banned not in blob.lower()
 
 
+# ------------------------------------------------------ launcher core ---
+
+
+HEAD_SHA = "c" * 40
+
+
+@pytest.fixture()
+def production_world(tmp_path):
+    """A complete fixture stand-in for a provisioned production host."""
+    from src import claude_production_launcher as launcher
+
+    daytrade_root = tmp_path / "repo" / "daytrade-sbi"
+    (daytrade_root / "runs").mkdir(parents=True)
+
+    etc = tmp_path / "etc"
+    managed = etc / "claude-code"
+    managed.mkdir(parents=True)
+    guard_path = managed / crs.MANAGED_GUARD_FILENAME
+    guard_path.write_bytes(crs.RUNTIME_GUARD_SOURCE_PATH.read_bytes())
+    os.chmod(guard_path, 0o755)
+
+    settings_payload = crs.render_managed_settings(
+        project_root=daytrade_root.parent,
+        daytrade_root=daytrade_root,
+        production_python=PRODUCTION_PYTHON,
+        guard_path=guard_path,
+    )
+    settings_path = managed / crs.MANAGED_SETTINGS_FILENAME
+    settings_path.write_text(json.dumps(settings_payload, indent=2), encoding="utf-8")
+    os.chmod(settings_path, 0o644)
+
+    production_marker = _marker(
+        etc, "daytrade-production-runtime", crs.PRODUCTION_MARKER_CONTENT
+    )
+    seccomp_marker = _marker(
+        etc, "daytrade-seccomp-verified", crs.SECCOMP_MARKER_CONTENT
+    )
+
+    calls: list[list[str]] = []
+
+    def run_command(argv, cwd):
+        calls.append(list(argv))
+        if argv[:2] == ["git", "status"]:
+            return ""
+        if argv[:2] == ["git", "rev-parse"]:
+            return HEAD_SHA + "\n"
+        if argv[0] == "claude":
+            return "2.1.219 (Claude Code)\n"
+        raise AssertionError(f"unexpected command {argv}")
+
+    kwargs = dict(
+        daytrade_root=daytrade_root,
+        managed_settings_path=settings_path,
+        managed_guard_path=guard_path,
+        production_marker_path=production_marker,
+        seccomp_marker_path=seccomp_marker,
+        expected_uid=UID,
+        environ={
+            "DAYTRADE_PRODUCTION_PYTHON": PRODUCTION_PYTHON,
+            "DAYTRADE_HTTP_USER_AGENT": "daytrade/1.0",
+        },
+        run_command=run_command,
+        which=lambda name: f"/usr/bin/{name}",
+        platform_system=lambda: "Linux",
+        platform_name=lambda: "Linux-6.6.0-x86_64",
+    )
+    return {
+        "launcher": launcher,
+        "kwargs": kwargs,
+        "daytrade_root": daytrade_root,
+        "etc": etc,
+        "tmp_path": tmp_path,
+        "calls": calls,
+        "seccomp_marker": seccomp_marker,
+        "production_marker": production_marker,
+    }
+
+
+def _tree(root: Path) -> set[str]:
+    return {str(path.relative_to(root)) for path in root.rglob("*")}
+
+
+def test_the_launcher_preflight_passes_on_a_provisioned_host(production_world):
+    from src.contracts import validate_json_document
+
+    world = production_world
+    result = world["launcher"].preflight(target_date="2026-08-15", **world["kwargs"])
+
+    artifact = world["daytrade_root"] / "runs" / "2026-08-15" / "working" / "runtime_security.json"
+    assert artifact.is_file()
+    document = json.loads(artifact.read_text("utf-8"))
+    validate_json_document(document, "runtime_security.schema.json")
+    assert document["checks"]["sandbox_seccomp"] == "PASS"
+    assert set(document["checks"]) == set(crs.RUNTIME_SECURITY_CHECKS)
+    assert document["target_date"] == "2026-08-15"
+    assert document["git_head_sha"] == HEAD_SHA
+    assert result["run_dir"] == artifact.parent.parent
+
+
+def test_the_launcher_records_sandbox_seccomp_as_a_runtime_check():
+    assert "sandbox_seccomp" in crs.RUNTIME_SECURITY_CHECKS
+    schema = json.loads(
+        (PROJECT_ROOT / "schemas" / "runtime_security.schema.json").read_text("utf-8")
+    )
+    assert "sandbox_seccomp" in schema["properties"]["checks"]["required"]
+
+
+def test_without_the_seccomp_marker_nothing_is_written_and_claude_never_starts(
+    production_world,
+):
+    world = production_world
+    world["seccomp_marker"].unlink()
+    before = _tree(world["daytrade_root"])
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        world["launcher"].preflight(target_date="2026-08-15", **world["kwargs"])
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+    assert _tree(world["daytrade_root"]) == before
+    assert ["claude", "--version"] not in world["calls"]
+
+
+def test_a_tampered_seccomp_marker_halts_the_launcher(production_world):
+    world = production_world
+    world["seccomp_marker"].write_text("DAYTRADE_SECCOMP_VERIFIED_V0\n", encoding="utf-8")
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        world["launcher"].preflight(target_date="2026-08-15", **world["kwargs"])
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_a_wrongly_owned_production_marker_halts_the_launcher(production_world):
+    world = production_world
+    world["kwargs"]["expected_uid"] = UID + 4242
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        world["launcher"].preflight(target_date="2026-08-15", **world["kwargs"])
+    assert excinfo.value.code == "CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID"
+
+
+def test_the_seccomp_marker_is_checked_before_claude_or_git(production_world):
+    """Section 16: platform, production marker, seccomp marker, then the rest."""
+    world = production_world
+    world["seccomp_marker"].unlink()
+    with pytest.raises(crs.RuntimeSecurityError):
+        world["launcher"].preflight(target_date="2026-08-15", **world["kwargs"])
+    assert world["calls"] == []
+
+
+@pytest.mark.parametrize(
+    "value", ["../config", "../../src", "/tmp", "2026-8-15", "2026-02-30", " 2026-08-15"]
+)
+def test_launcher_traversal_target_dates_are_rejected_before_any_write(
+    production_world, value
+):
+    world = production_world
+    before = _tree(world["tmp_path"])
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        world["launcher"].preflight(target_date=value, **world["kwargs"])
+    assert excinfo.value.code == "CLAUDE_TARGET_DATE_INVALID"
+    assert _tree(world["tmp_path"]) == before
+    assert world["calls"] == []
+
+
+def test_launcher_main_returns_non_zero_for_a_traversal_target_date(production_world):
+    world = production_world
+    repo_root = world["daytrade_root"].parent
+    config_dir = world["daytrade_root"] / "config"
+    config_dir.mkdir()
+    before = _tree(world["tmp_path"])
+
+    code = world["launcher"].main(["--target-date", "../config"], **world["kwargs"])
+
+    assert code != 0
+    assert not (config_dir / "working" / "runtime_security.json").exists()
+    assert not (repo_root / "config").exists()
+    assert _tree(world["tmp_path"]) == before
+    assert list((world["daytrade_root"] / "runs").iterdir()) == []
+
+
+def test_launcher_main_preflight_only_does_not_start_claude(production_world):
+    world = production_world
+    code = world["launcher"].main(
+        ["--target-date", "2026-08-15", "--preflight-only"], **world["kwargs"]
+    )
+    assert code == 0
+    assert ["claude", "--version"] in world["calls"]
+
+
+def test_a_schema_invalid_runtime_security_document_is_never_written(
+    production_world, monkeypatch
+):
+    world = production_world
+    launcher = world["launcher"]
+
+    def broken(**kwargs):
+        document = crs.build_runtime_security_document(**kwargs)
+        document["git_head_sha"] = "not-a-sha"
+        return document
+
+    monkeypatch.setattr(launcher, "build_runtime_security_document", broken)
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        launcher.preflight(target_date="2026-08-15", **world["kwargs"])
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+    assert not (
+        world["daytrade_root"] / "runs" / "2026-08-15" / "working"
+        / "runtime_security.json"
+    ).exists()
+
+
+def test_the_launcher_writes_the_artifact_atomically():
+    text = (PROJECT_ROOT / "src" / "claude_production_launcher.py").read_text("utf-8")
+    assert "atomic_write_text" in text
+    assert "validate_json_document" in text
+    assert ".write_text(" not in text
+
+
+def test_the_launcher_cli_exposes_no_security_boundary_override():
+    parser_source = (
+        PROJECT_ROOT / "src" / "claude_production_launcher.py"
+    ).read_text("utf-8")
+    for forbidden in ("--managed-settings", "--managed-guard", "--marker"):
+        assert f'add_argument("{forbidden}"' not in parser_source
+    script = (PROJECT_ROOT / "scripts" / "claude-production").read_text("utf-8")
+    for forbidden in ("--managed-settings", "--managed-guard", "--marker"):
+        assert forbidden not in script
+
+    from src import claude_production_launcher as launcher
+
+    options = {
+        option
+        for action in launcher.build_parser()._actions
+        for option in action.option_strings
+    }
+    assert options == {"-h", "--help", "--target-date", "--preflight-only"}
+
+
+def test_the_launcher_script_stays_a_thin_entry_point():
+    script = (PROJECT_ROOT / "scripts" / "claude-production").read_text("utf-8")
+    assert "from src.claude_production_launcher import main" in script
+    assert "os.execvpe" not in script
+
+
 # ---------------------------------------------------------- vocabulary ---
 
 
@@ -775,6 +1268,8 @@ REQUIRED_ERROR_CODES = (
     "CLAUDE_RUNTIME_VERSION_INVALID",
     "CLAUDE_RUNTIME_VERSION_UNSUPPORTED",
     "CLAUDE_PRODUCTION_MARKER_MISSING",
+    "CLAUDE_PRODUCTION_MARKER_PERMISSION_INVALID",
+    "CLAUDE_TARGET_DATE_INVALID",
     "CLAUDE_SANDBOX_DEPENDENCY_MISSING",
     "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
     "CLAUDE_MANAGED_SETTINGS_MISSING",
