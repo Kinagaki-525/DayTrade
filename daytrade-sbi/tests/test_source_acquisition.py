@@ -679,3 +679,58 @@ def test_schema_v3_rejects_stale_cache_status(tmp_path):
     ledger["source_attempts"][0]["cache_status"] = "STALE"
     with pytest.raises(ValueError):
         validate_json_document(ledger, "sources.schema.json")
+
+
+def test_not_cacheable_access_failed_is_schema_valid(tmp_path):
+    from src.source_acquisition import acquire_source
+
+    bad_definition = dict(DEFINITIONS["YAHOO_JP_QUOTE"])
+    bad_definition["url_template"] = "https://evil.example.com/quote/{ticker}.T"
+    attempt, _ = acquire_source(
+        bad_definition,
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=_counting_transport(b"", status=200)[0],
+    )
+    assert attempt["status"] == "ACCESS_FAILED"
+    ledger = {
+        "schema_version": 3,
+        "target_date": TARGET_DATE,
+        "sources": [],
+        "source_attempts": [attempt],
+    }
+    validate_json_document(ledger, "sources.schema.json")
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["FOUND", "PARSE_FAILED", "NOT_FOUND", "EXECUTION_FAILED", "NOT_YET_AVAILABLE", "CONFLICT"],
+)
+def test_not_cacheable_non_access_failed_status_is_schema_invalid(tmp_path, status):
+    from src.source_acquisition import acquire_source
+
+    bad_definition = dict(DEFINITIONS["YAHOO_JP_QUOTE"])
+    bad_definition["url_template"] = "https://evil.example.com/quote/{ticker}.T"
+    attempt, _ = acquire_source(
+        bad_definition,
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        transport=_counting_transport(b"", status=200)[0],
+    )
+    attempt["status"] = status
+    ledger = {
+        "schema_version": 3,
+        "target_date": TARGET_DATE,
+        "sources": [],
+        "source_attempts": [attempt],
+    }
+    with pytest.raises(ValueError):
+        validate_json_document(ledger, "sources.schema.json")

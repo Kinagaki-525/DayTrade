@@ -1131,3 +1131,46 @@ def test_network_requests_regular_file_produces_invalid_run(tmp_path):
     audit = network_audit(tmp_path, {"source_attempts": []})
     assert audit["directory_violations"]
     assert audit["request_budget_respected"] is False
+
+
+# --------------------------------- FIX-R2-002C: NOT_CACHEABLE exhaustive ---
+
+
+def test_network_audit_accepts_not_cacheable_access_failed(tmp_path):
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": "ACCESS_FAILED",
+        "cache_status": "NOT_CACHEABLE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+        "retrieved_at": None,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [attempt]})
+    assert audit["invalid_not_cacheable_attempts"] == []
+    assert audit["request_budget_respected"] is True
+
+
+@pytest.mark.parametrize(
+    "status", ["PARSE_FAILED", "NOT_FOUND", "EXECUTION_FAILED", "FOUND"]
+)
+def test_network_audit_defense_in_depth_rejects_not_cacheable_non_access_failed(
+    tmp_path, status
+):
+    """Direct-to-audit input (bypassing schema validation entirely) must
+    still be caught: only ACCESS_FAILED is legal for NOT_CACHEABLE."""
+    attempt = {
+        "attempt_id": "att-1",
+        "url": "https://www.jpx.co.jp/a",
+        "status": status,
+        "cache_status": "NOT_CACHEABLE",
+        "request_id": None,
+        "network_request_performed": False,
+        "reused_from_attempt_id": None,
+        "retrieved_at": None,
+    }
+    audit = network_audit(tmp_path, {"source_attempts": [attempt]})
+    assert audit["invalid_not_cacheable_attempts"] == ["att-1"]
+    assert audit["request_budget_respected"] is False
+    assert audit["network_audit_complete"] is False

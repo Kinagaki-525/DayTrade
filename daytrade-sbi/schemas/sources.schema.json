@@ -521,9 +521,7 @@
                         "const": null
                       },
                       "status": {
-                        "not": {
-                          "const": "FOUND"
-                        }
+                        "const": "ACCESS_FAILED"
                       }
                     },
                     "not": {

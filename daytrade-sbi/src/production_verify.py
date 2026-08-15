@@ -373,7 +373,7 @@ def network_audit(run_dir: Path, source_payload: dict[str, Any]) -> dict[str, An
                 or performed is not False
                 or reused_from is not None
                 or attempt.get("retrieved_at") is not None
-                or attempt.get("status") == "FOUND"
+                or attempt.get("status") != "ACCESS_FAILED"
                 or any(field in attempt for field in _NOT_CACHEABLE_FORBIDDEN_FIELDS)
             ):
                 invalid_not_cacheable_attempts.append(attempt_id)
