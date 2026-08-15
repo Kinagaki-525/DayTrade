@@ -1,9 +1,47 @@
 # v2 アーキテクチャ
 
+## 役割分界（Agent / Python / Human）
+
+| 主体 | 責務 |
+| --- | --- |
+| Agent (Codex / Claude Code) | Orchestration（Canonical CLI Pipeline Orderの逐次実行と結果報告）、ローカル保存済み生ページのEvent AI Classificationのみ |
+| Python | 決定論的なSource取得（curl GET）・Parse・Validation・Hard Screening・Event Gate・Ranking・Selection・Recommendation・Risk Engine |
+| Human | Issuer Domainの承認、Threshold Pairの承認、最終的な発注判断 |
+
+## Canonical CLI Pipeline Order
+
+夜間実行はこの順序で逐次実行します（正本: [canonical-pipeline.md](canonical-pipeline.md)）。
+
+1. `snapshot-config`
+2. `validate-source-matrix`
+3. `resolve-research-window`
+4. `acquire-discovery`
+5. `init-candidate-research`
+6. `acquire-stage1-sources`
+7. market_data Stage1 reflect
+8. `apply-stage1`
+9. TSE Listing Batch Gate
+10. `plan-stage2-batches`
+11. `acquire-stage2-market-sources`
+12. market_data Stage2 reflect
+13. `acquire-actual-turnover`
+14. market_data turnover reflect
+15. `validate-market`
+16. `screen-market`
+17. `build-candidate-pipeline`
+18. `acquire-event-sources`
+19. Event AI Classification (local only)
+20. `merge-event-source-extraction`
+21. `init/complete event-research`
+22. `validate-event-research`
+23. `build-event-gate`
+24. `build-ranking`
+25. Case A/B/C
+
 ## 責任分界
 
 ```text
-Codex: Web調査・出典保存（sources.json）・Event Research（企業固有EventのNews Classification）
+Agent (Codex / Claude Code): Orchestration（Canonical CLI Pipeline Orderの逐次実行）・ローカル保存済み生ページのEvent AI Classification
   ↓
 Python: データ検証・固定条件スクリーニング・Event Gate判定・価格計算・Risk Engine
   ↓
@@ -18,11 +56,11 @@ Risk Engine（`risk-check --selection`）: TRADE推奨の注文案を固定リ�
 人間: 出典と注文案の最終確認・SBI株アプリへの手入力・実績記録
 ```
 
-Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Classificationなどの構造化に限られ、PASS/REJECT/DATA_UNAVAILABLEの判定や候補比較は行いません。PythonはHard Screening・Event Gate・Selectionで決定論的に判定し、AIの代わりに銘柄を評価しません。Ranking（ranking-v1）はEvent Gate `PASS`候補だけを入力として受け取り、実際の売買代金（`turnover`）の降順と、呼値/発動価格の相対比（`relative_tick_size`）の昇順という2つのFeatureだけをCompetition RankingしてRank合計で並べ替えます。AI・スコア・Weight・閾値は使いません。Rankingは`ranking.json`を生成するだけで、Rank 1をSELECTED/NO_TRADEへ変換するのはSelection（selection-v1、`src/selection.py`）の役割です。Ranking `COMPLETE`は単独ではTRADE可能を意味せず、Selectionが両ルール（最低売買代金・最大相対呼値）をPASSした場合だけSELECTEDになります。main agentが独自に比較して`TRADE`を作ることはなく、`build-selection`/`build-selection-recommendation`のCLIだけがSelectionの判定と`recommendation.json`の生成を行います。人間だけが実際の注文を決定・入力します。
+Agentの役割はOrchestrationと、既に取得済みのローカル生ページに対するEvent AI Classificationに限られ、市場データの取得はPythonの`acquire-*` CLI（curl GET）が行い、PASS/REJECT/DATA_UNAVAILABLEの判定や候補比較は行いません。PythonはHard Screening・Event Gate・Selectionで決定論的に判定し、AIの代わりに銘柄を評価しません。Ranking（ranking-v1）はEvent Gate `PASS`候補だけを入力として受け取り、実際の売買代金（`turnover`）の降順と、呼値/発動価格の相対比（`relative_tick_size`）の昇順という2つのFeatureだけをCompetition RankingしてRank合計で並べ替えます。AI・スコア・Weight・閾値は使いません。Rankingは`ranking.json`を生成するだけで、Rank 1をSELECTED/NO_TRADEへ変換するのはSelection（selection-v1、`src/selection.py`）の役割です。Ranking `COMPLETE`は単独ではTRADE可能を意味せず、Selectionが両ルール（最低売買代金・最大相対呼値）をPASSした場合だけSELECTEDになります。main agentが独自に比較して`TRADE`を作ることはなく、`build-selection`/`build-selection-recommendation`のCLIだけがSelectionの判定と`recommendation.json`の生成を行います。人間だけが実際の注文を決定・入力します。
 
 ## 責務境界
 
-- AI（Codex） = Research / Classification（Web調査で得たSource Attempt・Evidenceの`sources.json`への保存、Event ResearchのNews Classification）。PASS/REJECT/DATA_UNAVAILABLEを決定しない。
+- AI（Agent: Codex / Claude Code） = Orchestration + Event AI Classification（ローカル保存済み生ページのみを読む）。市場データを取得せず、PASS/REJECT/DATA_UNAVAILABLEを決定しない。
 - Python = Validation / Screening / Event Gate / Selection（市場データ検証、Hard Screening、Event Gateの決定論的PASS/REJECT/DATA_UNAVAILABLE判定、SelectionのSELECTED/NO_TRADE判定）。
 - Ranking（ranking-v1） = Event Gate `PASS`候補だけを入力とする決定論的な銘柄順位付け工程（`src/ranking.py`、`ranking.json`）。実際の売買代金desc・呼値/発動価格の相対比ascの2 Featureだけを単純Rank合計で並べる。AI・スコア・Weightは使わない。
 - Selection（selection-v1） = Ranking Rank 1だけを対象に、`config/strategy.yaml`の`selection`ブロックにある2つの固定閾値（`minimum_turnover_yen`・`maximum_relative_tick_size`）へ照らして両方PASSならSELECTED、いずれかREJECTならNO_TRADEを`selection.json`へ保存する純粋関数（`src/selection.py`、`build-selection` CLI）。Rank 2以下へのFallbackは一切行わない（`fallback_policy: none`）。`selection.enabled`がfalseの間、または両閾値が`null`の間は`build-selection`自体がHard Errorで停止し、`selection.json`を生成しない。
@@ -35,7 +73,7 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 
 `$prepare-daytrade-plan`と`$record-daytrade-result`は、メインエージェントが実行するワークフローSkillです。Skill自体をサブエージェントとして実行しません。
 
-`prepare`だけが、独立した読み取り作業を`market_researcher`と`source_auditor`へ委譲できます。サブエージェントはファイルを変更せず、調査・監査結果をメインへ返します。メインは結果を統合し、日次成果物を書き、Pythonを実行します。`record`は人間確認と逐次書き込みが中心のため、メインエージェントとPythonだけで実行します。
+`prepare`だけが、独立した読み取り作業を`source_auditor`へ委譲できます。市場データの取得は委譲されず、`acquire-*` CLIだけが行います。サブエージェントはファイルを変更せず、調査・監査結果をメインへ返します。メインは結果を統合し、日次成果物を書き、Pythonを実行します。`record`は人間確認と逐次書き込みが中心のため、メインエージェントとPythonだけで実行します。
 
 ## コンポーネント
 
@@ -43,7 +81,8 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 | --- | --- |
 | `config/strategy.yaml` | 固定リスク条件、検証中パラメータ、未決定スクリーニング値 |
 | `config/source_matrix.yaml` | 市場調査で使うSource ID、Role、Criticality、URLテンプレート |
-| `prompts/nightly_research.md` | Codexが毎晩従う調査・保存・検証手順 |
+| `docs/canonical-pipeline.md` | Canonical CLI Pipeline Orderの正本 |
+| `prompts/nightly_research.md` | Agentが毎晩従う実行・保存・検証手順 |
 | `src/source_matrix.py` | Source Matrixの構造検証と標準Source ID管理 |
 | `src/research_window.py` | TDnet調査期間を、初回補完期間または前回cutoffから決定 |
 | `src/research.py` | Discovery成果物の検証とDiscovery候補Union |
@@ -52,7 +91,7 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 | `src/performance.py` | Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に集計 |
 | `src/contracts.py` | JSON Schemaの実行時検証と日次成果物間の紐付け検証 |
 | `src/screening.py` | Candidate Research済みの検証済み値だけでHard Screeningを行い、Rule評価、Source Provenance、分析Featureを保存 |
-| `src/event_research.py` | Event Research: Hard Screening `PASS`候補についてEvent Research用Artifactを管理する。Web調査で得たSource Attempt・Evidence自体は`sources.json`を正本とし、`event_research.json`にはそれらへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Gate Input Candidate情報を保存する。PASS/REJECT/DATA_UNAVAILABLEは判定しない |
+| `src/event_research.py` | Event Research: Hard Screening `PASS`候補についてEvent Research用Artifactを管理する。Source Attempt・Evidence自体は`acquire-event-sources`が保存した`sources.json`を正本とし、`event_research.json`にはそれらへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Gate Input Candidate情報を保存する。PASS/REJECT/DATA_UNAVAILABLEは判定しない |
 | `src/event_gate.py` | Event Gate: 保存済みArtifactから決算日・前営業日決算・TDnet開示・一次確認済み危険ニュースを決定論的に評価し、`event_gate.json`へPASS/REJECT/DATA_UNAVAILABLEを保存 |
 | `src/ranking.py` | Ranking v1: Event Gate `PASS`候補だけを対象に、実際の売買代金と呼値/発動価格の相対比の2 FeatureをCompetition Rankingし、単純Rank合計で`ranking.json`を生成する純粋関数。SELECTED/NO_TRADE変換は行わない |
 | `src/selection.py` | Selection v1: `ranking.json`のRank 1だけを対象に、`selection.rules`の2つの固定閾値（`minimum_turnover_yen`・`maximum_relative_tick_size`）で無短絡評価し、両方PASSならSELECTED、いずれかREJECTならNO_TRADEを`selection.json`へ保存する純粋関数。Decimal/整数の厳密比較のみを用い`float()`は使わない。Rank 2以下へのFallbackはない |
@@ -72,7 +111,7 @@ Codexの役割はWeb調査による出典保存とEvent ResearchでのNews Class
 
 `candidate_pipeline.json`はDiscovery Unionを起点に全候補の状態を残す成果物で、`market_data.json`や`candidates.json`が空でも候補を消しません。`summary`にはHard Screening件数、Rule別件数、`screening_complete`、`ranking_complete=false`も保存します。
 
-`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。Event Researchで得た決算予定・TDnet開示・ニュースのWeb調査結果も含め、`sources.json`がSource Attempt・EvidenceのSingle Source of Truthです。
+`sources.json`は出典台帳の正本で、成功した値の`sources`と、取得不能・未掲載・古い情報を含む`source_attempts`を分けて保存します。保存HTMLはEvidenceとして`source_attempts[].source_page_path`から追跡します。`market_data.json`へ埋め込んだ数値出典や`recommendation.json`の参照URLが台帳に存在しない場合、後続処理へ進みません。`acquire-event-sources`が取得した決算予定・TDnet開示・ニュースの生ページも含め、`sources.json`がSource Attempt・EvidenceのSingle Source of Truthです。
 
 `event_research.json`はHard Screening `PASS`候補（`status=ELIGIBLE`かつ`screening_status=PASS`）だけを対象に、`sources.json`のSource Attemptへの参照（`selected_attempt_ids`）、`news_classifications`、`event_gate_as_of`、`event_gate_input_tickers`などEvent Research構造を保存する成果物です。Source Attempt・Evidence自体を`event_research.json`へ複製しません。PASS/REJECT/DATA_UNAVAILABLEの判定は含みません。`event_gate.json`は`event_research.json`と`sources.json`のSource Attemptを入力に、`earnings_on_target_date`・`earnings_on_previous_trading_day`・`tdnet_disclosure_in_event_window`・`dangerous_news_with_primary_confirmation`をPythonが決定論的に評価し、候補ごとの`gate_status`（PASS/REJECT/DATA_UNAVAILABLE）と`event_gate_complete`・`ranking_ready`を保存します。詳細なCLI手順は`prompts/nightly_research.md`を正本とします。
 

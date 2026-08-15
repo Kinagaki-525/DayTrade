@@ -124,11 +124,51 @@ def test_ranking_v1_regression_fixture_has_no_placeholder_hashes():
             assert len(set(value)) > 1, f"{name}.input_hashes.{key} is a placeholder hash"
 
 
-def test_ranking_v1_regression_fixture_source_matrix_hash_is_real():
+def test_historical_v2_regression_uses_historical_source_matrix():
+    """A historical artifact is pinned to the Source Matrix that was in force
+    when the run happened -- NOT to whatever ``config/source_matrix.yaml``
+    happens to contain today.
+
+    The previous assertion (recorded hash == current live file) forced this
+    fixture to be rewritten every time the Source Matrix changed, which
+    destroys the very evidence the Trust Chain exists to preserve. The correct
+    invariant is: the recorded hash resolves, byte for byte, to a file in the
+    historical Source Matrix registry.
+    """
     ranking = json.loads((FIXTURE_DIR / "ranking.json").read_text(encoding="utf-8"))
-    assert ranking["input_hashes"]["source_matrix_sha256"] == _sha256(
-        Path("config/source_matrix.yaml")
+    recorded = ranking["input_hashes"]["source_matrix_sha256"]
+
+    registry_dir = Path("config/source_matrix_registry")
+    historical = registry_dir / f"{recorded}.yaml"
+    assert historical.is_file(), (
+        f"historical Source Matrix {recorded} is not in {registry_dir}; add the "
+        "historical bytes there instead of rewriting the fixture"
     )
+    assert _sha256(historical) == recorded
+
+
+def test_historical_source_matrix_resolves_for_the_v2_fixture():
+    from src.selection_calibration import resolve_historical_source_matrix_path
+
+    ranking = json.loads((FIXTURE_DIR / "ranking.json").read_text(encoding="utf-8"))
+    recorded = ranking["input_hashes"]["source_matrix_sha256"]
+    live = Path("config/source_matrix.yaml")
+    # The live Source Matrix has moved on to v3, so resolution must fall
+    # through to the registry rather than silently accepting the live file.
+    assert _sha256(live) != recorded
+
+    resolution = resolve_historical_source_matrix_path(
+        expected_source_matrix_sha256=recorded,
+        target_source_matrix_path=live,
+        source_matrix_registry_dir=Path("config/source_matrix_registry"),
+    )
+    assert resolution.status == "RESOLVED"
+    assert _sha256(resolution.path) == recorded
+
+
+def test_every_registry_file_is_named_for_its_own_bytes():
+    for path in Path("config/source_matrix_registry").glob("*.yaml"):
+        assert path.stem == _sha256(path), path
 
 
 def test_ranking_v1_regression_fixture_candidate_is_affordable():

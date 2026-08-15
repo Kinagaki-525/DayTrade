@@ -199,4 +199,6 @@ def test_discovery_market_filter_and_schema_version_are_unchanged():
     payload = load_yaml(DEFAULT_SOURCE_MATRIX_PATH)
 
     assert payload["default_discovery_market_filter"] == "ALL_MARKETS"
-    assert payload["source_matrix_schema_version"] == 2
+    # v3 adds the deterministic acquisition block (transport/parser binding).
+    # It must not have been reached by narrowing Discovery to TSE.
+    assert payload["source_matrix_schema_version"] == 3

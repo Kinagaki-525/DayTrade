@@ -1,0 +1,57 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
+    "deny": [
+      "WebSearch",
+      "WebFetch",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(powershell:*)",
+      "Bash(pwsh:*)",
+      "Bash(gh:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(python -c:*)",
+      "Bash(node -e:*)",
+      "Bash(sudo:*)",
+      "Bash(apt-get:*)",
+      "Bash(apt:*)",
+      "Bash(npm install:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
+    "network": {
+      "allowLocalBinding": false,
+      "allowUnixSockets": [],
+      "allowedDomains": [
+        "finance.yahoo.co.jp",
+        "kabutan.jp",
+        "www.jpx.co.jp",
+        "www.release.tdnet.info"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/network_guard.py"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""HUMAN-ONLY entry point for a DayTrade production nightly Claude Code run.
+
+Runs the FIX-R2-004 / FIX-R2-004A runtime security preflight in a fixed order
+and only then ``exec``s Claude Code. Every check is fail-closed: on the first
+violation the launcher stops with the corresponding CLAUDE_* error code and
+Claude is never started.
+
+The security-boundary paths (``/etc/claude-code/managed-settings.json``,
+``/etc/claude-code/daytrade-runtime-guard.py``,
+``/etc/daytrade-production-runtime``, ``/etc/daytrade-seccomp-verified``) are
+fixed constants and cannot be overridden from the command line. The only human
+inputs are ``--target-date`` and ``--preflight-only``.
+
+The preflight core lives in ``src/claude_production_launcher.py`` so that it is
+unit-testable; this file stays a thin entry point.
+
+A coding agent must never run this script.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.claude_production_launcher import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

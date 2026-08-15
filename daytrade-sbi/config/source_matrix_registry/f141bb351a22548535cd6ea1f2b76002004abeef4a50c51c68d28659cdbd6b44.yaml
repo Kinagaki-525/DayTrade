@@ -1,0 +1,203 @@
+source_matrix_schema_version: 2
+market_research_version: "market-research-v2"
+default_research_cutoff_time: "20:00:00+09:00"
+tdnet_bootstrap_lookback_days: 1
+default_discovery_market_filter: ALL_MARKETS
+source_change_policy:
+  managed_as_research_method_change: true
+  runtime_substitution_allowed: false
+
+sources:
+  - source_id: JPX_CALENDAR
+    information_type: TRADING_CALENDAR
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Calendar
+    url_template: "https://www.jpx.co.jp/corporate/about-jpx/calendar/"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: JPX_LISTED_COMPANY
+    information_type: LISTED_COMPANY
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Listed Company Search
+    url_template: "https://www.jpx.co.jp/listing/co-search/"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: JPX_TRADING_UNIT
+    information_type: TRADING_UNIT
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Trading Unit
+    url_template: "https://www.jpx.co.jp/equities/trading/domestic/03.html"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: JPX_LISTED_COMPANY_AUDIT
+    information_type: LISTED_COMPANY
+    role: AUDIT
+    criticality: CONTEXT
+    source_name: JPX Listed Issues List
+    url_template: "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: YAHOO_JP_VOLUME_RANKING
+    information_type: VOLUME_RANKING
+    role: PRIMARY
+    criticality: DISCOVERY_CRITICAL
+    source_name: Yahoo! Finance Japan Stock Ranking - Volume
+    url_template: "https://finance.yahoo.co.jp/stocks/ranking/volume?market=all"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+
+  - source_id: YAHOO_JP_GAIN_RANKING
+    information_type: PRICE_GAIN_RANKING
+    role: PRIMARY
+    criticality: DISCOVERY_CRITICAL
+    source_name: Yahoo! Finance Japan Stock Ranking - Price Gain
+    url_template: "https://finance.yahoo.co.jp/stocks/ranking/up?market=all"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+
+  - source_id: YAHOO_JP_HISTORY
+    information_type: OHLCV
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: Yahoo! Finance Japan Historical Prices
+    url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T/history"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+    notes: >
+      TSE_LISTING_CONFIRMATION_PRECONDITION: The .T suffix denotes a Tokyo
+      Stock Exchange listing, but Discovery runs with
+      default_discovery_market_filter ALL_MARKETS, so a candidate is not
+      guaranteed to be TSE-listed. Use this url_template only for a candidate
+      whose TSE listing is confirmable from already-verified Source Evidence.
+      Suffix resolution for non-TSE/unknown-market venues is undefined and
+      must not be guessed; when TSE listing cannot be confirmed, do not
+      construct or fetch a guessed .T URL and do not record a FOUND attempt
+      for it. See TODO.md "Yahoo Finance symbol suffix resolution".
+
+  - source_id: KABUTAN_HISTORY
+    information_type: OHLCV
+    role: SECONDARY
+    criticality: TRADE_CRITICAL
+    source_name: Kabutan Historical Prices
+    url_template: "https://kabutan.jp/stock/kabuka?code={ticker}"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+
+  - source_id: JPX_DAILY_REPORT
+    information_type: OHLCV
+    role: AUDIT
+    criticality: CONTEXT
+    source_name: JPX Tokyo Stock Exchange Daily Report
+    url_template: "https://www.jpx.co.jp/markets/statistics-equities/daily/"
+    update_timing: NEXT_BUSINESS_DAY_OR_LATER
+    zero_results_are_found: false
+
+  - source_id: JPX_TICK_SIZE
+    information_type: TICK_SIZE
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Tick Size
+    url_template: "https://www.jpx.co.jp/equities/trading/domestic/07.html"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: JPX_TOPIX500
+    information_type: TOPIX500_MEMBERSHIP
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX TOPIX 500 Official Information
+    url_template: "https://www.jpx.co.jp/markets/indices/topix/"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+
+  - source_id: JPX_TDNET
+    information_type: TIMELY_DISCLOSURE
+    role: PRIMARY
+    criticality: RULE_DEPENDENT
+    source_name: TDnet Timely Disclosure
+    url_template: "https://www.release.tdnet.info/inbs/I_main_00.html"
+    update_timing: REALTIME_OR_DELAYED
+    zero_results_are_found: true
+
+  - source_id: JPX_EARNINGS_SCHEDULE
+    information_type: EARNINGS_SCHEDULE
+    role: PRIMARY
+    criticality: RULE_DEPENDENT
+    source_name: JPX Earnings Announcement Schedule
+    url_template: "https://www.jpx.co.jp/listing/event-schedules/financial-announcement/"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: true
+
+  - source_id: COMPANY_IR
+    information_type: EARNINGS_SCHEDULE
+    role: SECONDARY
+    criticality: RULE_DEPENDENT
+    source_name: Issuer Official IR
+    url_template: "https://{issuer_domain}/ir/"
+    update_timing: ISSUER_PUBLICATION
+    zero_results_are_found: true
+    notes: Candidate-specific issuer IR URL. Do not use this as a Discovery route.
+
+  - source_id: COMPANY_IR_DISCLOSURE
+    information_type: ISSUER_DISCLOSURE
+    role: PRIMARY
+    criticality: RULE_DEPENDENT
+    source_name: Issuer Official Disclosure
+    url_template: "https://{issuer_domain}/ir/"
+    update_timing: ISSUER_PUBLICATION
+    zero_results_are_found: true
+    notes: Candidate-specific issuer disclosure page. Do not use for Discovery.
+
+  - source_id: YAHOO_JP_NEWS
+    information_type: NEWS
+    role: CONTEXT
+    criticality: RULE_DEPENDENT
+    source_name: Yahoo! Finance Japan Related News
+    url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T/news"
+    update_timing: REALTIME_OR_DELAYED
+    zero_results_are_found: true
+    notes: >
+      TSE_LISTING_CONFIRMATION_PRECONDITION: The .T suffix denotes a Tokyo
+      Stock Exchange listing, but Discovery runs with
+      default_discovery_market_filter ALL_MARKETS, so a candidate is not
+      guaranteed to be TSE-listed. Use this url_template only for a candidate
+      whose TSE listing is confirmable from already-verified Source Evidence.
+      Suffix resolution for non-TSE/unknown-market venues is undefined and
+      must not be guessed; when TSE listing cannot be confirmed, do not
+      construct or fetch a guessed .T URL and do not record a FOUND attempt
+      for it. See TODO.md "Yahoo Finance symbol suffix resolution".
+
+  - source_id: YAHOO_JP_QUOTE
+    information_type: TURNOVER
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: Yahoo! Finance Japan Stock Quote
+    url_template: "https://finance.yahoo.co.jp/quote/{ticker}.T"
+    update_timing: MARKET_CLOSE_AFTER_UPDATE
+    zero_results_are_found: false
+    notes: >
+      TSE_LISTING_CONFIRMATION_PRECONDITION: The .T suffix denotes a Tokyo
+      Stock Exchange listing, but Discovery runs with
+      default_discovery_market_filter ALL_MARKETS, so a candidate is not
+      guaranteed to be TSE-listed. Use this url_template only for a candidate
+      whose TSE listing is confirmable from already-verified Source Evidence.
+      Suffix resolution for non-TSE/unknown-market venues is undefined and
+      must not be guessed; when TSE listing cannot be confirmed, do not
+      construct or fetch a guessed .T URL and do not record a FOUND attempt
+      for it. See TODO.md "Yahoo Finance symbol suffix resolution".
+
+  - source_id: KABUTAN_NEWS
+    information_type: NEWS
+    role: CONTEXT
+    criticality: RULE_DEPENDENT
+    source_name: Kabutan Market News
+    url_template: "https://kabutan.jp/stock/news?code={ticker}"
+    update_timing: REALTIME_OR_DELAYED
+    zero_results_are_found: true

@@ -1,0 +1,522 @@
+"""Builders for a COMPLETE production run directory.
+
+The shipped regression fixtures are deliberately partial (each exercises one
+stage). The Production Verifier checks the *whole* chain, so these helpers
+compose a complete, hash-consistent run out of them:
+
+* ``event_gate.json`` / ``candidates.json`` / ``market_data.json`` /
+  ``sources.json`` are byte-identical across the ranking and selection
+  fixtures, so both cases can share them,
+* the missing links (``research_window.json``, ``event_research.json``,
+  ``recommendation.json``, ``risk_result.json``) are generated here to be
+  cross-consistent with the fixture's own target_date / strategy_version /
+  config SHA.
+
+Every artifact is real, hash-chained data -- nothing is a placeholder, and the
+hashes are never rewritten to make a check pass.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+from src.config import load_strategy_config, strategy_config_sha256
+from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RANKING_FIXTURE = PROJECT_ROOT / "regression/2026-08-12-ranking-v1-complete/runs/2026-08-12"
+SELECTION_FIXTURE = (
+    PROJECT_ROOT / "regression/2026-08-12-selection-v1-selected/runs/2026-08-12"
+)
+
+#: The historical Source Matrix these fixtures were produced under. Their
+#: recorded input hashes are pinned to it and must NOT be rewritten.
+HISTORICAL_SOURCE_MATRIX = (
+    PROJECT_ROOT
+    / "config/source_matrix_registry"
+    / "f141bb351a22548535cd6ea1f2b76002004abeef4a50c51c68d28659cdbd6b44.yaml"
+)
+
+NO_TRADE_FIXTURE = (
+    PROJECT_ROOT / "regression/2026-08-12-complete-no-trade/runs/2026-08-12"
+)
+
+SHARED_ARTIFACTS = (
+    "event_gate.json",
+    "candidates.json",
+    "market_data.json",
+    "sources.json",
+)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _write(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read(path: Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _research_window(target_date: str, previous_trading_day: str) -> dict[str, Any]:
+    """Reuse the shipped research_window fixture, re-dated to this run."""
+    payload = _read(NO_TRADE_FIXTURE / "research_window.json")
+    cutoff = f"{previous_trading_day}T20:00:00+09:00"
+    payload["target_date"] = target_date
+    payload["previous_trading_day"] = previous_trading_day
+    payload["research_cutoff"] = cutoff
+    payload["research_window"]["window_end"] = cutoff
+    payload["research_window"]["window_start"] = (
+        f"{previous_trading_day}T00:00:00+09:00"
+    )
+    return payload
+
+
+def _event_research(
+    run_dir: Path,
+    event_gate: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """An event_research.json consistent with the fixture's event_gate.json."""
+    tickers = list(event_gate.get("event_gate_input_tickers", []))
+    return {
+        "schema_version": 1,
+        "event_research_version": "event-research-v1",
+        "target_date": event_gate["target_date"],
+        "previous_trading_day": event_gate["previous_trading_day"],
+        "event_research_started_at": event_gate["generated_at"],
+        "event_gate_as_of": event_gate["event_gate_as_of"],
+        "strategy_version": config["strategy_version"],
+        "config_sha256": strategy_config_sha256(config),
+        "input_hashes": {
+            "candidate_pipeline_sha256": sha256_file(run_dir / "candidate_pipeline.json"),
+            "candidates_sha256": sha256_file(run_dir / "candidates.json"),
+            "strategy_snapshot_sha256": sha256_file(run_dir / "strategy_snapshot.yaml"),
+        },
+        "event_gate_input_tickers": tickers,
+        "candidates": [
+            {
+                "ticker": ticker,
+                "selected_attempt_ids": {
+                    "earnings_schedule_jpx": None,
+                    "earnings_schedule_issuer": None,
+                    "tdnet": None,
+                    "issuer_disclosure": None,
+                    "yahoo_news": None,
+                    "kabutan_news": None,
+                },
+                "news_classifications": [],
+            }
+            for ticker in tickers
+        ],
+    }
+
+
+def _candidate_pipeline(
+    target_date: str,
+    config: dict[str, Any],
+    candidates: dict[str, Any],
+) -> dict[str, Any]:
+    entries = candidates.get("candidates", [])
+    count = len(entries)
+    return {
+        "schema_version": 1,
+        "target_date": target_date,
+        "generated_at": candidates["generated_at"],
+        "strategy_version": config["strategy_version"],
+        "config_sha256": strategy_config_sha256(config),
+        "summary": {
+            "discovered": count,
+            "research_complete": count,
+            "research_incomplete": 0,
+            "data_unavailable": 0,
+            "screened": count,
+            "eligible": count,
+            "rejected": 0,
+            "pipeline_complete": True,
+            "stage2_target_count": count,
+            "stage2_completed_count": count,
+            "stage2_unavailable_count": 0,
+            "stage2_incomplete_count": 0,
+            "coverage_rate": 1,
+            "research_incomplete_reason_counts": {},
+            "screening_input_count": count,
+            "screening_pass_count": count,
+            "screening_reject_count": 0,
+            "screening_data_unavailable_count": 0,
+            "screening_incomplete_count": 0,
+            "screening_complete": True,
+            "candidate_count_consistent": True,
+            "all_enabled_rules_evaluated": True,
+            "screening_rule_counts": [],
+            "ranking_complete": False,
+        },
+        "candidates": [
+            {
+                "ticker": entry["ticker"],
+                "company_name": f"Example {entry['ticker']} Corporation",
+                "market": "TSE Prime",
+                "discovery_reasons": [
+                    {
+                        "discovery_type": "VOLUME_RANKING",
+                        "source_id": "YAHOO_JP_VOLUME_RANKING",
+                        "source_url": (
+                            "https://finance.yahoo.co.jp/stocks/ranking/volume?market=all"
+                        ),
+                        "rank": index,
+                    }
+                ],
+                "pipeline_status": "ELIGIBLE",
+                "reason_codes": [],
+                "missing_requirements": [],
+                "completed_checks": [],
+                "failed_checks": [],
+                "source_attempt_ids": [],
+                "source_refs": [],
+                "research_incomplete_reason": None,
+            }
+            for index, entry in enumerate(entries, start=1)
+        ],
+    }
+
+
+def _build_upstream_chain(run_dir: Path, snapshot: str) -> Path:
+    """Regenerate candidates -> event_gate -> ranking through the real CLIs
+    under ``snapshot``.
+
+    Any snapshot change invalidates every artifact produced under the previous
+    one (their recorded config SHA would disagree), so nothing is ever grafted
+    across snapshots and no recorded hash is ever rewritten.
+    """
+    from src import cli
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("market_data.json", "sources.json"):
+        shutil.copy(RANKING_FIXTURE / name, run_dir / name)
+    config_path = run_dir / "strategy_snapshot.yaml"
+    config_path.write_text(snapshot, encoding="utf-8")
+    config = load_strategy_config(config_path)
+
+    cli.main(
+        [
+            "screen-market",
+            "--market-data", str(run_dir / "market_data.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "candidates.json"),
+        ]
+    )
+
+    reference_gate = _read(RANKING_FIXTURE / "event_gate.json")
+    candidates = _read(run_dir / "candidates.json")
+    target_date = reference_gate["target_date"]
+    previous_trading_day = reference_gate["previous_trading_day"]
+
+    _write(
+        run_dir / "research_window.json",
+        _research_window(target_date, previous_trading_day),
+    )
+    _write(
+        run_dir / "candidate_pipeline.json",
+        _candidate_pipeline(target_date, config, candidates),
+    )
+    _write(
+        run_dir / "event_research.json",
+        _event_research(run_dir, reference_gate, config),
+    )
+
+    cli.main(
+        [
+            "build-event-gate",
+            "--event-research", str(run_dir / "event_research.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--config", str(config_path),
+            "--output", str(run_dir / "event_gate.json"),
+        ]
+    )
+    cli.main(
+        [
+            "build-ranking",
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "ranking.json"),
+        ]
+    )
+    return config_path
+
+
+def _risk_check_argv(
+    run_dir: Path,
+    config_path: Path,
+    extra: list[str],
+    *,
+    source_matrix_path: Path = HISTORICAL_SOURCE_MATRIX,
+) -> list[str]:
+    return [
+        "risk-check",
+        "--recommendation", str(run_dir / "recommendation.json"),
+        "--candidates", str(run_dir / "candidates.json"),
+        "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+        "--market-data", str(run_dir / "market_data.json"),
+        "--sources", str(run_dir / "sources.json"),
+        "--source-matrix", str(source_matrix_path),
+        "--config", str(config_path),
+        "--ranking", str(run_dir / "ranking.json"),
+        "--event-gate", str(run_dir / "event_gate.json"),
+        "--research-window", str(run_dir / "research_window.json"),
+        *extra,
+        "--output", str(run_dir / "risk_result.json"),
+    ]
+
+
+#: Case A is built from the shared Terminal-Recommendation fixture helper,
+#: which pins itself to the *live* Source Matrix / config snapshot rather than
+#: the historical one the Ranking/Selection regression fixtures use.
+CASE_A_SOURCE_MATRIX = DEFAULT_SOURCE_MATRIX_PATH
+
+CASE_A_SPECS = [
+    {"ticker": "AA01", "previous_high": "400", "tick_size": "1", "raw_value": "50,000"}
+]
+
+
+def build_case_a_run(tmp_path: Path, *, market_research: bool = False) -> Path:
+    """Case A: the canonical turnover source genuinely failed, so the real
+    Ranking Builder produced ``ranking_status == DATA_UNAVAILABLE``.
+
+    ``ranking.json`` is NEVER hand-edited into DATA_UNAVAILABLE: the existing
+    Case A fixture helper makes the *upstream evidence* unavailable
+    (``sources`` ACCESS_FAILED, null turnover) and the real ``build-ranking``
+    CLI reaches DATA_UNAVAILABLE on its own. Recommendation and Risk are then
+    produced by the real ``build-ranking-terminal-recommendation`` and
+    ``risk-check`` CLIs, so the run carries every REQUIRED_ARTIFACT with
+    genuine, hash-chained content.
+    """
+    from src import cli
+    from tests.ranking_terminal_recommendation_fixtures import (
+        build_terminal_recommendation_run_dir,
+    )
+
+    run_dir = build_terminal_recommendation_run_dir(
+        tmp_path / "runs", CASE_A_SPECS, data_unavailable=True
+    )
+    config_path = run_dir / "strategy_snapshot.yaml"
+    config = load_strategy_config(config_path)
+    assert config.get("config_schema_version") == 6
+    assert not (config.get("selection") or {}).get("enabled"), (
+        "Case A here is a Terminal (Ranking-driven) case"
+    )
+    ranking = _read(run_dir / "ranking.json")
+    assert ranking["ranking_status"] == "DATA_UNAVAILABLE", ranking["ranking_status"]
+
+    _write(
+        run_dir / "event_research.json",
+        _event_research(run_dir, _read(run_dir / "event_gate.json"), config),
+    )
+
+    cli.main(
+        [
+            "build-ranking-terminal-recommendation",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(CASE_A_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "recommendation.json"),
+        ]
+    )
+    recommendation = _read(run_dir / "recommendation.json")
+    assert recommendation["decision"] == "DATA_UNAVAILABLE", recommendation["decision"]
+
+    extra: list[str] = []
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(
+        _risk_check_argv(
+            run_dir, config_path, extra, source_matrix_path=CASE_A_SOURCE_MATRIX
+        )
+    )
+    return run_dir
+
+
+def build_case_b_run(tmp_path: Path, *, market_research: bool = False) -> Path:
+    """Case B: config v6, ranking COMPLETE, Selection not yet activated.
+
+    Every artifact -- including recommendation.json and risk_result.json --
+    is produced by the real CLIs, so the Production Verifier's
+    recompute-and-compare has genuine data to check (FIX-R2-003 s42).
+    """
+    from src import cli
+
+    run_dir = tmp_path / "run"
+    snapshot = (SELECTION_FIXTURE / "strategy_snapshot.yaml").read_text(
+        encoding="utf-8"
+    )
+    # Case B is exactly "config v6 with Selection not yet activated". Only the
+    # FIXTURE snapshot's selection.enabled flag moves; no rule is weakened and
+    # the live config/strategy.yaml is untouched.
+    assert "selection:\n  enabled: true\n" in snapshot
+    snapshot = snapshot.replace(
+        "selection:\n  enabled: true\n", "selection:\n  enabled: false\n"
+    )
+    config_path = _build_upstream_chain(run_dir, snapshot)
+
+    config = load_strategy_config(config_path)
+    assert config.get("config_schema_version") == 6
+    assert not (config.get("selection") or {}).get("enabled"), (
+        "Case B requires selection disabled"
+    )
+
+    cli.main(
+        [
+            "build-ranking-terminal-recommendation",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "recommendation.json"),
+        ]
+    )
+    extra: list[str] = []
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(_risk_check_argv(run_dir, config_path, extra))
+    return run_dir
+
+
+def build_case_c_run(
+    tmp_path: Path,
+    *,
+    selection_status: str = "NO_TRADE",
+    current_positions: int = 0,
+    trades_today: int = 0,
+    market_research: bool = False,
+) -> Path:
+    """Case C: Selection is active.
+
+    Activating Selection changes the strategy snapshot, which invalidates every
+    downstream artifact produced under the previous one. So this deliberately
+    does NOT graft the ranking fixture's event_gate/ranking onto the selection
+    snapshot: their recorded config SHA would disagree, and rewriting it would
+    be exactly the forgery the verifier exists to catch. It regenerates the
+    chain through the real CLIs under the selection-enabled snapshot instead.
+
+    ``current_positions`` / ``trades_today`` are handed to the real risk-check
+    CLI unchanged: the Risk Engine -- not this fixture -- decides PASS vs
+    REJECTED from them.
+    """
+    from src import cli
+
+    run_dir = tmp_path / "run"
+    snapshot = (SELECTION_FIXTURE / "strategy_snapshot.yaml").read_text(
+        encoding="utf-8"
+    )
+    if selection_status == "NO_TRADE":
+        # Raise the human-approved turnover threshold in this FIXTURE snapshot
+        # so Rank 1 legitimately fails the rule. Nothing is weakened and the
+        # live config/strategy.yaml is untouched -- this exercises the normal
+        # NO_TRADE termination, which is a correct outcome, not a failure.
+        assert "threshold_yen: 1000000000" in snapshot
+        snapshot = snapshot.replace(
+            "threshold_yen: 1000000000", "threshold_yen: 999000000000"
+        )
+    config_path = _build_upstream_chain(run_dir, snapshot)
+
+    config = load_strategy_config(config_path)
+    assert (config.get("selection") or {}).get("enabled") is True, (
+        "Case C requires selection enabled"
+    )
+
+    cli.main(
+        [
+            "build-selection",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "selection.json"),
+        ]
+    )
+
+    selection = _read(run_dir / "selection.json")
+    if selection["selection_status"] != selection_status:
+        raise AssertionError(
+            f"expected selection_status {selection_status}, "
+            f"got {selection['selection_status']}"
+        )
+
+    # Recommendation and Risk both come from the real CLIs, so the terminal
+    # decision is whatever Selection and the Risk Engine actually produce.
+    cli.main(
+        [
+            "build-selection-recommendation",
+            "--ranking", str(run_dir / "ranking.json"),
+            "--selection", str(run_dir / "selection.json"),
+            "--event-gate", str(run_dir / "event_gate.json"),
+            "--candidates", str(run_dir / "candidates.json"),
+            "--candidate-pipeline", str(run_dir / "candidate_pipeline.json"),
+            "--market-data", str(run_dir / "market_data.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+            "--sources", str(run_dir / "sources.json"),
+            "--source-matrix", str(HISTORICAL_SOURCE_MATRIX),
+            "--config", str(config_path),
+            "--output", str(run_dir / "recommendation.json"),
+        ]
+    )
+
+    extra = [
+        "--selection", str(run_dir / "selection.json"),
+        "--current-positions", str(current_positions),
+        "--trades-today", str(trades_today),
+    ]
+    if market_research:
+        shutil.copy(
+            NO_TRADE_FIXTURE / "market_research.json", run_dir / "market_research.json"
+        )
+        extra += ["--market-research", str(run_dir / "market_research.json")]
+    cli.main(_risk_check_argv(run_dir, config_path, extra))
+    return run_dir
+
+
+__all__ = [
+    "CASE_A_SOURCE_MATRIX",
+    "HISTORICAL_SOURCE_MATRIX",
+    "RANKING_FIXTURE",
+    "SELECTION_FIXTURE",
+    "build_case_a_run",
+    "build_case_b_run",
+    "build_case_c_run",
+    "sha256_file",
+]

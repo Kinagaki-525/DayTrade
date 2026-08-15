@@ -63,6 +63,24 @@ REQUIRED_SOURCE_IDS = {
     "YAHOO_JP_QUOTE",
 }
 
+#: Source ids fetched once per run rather than once per candidate. A single
+#: Attempt Value from one of these carries ``ticker=None`` and is shared by
+#: every candidate that consumes it -- it is never cloned into a
+#: candidate-scoped Source Record. Shared here (not only in
+#: src.source_acquisition) because src.market's Source Ledger validation
+#: needs the identical set to know which ``ticker=null`` sources are
+#: legitimate Global Sources rather than a missing candidate attribution.
+GLOBAL_SOURCE_IDS = frozenset(
+    {
+        "YAHOO_JP_VOLUME_RANKING",
+        "YAHOO_JP_GAIN_RANKING",
+        "JPX_CALENDAR",
+        "JPX_TICK_SIZE",
+        "JPX_TDNET",
+        "JPX_EARNINGS_SCHEDULE",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SourceMatrixValidationResult:
@@ -139,7 +157,118 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
     if payload["source_change_policy"]["runtime_substitution_allowed"]:
         errors.append("runtime Source Matrix substitution must remain disabled")
 
+    errors.extend(_acquisition_errors(payload))
+
     return SourceMatrixValidationResult(not errors, tuple(errors))
+
+
+#: The only source ids whose already-fetched local raw page an AI agent may
+#: read and classify. Every other source -- JPX_TDNET included -- is fully
+#: deterministic: its disclosure index is parsed by code, never summarized.
+AI_CLASSIFICATION_SOURCE_IDS = frozenset(
+    {
+        "COMPANY_IR",
+        "COMPANY_IR_DISCLOSURE",
+        "YAHOO_JP_NEWS",
+        "KABUTAN_NEWS",
+    }
+)
+
+#: Every source acquired during the EVENT stage, deterministic or otherwise.
+EVENT_SOURCE_IDS = frozenset(
+    {
+        "JPX_TDNET",
+        "JPX_EARNINGS_SCHEDULE",
+        "COMPANY_IR",
+        "COMPANY_IR_DISCLOSURE",
+        "YAHOO_JP_NEWS",
+        "KABUTAN_NEWS",
+    }
+)
+
+#: Sources whose host comes from the human-approved issuer domain registry.
+ISSUER_SCOPED_SOURCE_IDS = frozenset({"COMPANY_IR", "COMPANY_IR_DISCLOSURE"})
+
+#: The public Source Matrix v3 contract vocabulary. These strings appear
+#: verbatim in config/source_matrix.yaml and in the schema; internal Python
+#: names may differ, the YAML/schema-facing terms may not.
+ACQUISITION_MODES = frozenset(
+    {"DETERMINISTIC", "DETERMINISTIC_THEN_AI_CLASSIFICATION"}
+)
+ACQUISITION_TRANSPORTS = frozenset({"CURL_GET"})
+MATRIX_TEMPLATE_HOST_SCOPE = "MATRIX_TEMPLATE_HOST"
+VERIFIED_ISSUER_DOMAIN_SCOPE = "VERIFIED_ISSUER_DOMAIN"
+NETWORK_SCOPES = frozenset({MATRIX_TEMPLATE_HOST_SCOPE, VERIFIED_ISSUER_DOMAIN_SCOPE})
+
+
+def is_v3(payload: dict[str, Any]) -> bool:
+    return payload.get("source_matrix_schema_version") == 3
+
+
+def acquisition_block(payload: dict[str, Any], source_id: str) -> dict[str, Any] | None:
+    definition = source_by_id(payload).get(source_id)
+    if definition is None:
+        return None
+    acquisition = definition.get("acquisition")
+    return acquisition if isinstance(acquisition, dict) else None
+
+
+def _acquisition_errors(payload: dict[str, Any]) -> list[str]:
+    """Source Matrix v3 rules.
+
+    v2 documents are untouched (backward compatible): they carry no
+    acquisition block and remain valid, which keeps every historical fixture
+    loadable and every historical regression reproducible.
+    """
+    if not is_v3(payload):
+        return []
+
+    from src.source_parsers.registry import (  # local import: avoids an import cycle
+        ParserRegistryError,
+        verify_source_parser_binding,
+    )
+
+    errors: list[str] = []
+    for definition in payload["sources"]:
+        source_id = definition.get("source_id")
+        acquisition = definition.get("acquisition")
+        if not isinstance(acquisition, dict):
+            errors.append(f"{source_id}: Source Matrix v3 requires an acquisition block")
+            continue
+        mode = acquisition.get("mode")
+        if mode not in ACQUISITION_MODES:
+            errors.append(f"{source_id}: unknown acquisition.mode {mode!r}")
+        if acquisition.get("transport") not in ACQUISITION_TRANSPORTS:
+            errors.append(
+                f"{source_id}: unknown acquisition.transport "
+                f"{acquisition.get('transport')!r}"
+            )
+        scope = acquisition.get("network_scope")
+        if scope not in NETWORK_SCOPES:
+            errors.append(f"{source_id}: invalid acquisition.network_scope {scope!r}")
+        elif (scope == VERIFIED_ISSUER_DOMAIN_SCOPE) != (
+            source_id in ISSUER_SCOPED_SOURCE_IDS
+        ):
+            errors.append(
+                f"{source_id}: acquisition.network_scope {scope} does not match the "
+                "issuer-scoped source list"
+            )
+        if mode == "DETERMINISTIC_THEN_AI_CLASSIFICATION" and (
+            source_id not in AI_CLASSIFICATION_SOURCE_IDS
+        ):
+            errors.append(
+                f"{source_id}: AI classification is not permitted for this source"
+            )
+        if mode == "DETERMINISTIC" and source_id in AI_CLASSIFICATION_SOURCE_IDS:
+            errors.append(
+                f"{source_id}: event source must declare "
+                "DETERMINISTIC_THEN_AI_CLASSIFICATION"
+            )
+        try:
+            verify_source_parser_binding(definition)
+        except ParserRegistryError as exc:
+            errors.append(str(exc))
+    return errors
 
 
 def source_ids(payload: dict[str, Any]) -> set[str]:

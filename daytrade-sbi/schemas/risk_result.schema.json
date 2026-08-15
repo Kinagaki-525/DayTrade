@@ -16,7 +16,7 @@
     "violations"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "target_date": {"type": "string", "format": "date"},
     "strategy_version": {"type": "string", "minLength": 1},
     "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -25,7 +25,48 @@
     "ticker": {"type": ["string", "null"]},
     "required_capital_yen": {"$ref": "#/$defs/decimalOrNull"},
     "expected_loss_yen": {"$ref": "#/$defs/decimalOrNull"},
-    "violations": {"type": "array", "items": {"type": "string"}}
+    "violations": {"type": "array", "items": {"type": "string"}},
+    "evaluation_context": {
+      "type": "object",
+      "required": ["current_positions", "trades_today"],
+      "properties": {
+        "current_positions": {"$ref": "#/$defs/countOrNull"},
+        "trades_today": {"$ref": "#/$defs/countOrNull"}
+      },
+      "additionalProperties": false
+    },
+    "input_hashes": {
+      "type": "object",
+      "required": [
+        "recommendation_sha256",
+        "candidates_sha256",
+        "candidate_pipeline_sha256",
+        "market_data_sha256",
+        "sources_sha256",
+        "source_matrix_sha256",
+        "strategy_snapshot_sha256",
+        "ranking_sha256",
+        "event_gate_sha256",
+        "research_window_sha256",
+        "selection_sha256",
+        "market_research_sha256"
+      ],
+      "properties": {
+        "recommendation_sha256": {"$ref": "#/$defs/sha256"},
+        "candidates_sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_pipeline_sha256": {"$ref": "#/$defs/sha256"},
+        "market_data_sha256": {"$ref": "#/$defs/sha256"},
+        "sources_sha256": {"$ref": "#/$defs/sha256"},
+        "source_matrix_sha256": {"$ref": "#/$defs/sha256"},
+        "strategy_snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "ranking_sha256": {"$ref": "#/$defs/sha256"},
+        "event_gate_sha256": {"$ref": "#/$defs/sha256"},
+        "research_window_sha256": {"$ref": "#/$defs/sha256"},
+        "selection_sha256": {"$ref": "#/$defs/sha256OrNull"},
+        "market_research_sha256": {"$ref": "#/$defs/sha256OrNull"}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false,
   "allOf": [
@@ -65,6 +106,59 @@
         "properties": {"status": {"const": "REJECTED"}}
       },
       "then": {"properties": {"violations": {"minItems": 1}}}
+    },
+    {
+      "if": {
+        "required": ["schema_version"],
+        "properties": {"schema_version": {"const": 1}}
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["evaluation_context"]},
+            {"required": ["input_hashes"]}
+          ]
+        }
+      },
+      "else": {"required": ["evaluation_context", "input_hashes"]}
+    },
+    {
+      "if": {
+        "required": ["schema_version", "decision"],
+        "properties": {
+          "schema_version": {"const": 2},
+          "decision": {"const": "TRADE"}
+        }
+      },
+      "then": {
+        "properties": {
+          "evaluation_context": {
+            "properties": {
+              "current_positions": {"$ref": "#/$defs/count"},
+              "trades_today": {"$ref": "#/$defs/count"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["schema_version", "decision"],
+        "properties": {
+          "schema_version": {"const": 2},
+          "decision": {"enum": ["NO_TRADE", "DATA_UNAVAILABLE"]}
+        }
+      },
+      "then": {
+        "properties": {
+          "evaluation_context": {
+            "properties": {
+              "current_positions": {"type": "null"},
+              "trades_today": {"type": "null"}
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -77,6 +171,20 @@
     "decimalOrNull": {
       "oneOf": [
         {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "count": {"type": "integer", "minimum": 0},
+    "countOrNull": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sha256OrNull": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         {"type": "null"}
       ]
     }

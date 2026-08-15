@@ -2,11 +2,11 @@
 
 ## 開始方法
 
-毎晩、VS Code上のCodexへ次のように依頼します。
+毎晩、Codex または Claude Code へ次のように依頼します。どちらでも同じリポジトリCLIパイプラインが動きます。
 
 > `$prepare-daytrade-plan`
 
-Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントが全体を統括し、市場調査と出典監査だけを読み取り専用サブエージェントへ委譲します。
+Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントはCanonical CLI Pipeline Order（[canonical-pipeline.md](canonical-pipeline.md)）どおりにCLIを逐次実行します。市場データの取得は`acquire-*` CLIだけが行い、サブエージェントへ委譲できるのは読み取り専用の出典監査だけです。
 
 実行前にPython依存関係を導入し、テストが成功することを確認します。
 
@@ -15,7 +15,37 @@ py -m pip install -r requirements-dev.txt
 py -B -m pytest
 ```
 
-## Codexが行う処理
+## Canonical CLI Pipeline Order
+
+夜間実行はこの順序で逐次実行します（正本: [docs/canonical-pipeline.md](canonical-pipeline.md)）。
+
+1. `snapshot-config`
+2. `validate-source-matrix`
+3. `resolve-research-window`
+4. `acquire-discovery`
+5. `init-candidate-research`
+6. `acquire-stage1-sources`
+7. market_data Stage1 reflect
+8. `apply-stage1`
+9. TSE Listing Batch Gate
+10. `plan-stage2-batches`
+11. `acquire-stage2-market-sources`
+12. market_data Stage2 reflect
+13. `acquire-actual-turnover`
+14. market_data turnover reflect
+15. `validate-market`
+16. `screen-market`
+17. `build-candidate-pipeline`
+18. `acquire-event-sources`
+19. Event AI Classification (local only)
+20. `merge-event-source-extraction`
+21. `init/complete event-research`
+22. `validate-event-research`
+23. `build-event-gate`
+24. `build-ranking`
+25. Case A/B/C
+
+## Agentが行う処理（Canonical CLI Pipeline Orderの実行）
 
 1. `AGENTS.md`を確認
 2. `config/strategy.yaml`を確認
@@ -24,16 +54,16 @@ py -B -m pytest
 5. `config/strategy.yaml`を対象日ディレクトリへスナップショット保存
 6. `config/source_matrix.yaml`を検証
 7. PythonでTDnet調査期間を確定し、`research_window.json`を保存
-8. Yahoo!ファイナンス2ランキングだけで`market_research.json`のDiscovery Candidateを作成
+8. `acquire-discovery`を実行する。Yahoo!ファイナンス2ランキングをcurl GETで取得し、生ページをSHA256付きで保存し、決定論的にParseしてTOP50を確認し、`market_research.json`のDiscovery Candidateを作成する。Agentが候補を手で書かない
 9. `init-candidate-research`で全Discovery Candidateの`candidate_research[]`を初期化
-10. Stage 1の確認済み事実を`sources.json`と`market_data.json`へ保存し、`apply-stage1`で売買単位・資金条件を分類
+10. `acquire-stage1-sources`を実行する。候補集合は`market_research.json`の`discovery_candidates`から導出され、Agentが銘柄を渡すことはない。Stage 1の値は`sources.json`と`market_data.json`へ自動反映される。続けて`apply-stage1`で売買単位・資金条件を分類
 11. Stage 2着手前のTSE上場確認（Fail Closed、全件一括ゲート）: `apply-stage1`の直後、`plan-stage2-batches`を実行する前に、Stage 1 `PASS`候補**全件**について、検証済みSource Evidenceから東京証券取引所上場であると確認できるかを一括で判定する。`YAHOO_JP_HISTORY` / `YAHOO_JP_NEWS` / `YAHOO_JP_QUOTE`のURL templateはいずれも`.T`（東証）Suffix固定でDiscoveryは`ALL_MARKETS`のため、確認できない候補が混ざり得る。**1件でも確認できない候補があれば`plan-stage2-batches`を実行せず、Stage 2 Candidate Research・Turnover Research・Event Research・Rankingを含む以降の全ステージを開始せず、夜間実行全体をこの時点で停止する。** 個別候補をStage 1 `PASS`集合から除外・スキップして残りだけ進めることはしない
 12. Stage 1 `PASS`候補全件のTSE上場確認が成功した場合のみ`plan-stage2-batches`でStage 2調査対象をbatch化し、全候補についてCandidate Researchを実施・merge
-13. Ranking用Actual Turnover Research: Stage 2 Candidate Researchのmerge完了後、**`screen-market`を実行する前に**、（TSE上場確認は手順11で全件一括ゲート済みの）Stage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
+13. `acquire-actual-turnover`: Stage 2完了後、**`screen-market`を実行する前に**、（TSE上場確認は手順11で全件一括ゲート済みの）Stage 1 `PASS`候補について前営業日の実際の売買代金を`YAHOO_JP_QUOTE`で調査する。`FOUND`の場合は`sources.json`のSource Attempt・Source Recordと`market_data.json`の`turnover`へ同じCanonical値を保存する。失敗した場合は失敗Source Attemptをそのまま保存し、`market_data.json`の`turnover`を`null`にして古い`FOUND`値を残さない
 14. Pythonで市場データと出典台帳を検証し、`official_ohlcv_audit.json`と、Hard Screening結果・Rule評価・分析Featureを含む`candidates.json`を生成
 15. Pythonで`candidate_pipeline.json`、`performance.json`、`research.md`を生成
 16. `candidate_pipeline.summary.pipeline_complete=true`、`screening_complete=true`を確認する
-17. Event Research: `status=ELIGIBLE`かつ`screening_status=PASS`の候補だけを対象に`init-event-research`を実行し、Web調査で得たSource Attempt・Evidenceを`sources.json`（Source Attempt・Evidenceの正本）へ保存する。それらへの参照である`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を`event_research.json`へ保存して完成させる。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
+17. Event: `acquire-event-sources`を実行する。候補集合は`candidates.json` / `candidate_pipeline.json`の`status=ELIGIBLE`かつ`screening_status=PASS`から導出される。6つのEvent Source（`JPX_TDNET` / `JPX_EARNINGS_SCHEDULE` / `COMPANY_IR` / `COMPANY_IR_DISCLOSURE` / `YAHOO_JP_NEWS` / `KABUTAN_NEWS`）を取得し、共有ページは1回のGETで候補ごとのSource Attemptを作る。次にEvent AI Classificationが**ローカル保存済み生ページだけ**を読んで一時作業ファイルを書き、`merge-event-source-extraction`が全項目を再検証して`sources.json`へ反映する。最後に`init-event-research`→`complete-event-research`で`selected_attempt_ids`、`news_classifications`、`event_gate_as_of`を確定する。PASS・REJECT・DATA_UNAVAILABLEの判定はEvent Researchでは行わない
 18. Event Research Validation: `validate-event-research`を実行し、`event_research.json`の整合性を検証する
 19. Event Gate: `build-event-gate`を実行し、決定論的Pythonロジックで`event_gate.json`を生成する
 20. Event Gate Validation: `event_gate.json`の`event_gate_complete=true`を確認する。`false`の場合は以降へ進まず、Rankingを開始しない
@@ -129,3 +159,159 @@ Ranking完了後、main agentはCLI（Case A/Bは`build-ranking-terminal-recomme
 
 Risk Engineが`REJECTED`の場合は、提案値を変更せず`REJECTED`として記録します。
 `REJECTED`を回避するために提案値を都合よく変更して再実行しません。
+
+## Risk Result v2 と Production Verifier（FIX-R2-003）
+
+`config_schema_version: 6`の設定で`risk-check`を実行すると、`risk_result.json`は
+`schema_version: 2`で出力される（Case A/B/Cすべて）。v2では次の2フィールドが必須になる。
+
+- `evaluation_context`: Risk評価に実際に使った`current_positions` / `trades_today`。
+  Case C `TRADE`の場合だけ0以上の整数を記録し、Case A・Case B・Case C `NO_TRADE`では
+  Risk評価入力を使用しないため必ず`null` / `null`へ正規化される。
+- `input_hashes`: 上流Artifactの**生バイト**SHA256をちょうど12キー記録する。
+  `selection_sha256`はCase A/Bでは`null`、Case Cでは実際の`selection.json`のハッシュ。
+  `market_research_sha256`はCase C `TRADE`で`--market-research`を渡した場合だけ非`null`になる。
+  Case A・Case B・Case C `NO_TRADE`ではRiskが`market_research.json`を読まないため、
+  `--market-research`を渡しても`evaluation_context`と同じく`null`へ正規化される
+  （FIX-R2-003A）。
+
+`config_schema_version`が6未満の履歴Runは従来どおり`risk_result.schema_version: 1`のままで、
+引き続きスキーマ的に有効である。
+
+Production Verifierは`risk_result.json`に書かれた値を正本として信用しない。Selection /
+Recommendation / Riskをリポジトリ自身の公式Builder（`src/downstream_trust.py`経由で
+`risk-check`と共有）で再計算し、完全一致しなければ`INVALID_RUN`になる。
+
+- `verify-production-run`: Case A / Case B / Case Cのいずれも、Trust Chainが全て成功した
+  場合にのみ`VERIFIED_*`となる。
+- `verify-production-happy-path`: **Case Cのみ**を許可する。Case A・Case Bは正当なRunでは
+  あるが、Selectionが有効化された本番Happy Pathではないため`INVALID_RUN`になる。
+  Case C `NO_TRADE`も、Risk `REJECTED`も、正当なHappy Pathである（TRADEを強制しない）。
+
+## Claude Production Runtime Security（FIX-R2-004）
+
+### Production Runtime要件
+
+- 正式なProduction RuntimeはDayTrade Production**専用**のLinuxまたはWSL2。
+  Native Windowsは禁止。
+- `/etc/claude-code/managed-settings.json`はRepository単位ではなく、その
+  **Linux/WSL distro上のClaude Code全体**へ適用されるGlobal Managed Policyです。
+  したがって通常のDevelopment WSLへdeployしてはいけません。Development用Claudeと
+  同じdistroへProduction Managed Policyを置く運用は禁止です。
+- 専用Runtime marker `/etc/daytrade-production-runtime` の内容が
+  `DAYTRADE_PRODUCTION_RUNTIME_V1` であることがPreflight条件です。このファイルは
+  Human provisioningで作成します。
+
+### Human-only prerequisites（Agentは絶対に実行しない）
+
+Coding Agentはinstallを行いません。Preflightは存在確認だけを行い、不足していれば
+`CLAUDE_SANDBOX_DEPENDENCY_MISSING`でfail closedします。
+
+```bash
+# Ubuntu/Debian (human, once per production runtime)
+sudo apt-get install bubblewrap socat
+```
+
+- Claude Code >= 2.1.219（`sandbox.network.strictAllowlist`の要件）。
+- Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
+  seccompの有無を推測しません。次のHuman Runtime Acceptanceの結果だけを検証します。
+
+  1. Humanが`claude`を起動し`/sandbox`のDependencies表示でseccomp filterが有効で
+     あることを確認する。
+  2. 確認できた場合のみ、Humanがroot権限でattestation markerを作成する。
+
+     ```bash
+     sudo sh -c 'echo DAYTRADE_SECCOMP_VERIFIED_V1 > /etc/daytrade-seccomp-verified'
+     sudo chown root:root /etc/daytrade-seccomp-verified
+     sudo chmod 644 /etc/daytrade-seccomp-verified
+     ```
+
+  3. Preflightは`/etc/daytrade-seccomp-verified`が regular file / uid 0 /
+     group・other非writable / 内容が`DAYTRADE_SECCOMP_VERIFIED_V1`であることを
+     検証します。ひとつでも満たさなければ`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`で
+     Hard Stopし、`claude`は起動せず`runtime_security.json`も書きません。
+
+  このmarkerはHuman専用です。Coding AgentもRepository Scriptも作成しません。
+  Native LinuxでもWSL2でも同一の要件です（判断分岐を増やさないため）。
+- `/etc/daytrade-production-runtime`も同様に regular file / uid 0 /
+  group・other非writable / 内容一致 を要求します（content-only verificationでは
+  ありません）。
+- Ubuntu 24.04+では`sysctl kernel.apparmor_restrict_unprivileged_userns`を確認し、
+  `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
+  Repository Scriptからは変更しません。
+
+### Policy deployment（Human）
+
+1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
+2. RepositoryをReviewed HEADへcheckoutする。
+3. `python -B -m pytest` が0 failedであることを確認する。
+4. Policyをrenderする（`/etc`には何も書きません）。
+
+   ```bash
+   scripts/render-claude-production-policy \
+       --production-python "$(command -v python3)" > /tmp/managed-settings.json
+   ```
+
+   `--production-python`にsymlink（例: `python3 -> python3.11`）を渡しても構いません。
+   `canonical_production_python()`が内部で必ずresolved absolute pathへ正規化するため、
+   Managed Bash allow rule / Hook command / `runtime_security.json` /
+   `DAYTRADE_PRODUCTION_PYTHON` / Runtime Guardの比較はすべて同一identityになります。
+   Humanが事前にsymlinkを手動解決する必要はありません。
+
+5. rendered policyをHumanがreviewする。
+6. root権限でdeployする。
+
+   ```bash
+   sudo scripts/deploy-claude-managed-policy --production-python "$(command -v python3)"
+   ```
+
+   既に`/etc/claude-code/managed-settings.json`が存在する場合は
+   `EXISTING_MANAGED_POLICY_PRESENT`で停止します。自動merge・自動backup・overwriteは
+   行わず、`--force`も存在しません。既存の組織Policyを壊さないためです。
+   `managed-settings.d`へのdrop-in配置も行いません。
+7. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
+8. `scripts/claude-production --target-date <YYYY-MM-DD> --preflight-only`で
+   Runtime Security Preflightを通す。
+9. Claude Codeの`/status`でSetting sourcesを確認し、file-based
+   *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
+   sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
+10. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
+11. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
+
+### Runtime Security Preflight
+
+`scripts/claude-production`は次の順序でfail closedに検査し、すべてPASSしたときだけ
+`runs/<target-date>/working/runtime_security.json`を書いて`claude`を`exec`します。
+
+検査順序は platform → `production_marker` → `sandbox_seccomp` → `git_clean` →
+`claude_version` → `sandbox_dependencies` → managed policy … です。`--target-date`は
+最初にYYYY-MM-DD（実在日付）としてvalidateされ、run directoryが
+`runs/<target-date>`直下であることを確認します。違反は`CLAUDE_TARGET_DATE_INVALID`で、
+このときfilesystemには何も書きません。Security Boundaryのpath
+（`/etc/claude-code/managed-settings.json`・`/etc/claude-code/daytrade-runtime-guard.py`・
+`/etc/daytrade-production-runtime`・`/etc/daytrade-seccomp-verified`）はCLIから
+差し替えできません。`--target-date`と`--preflight-only`だけがHuman入力です。
+
+`production_marker` / `sandbox_seccomp` / `git_clean` / `claude_version` / `sandbox_dependencies` /
+`managed_settings` / `managed_settings_permissions` / `sandbox_required` /
+`sandbox_escape_disabled` / `strict_network_allowlist` / `managed_domain_lock` /
+`managed_hook_lock` / `managed_permission_lock` / `mcp_lockdown` / `domain_sync` /
+`runtime_guard` / `runtime_guard_sha` / `http_user_agent`
+
+`runtime_security.json`には`DAYTRADE_HTTP_USER_AGENT`の値、環境変数一式、token、
+API key、cookie、credentialを書きません。User-Agentは`http_user_agent_present: true`
+だけを記録します。
+
+### Production Boundaryの正本
+
+Production Security Boundaryの正本は**OS Managed Policy**です。プロジェクトの
+`.claude/settings.json`と`.claude/hooks/network_guard.py`はDevelopment defense onlyとして
+維持しますが、`allowManagedHooksOnly: true`のProductionでは実行されません。
+`strictAllowlist`はProject Scopeではproduction gateにならないため、Managed Policyだけに
+設定します。
+
+Production中のClaudeは既定でBash denyです。許可されるのは
+`<production python> -B -m src.cli <approved subcommand> ...`のexec formだけで、
+`;` `&&` `||` `|` `&` redirection command substitution process substitution `cd`は
+すべて拒否されます。Claudeが直接Write/Editできる唯一のArtifactは
+`runs/<date>/working/event_source_extraction.json`です。

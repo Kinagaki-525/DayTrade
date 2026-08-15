@@ -1,6 +1,6 @@
 # daytrade-sbi v2
 
-SBI証券、資金100,000円、国内株現物を前提に、CodexによるWeb市場調査・出典収集・イベント分類と、PythonによるValidation・Hard Screening・Event Gate・Ranking・Selection・Recommendation Builder・Risk Engineを組み合わせて、翌営業日の手動注文案を管理するプロジェクトです。
+SBI証券、資金100,000円、国内株現物を前提に、Agent（Codex / Claude Code）によるOrchestrationとローカル生ページのイベント分類、Pythonによる決定論的なSource取得（curl GET）・Parse・Validation・Hard Screening・Event Gate・Ranking・Selection・Recommendation Builder・Risk Engineを組み合わせて、翌営業日の手動注文案を管理するプロジェクトです。AgentがWeb調査で株価を取得することはありません。
 
 このプロジェクトは利益を保証するものではありません。AIの評価と現在の売買ルールが利益を生むことは確認されていません。実取引データと取引しなかった日の判断を蓄積し、後から客観的に検証することが目的です。
 
@@ -10,20 +10,53 @@ OpenAI APIなどの外部LLM APIは使用しません。SBI証券へのログイ
 
 | 担当 | 責任 |
 | --- | --- |
-| Codex | Web市場調査、出典保存、イベント分類（earnings/TDnet等） |
+| Agent (Codex / Claude Code) | Orchestration（Canonical CLI Pipeline Orderの逐次実行と結果報告）、ローカル保存済み生ページのイベント分類のみ |
+| Human | Issuer Domainの承認、Threshold Pairの承認、最終的な発注判断 |
 | Python | Validation、Hard Screening、Event Gate、Ranking、Selection、Recommendation Builder、Risk Engine、集計 |
 | 人間 | 出典と注文案の最終確認、SBI株アプリへの手入力、実取引結果の記録、最終的な発注判断 |
 
 `TRADE`/`NO_TRADE`/`DATA_UNAVAILABLE`の判定はPythonの構造化パイプライン（Ranking Terminal Recommendation、またはSelection→Recommendation Builder）が決定し、agentが`recommendation.json`を手で作成することはありません。注文判断・注文操作・訂正・取消は人間だけが行います。
 
-## Codex Skillとサブエージェント
+## Canonical CLI Pipeline Order
+
+夜間実行はこの順序で逐次実行します（正本: [docs/canonical-pipeline.md](docs/canonical-pipeline.md)）。
+
+1. `snapshot-config`
+2. `validate-source-matrix`
+3. `resolve-research-window`
+4. `acquire-discovery`
+5. `init-candidate-research`
+6. `acquire-stage1-sources`
+7. market_data Stage1 reflect
+8. `apply-stage1`
+9. TSE Listing Batch Gate
+10. `plan-stage2-batches`
+11. `acquire-stage2-market-sources`
+12. market_data Stage2 reflect
+13. `acquire-actual-turnover`
+14. market_data turnover reflect
+15. `validate-market`
+16. `screen-market`
+17. `build-candidate-pipeline`
+18. `acquire-event-sources`
+19. Event AI Classification (local only)
+20. `merge-event-source-extraction`
+21. `init/complete event-research`
+22. `validate-event-research`
+23. `build-event-gate`
+24. `build-ranking`
+25. Case A/B/C
+
+## Skillとエージェント
+
+CodexとClaude Codeは同じリポジトリCLIパイプラインを使います。どちらもWeb調査で市場データを取得せず、`python -m src.cli acquire-*`だけが外部へGETします。
 
 日次運用はリポジトリ直下の2つのCodex Skillから明示的に開始します。市場調査Sourceは[config/source_matrix.yaml](config/source_matrix.yaml)で固定し、実行ごとに任意のサイトへ代替しません。
 
 - `$prepare-daytrade-plan`: 翌営業日の調査、Python CLIによるRanking/Selection/Recommendation Builder/Risk Engineの実行、手入力候補作成までをメインエージェントが統括
 - `$record-daytrade-result`: 人間が確認した完全決済済み取引を検証し、確認後に記録・集計
 
-`prepare`では、Web調査用の`market_researcher`と出典監査用の`source_auditor`だけを読み取り専用サブエージェントとして使用できます。日次成果物の書き込みはメインエージェントが行い、`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`の判断は必ずPythonの構造化パイプライン（`build-ranking-terminal-recommendation`、または`build-selection`→`build-selection-recommendation`）が生成した`recommendation.json`に従います。`record`はサブエージェントを使いません。
+`prepare`では、出典監査用の`source_auditor`だけを読み取り専用サブエージェントとして使用できます。市場データの取得はサブエージェントではなく`acquire-*` CLIが行います。日次成果物の書き込みはメインエージェントが行い、`TRADE`、`NO_TRADE`、または`DATA_UNAVAILABLE`の判断は必ずPythonの構造化パイプライン（`build-ranking-terminal-recommendation`、または`build-selection`→`build-selection-recommendation`）が生成した`recommendation.json`に従います。`record`はサブエージェントを使いません。
 
 ## 固定条件
 
@@ -60,7 +93,7 @@ OpenAI APIなどの外部LLM APIは使用しません。SBI証券へのログイ
 
 ## 未決定項目
 
-[TODO.md](TODO.md)で管理します。`screening`の流動性、価格、スプレッド、ギャップ、決算・開示除外などはrule objectとして管理し、未採用ruleは`enabled: false`かつ`threshold: null`です。CodexやPythonが値を推測して補完してはいけません。
+[TODO.md](TODO.md)で管理します。`screening`の流動性、価格、スプレッド、ギャップ、決算・開示除外などはrule objectとして管理し、未採用ruleは`enabled: false`かつ`threshold: null`です。AgentやPythonが値を推測して補完してはいけません。
 
 ## 処理フロー
 
@@ -73,7 +106,7 @@ Source Matrixを検証
   ↓
 PythonがTDnet調査期間を確定
   ↓
-メインCodexが読み取り専用サブエージェントへWeb調査を委譲
+メインエージェントが読み取り専用サブエージェントへ出典監査を委譲（市場データ取得は`acquire-*` CLIのみ）
   ↓ 固定Discovery経路をmarket_research.jsonへ保存
 Source Matrix順にCandidate Research
   ↓ 出典付きでruns/YYYY-MM-DDへ保存
@@ -149,20 +182,20 @@ py -m pip install -r requirements.txt
 
 ## 毎晩の使い方
 
-VS Code上のCodexへ次のように依頼します。
+Codex または Claude Code へ次のように依頼します（どちらでも同じCLIパイプラインが動きます）。
 
 > `$prepare-daytrade-plan`
 
-詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。Skillは[prompts/nightly_research.md](prompts/nightly_research.md)を既存の詳細手順として読みます。CodexはWeb調査で確認した事実と評価を分け、すべての重要数値にURL・取得日時・取引日を保存します。TDnetの調査対象期間はPythonの`resolve-research-window`で確定し、初回だけ設定済みの24時間初回補完期間を使います。
+詳細は[nightly-operation.md](docs/nightly-operation.md)を参照してください。Skillは[prompts/nightly_research.md](prompts/nightly_research.md)を既存の詳細手順として読みます。すべての重要数値は`acquire-*` CLIがURL・取得日時・取引日・生ページSHA256付きで`sources.json`へ保存します。TDnetの調査対象期間はPythonの`resolve-research-window`で確定し、初回だけ設定済みの24時間初回補完期間を使います。
 
-Pythonツールは外部Web接続なしで実行できます。直接実行する場合のコマンドは[prompts/nightly_research.md](prompts/nightly_research.md)を正本とします。
+Pythonの外部通信は`acquire-*`のcurl GETだけです。それ以外のCLI（検証・Screening・Event Gate・Ranking・Selection・Risk）は外部接続なしで実行できます。直接実行する場合のコマンドは[prompts/nightly_research.md](prompts/nightly_research.md)を正本とします。
 
 `TRADE`の場合、保有数と当日取引数は人間が確認した値を明示し、未確認時に0と仮定しません。`NO_TRADE`または`DATA_UNAVAILABLE`の場合は、これらを確認せずRisk Engine結果を`NOT_APPLICABLE`として保存します。
 `candidates.json`、`recommendation.json`、`risk_result.json`には戦略バージョンと設定内容のSHA-256を保存し、異なる実行日のファイルや設定を混在させた場合は処理を停止します。
 
 ## 記録と集計
 
-- `runs/YYYY-MM-DD/`: Web調査、出典、候補、Codex評価、Risk Engine結果
+- `runs/YYYY-MM-DD/`: 生ページ、出典台帳、候補、Event Gate、Ranking、Risk Engine結果
 - `runs/YYYY-MM-DD/candidate_pipeline.json`: Discovery後の候補を消さずに候補単位の処理状態を保存
 - `runs/YYYY-MM-DD/performance.json`: Sourceリクエスト数、ステージ件数、任意の工程別時間を性能評価用に保存
 - `trades/recommendations.csv`: `NO_TRADE`、`DATA_UNAVAILABLE`、未約定を含む推奨履歴
@@ -171,7 +204,7 @@ Pythonツールは外部Web接続なしで実行できます。直接実行す�
 
 存在しない株価、注文、約定、損益を推測して埋めないでください。実取引とバックテストも同じファイルへ保存しません。
 
-完全に約定し当日中に決済した取引を記録する場合は、Codexへ次のSkillを明示します。
+完全に約定し当日中に決済した取引を記録する場合は、Agentへ次のSkillを明示します。
 
 > `$record-daytrade-result`
 

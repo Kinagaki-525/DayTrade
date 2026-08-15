@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event_source_extraction.schema.json",
+  "title": "Event source AI classification (temporary working artifact)",
+  "description": "Written by the Event AI Classification step from LOCAL raw source pages only. This is a STAGING schema for the AI's read-only working file -- it is NOT a replacement for the Event Research contract. merge-event-source-extraction revalidates every field and writes the result into sources.json source_attempts[].values as Event Objects in the exact shape the existing Event Gate reads.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_date",
+    "generated_at",
+    "classifier",
+    "extractions"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "classifier": {"type": "string", "minLength": 1},
+    "extractions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/extraction"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "extraction": {
+      "type": "object",
+      "required": [
+        "source_attempt_id",
+        "source_id",
+        "ticker",
+        "trading_date",
+        "source_page_sha256",
+        "coverage_status",
+        "events"
+      ],
+      "properties": {
+        "source_attempt_id": {"type": "string", "minLength": 1},
+        "source_id": {
+          "enum": [
+            "COMPANY_IR",
+            "COMPANY_IR_DISCLOSURE",
+            "YAHOO_JP_NEWS",
+            "KABUTAN_NEWS"
+          ]
+        },
+        "ticker": {"type": "string", "pattern": "^[0-9A-Z]{4}$"},
+        "trading_date": {"type": "string", "format": "date"},
+        "source_page_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "coverage_status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+        "events": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/eventObject"}
+        },
+        "news_classifications": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/newsClassification"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventObject": {
+      "description": "Exactly the shape src.event_gate reads out of source_attempts[].values.",
+      "type": "object",
+      "required": ["evidence_id", "event_type", "event_date", "published_at"],
+      "properties": {
+        "evidence_id": {"type": "string", "minLength": 1},
+        "event_type": {
+          "enum": ["EARNINGS", "TIMELY_DISCLOSURE", "IR_DISCLOSURE", "NEWS"]
+        },
+        "event_date": {"type": ["string", "null"], "format": "date"},
+        "published_at": {"type": ["string", "null"], "format": "date-time"},
+        "headline": {"type": "string", "maxLength": 400}
+      },
+      "additionalProperties": false
+    },
+    "newsClassification": {
+      "description": "Staged copy of the existing event_research news classification contract. Field names match event_research.schema.json exactly.",
+      "type": "object",
+      "required": [
+        "news_evidence_id",
+        "published_at",
+        "signal_type",
+        "subject_status",
+        "confirmation_evidence_ids",
+        "confirmation_source_attempt_ids"
+      ],
+      "properties": {
+        "news_evidence_id": {"type": "string", "minLength": 1},
+        "published_at": {"type": "string", "format": "date-time"},
+        "signal_type": {
+          "enum": [
+            "EARNINGS",
+            "GUIDANCE_REVISION",
+            "DIVIDEND",
+            "CAPITAL_ACTION",
+            "M_AND_A",
+            "MAJOR_CONTRACT",
+            "LEGAL_REGULATORY",
+            "OPERATING_INCIDENT",
+            "MANAGEMENT_CONTROL",
+            "LISTING_STATUS",
+            "OTHER_CORPORATE_EVENT",
+            "NON_EVENT",
+            "UNKNOWN"
+          ]
+        },
+        "subject_status": {"enum": ["CONFIRMED", "NOT_SUBJECT", "AMBIGUOUS"]},
+        "confirmation_evidence_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "confirmation_source_attempt_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

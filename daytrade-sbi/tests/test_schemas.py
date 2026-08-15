@@ -291,3 +291,128 @@ def test_recommendation_file_keeps_json_integers_schema_compatible():
 
     assert loaded["schema_version"] == 1
     assert loaded["shares"] == 100
+
+
+# ---------------------------------------------------------------------------
+# Risk Result v2 (FIX-R2-003)
+# ---------------------------------------------------------------------------
+
+
+def _risk_input_hashes(**overrides):
+    hashes = {
+        "recommendation_sha256": "a" * 64,
+        "candidates_sha256": "b" * 64,
+        "candidate_pipeline_sha256": "c" * 64,
+        "market_data_sha256": "d" * 64,
+        "sources_sha256": "e" * 64,
+        "source_matrix_sha256": "f" * 64,
+        "strategy_snapshot_sha256": "0" * 64,
+        "ranking_sha256": "1" * 64,
+        "event_gate_sha256": "2" * 64,
+        "research_window_sha256": "3" * 64,
+        "selection_sha256": None,
+        "market_research_sha256": None,
+    }
+    hashes.update(overrides)
+    return hashes
+
+
+def risk_result_v2_payload(decision="TRADE"):
+    config = load_strategy_config()
+    trade = decision == "TRADE"
+    return {
+        "schema_version": 2,
+        "target_date": "2026-08-10",
+        "strategy_version": config["strategy_version"],
+        "config_sha256": strategy_config_sha256(config),
+        "decision": decision,
+        "status": "PASS" if trade else "NOT_APPLICABLE",
+        "ticker": "1234" if trade else None,
+        "required_capital_yen": "40200" if trade else None,
+        "expected_loss_yen": "500" if trade else None,
+        "violations": [],
+        "evaluation_context": (
+            {"current_positions": 0, "trades_today": 0}
+            if trade
+            else {"current_positions": None, "trades_today": None}
+        ),
+        "input_hashes": _risk_input_hashes(
+            selection_sha256=("4" * 64) if trade else None
+        ),
+    }
+
+
+def test_risk_result_schema_v1_historical_payload_remains_valid():
+    config = load_strategy_config()
+    validate_json_document(
+        {
+            "schema_version": 1,
+            "target_date": "2026-08-10",
+            "strategy_version": config["strategy_version"],
+            "config_sha256": strategy_config_sha256(config),
+            "decision": "TRADE",
+            "status": "PASS",
+            "ticker": "1234",
+            "required_capital_yen": "40200",
+            "expected_loss_yen": "500",
+            "violations": [],
+        },
+        "risk_result.schema.json",
+    )
+
+
+@pytest.mark.parametrize("decision", ["TRADE", "NO_TRADE", "DATA_UNAVAILABLE"])
+def test_risk_result_schema_v2_is_valid(decision):
+    validate_json_document(risk_result_v2_payload(decision), "risk_result.schema.json")
+
+
+def test_risk_result_schema_v2_missing_evaluation_context_is_invalid():
+    payload = risk_result_v2_payload("TRADE")
+    del payload["evaluation_context"]
+    with pytest.raises(ValueError, match="evaluation_context"):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+def test_risk_result_schema_v2_missing_input_hashes_is_invalid():
+    payload = risk_result_v2_payload("TRADE")
+    del payload["input_hashes"]
+    with pytest.raises(ValueError, match="input_hashes"):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+def test_risk_result_schema_v2_extra_input_hash_is_invalid():
+    payload = risk_result_v2_payload("TRADE")
+    payload["input_hashes"]["extra_sha256"] = "5" * 64
+    with pytest.raises(ValueError):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+def test_risk_result_schema_v2_missing_input_hash_key_is_invalid():
+    payload = risk_result_v2_payload("TRADE")
+    del payload["input_hashes"]["ranking_sha256"]
+    with pytest.raises(ValueError, match="ranking_sha256"):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+@pytest.mark.parametrize("field", ["current_positions", "trades_today"])
+def test_risk_result_schema_v2_trade_context_null_is_invalid(field):
+    payload = risk_result_v2_payload("TRADE")
+    payload["evaluation_context"][field] = None
+    with pytest.raises(ValueError):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+@pytest.mark.parametrize("decision", ["NO_TRADE", "DATA_UNAVAILABLE"])
+@pytest.mark.parametrize("field", ["current_positions", "trades_today"])
+def test_risk_result_schema_v2_non_trade_context_zero_is_invalid(decision, field):
+    payload = risk_result_v2_payload(decision)
+    payload["evaluation_context"][field] = 0
+    with pytest.raises(ValueError):
+        validate_json_document(payload, "risk_result.schema.json")
+
+
+def test_risk_result_schema_v1_with_v2_fields_is_invalid():
+    payload = risk_result_v2_payload("TRADE")
+    payload["schema_version"] = 1
+    with pytest.raises(ValueError):
+        validate_json_document(payload, "risk_result.schema.json")

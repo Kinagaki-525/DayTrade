@@ -3,7 +3,12 @@ from pathlib import Path
 
 from src.market import audit_official_ohlcv, validate_market_data, validate_source_ledger
 from src.source_matrix import load_source_matrix
-from tests.factories import make_market_record, make_source_attempt, make_source_record
+from tests.factories import (
+    make_market_record,
+    make_matching_source_attempt,
+    make_source_attempt,
+    make_source_record,
+)
 
 
 def test_complete_sourced_market_data_is_valid_for_trade():
@@ -71,6 +76,7 @@ def test_source_ledger_rejects_embedded_source_not_in_canonical_ledger():
     ledger = {
         "target_date": "2026-08-10",
         "sources": [source.as_dict() for source in record.sources[:-1]],
+        "source_attempts": [make_matching_source_attempt(record.sources)],
     }
 
     result = validate_source_ledger("2026-08-10", [record], ledger)
@@ -205,7 +211,7 @@ def test_source_ledger_accepts_tdnet_found_zero_results():
         {
             "target_date": "2026-08-10",
             "sources": [source.as_dict() for source in record.sources],
-            "source_attempts": [attempt],
+            "source_attempts": [attempt, make_matching_source_attempt(record.sources)],
         },
     )
 
@@ -302,7 +308,7 @@ def test_source_ledger_accepts_existing_source_page_path():
         {
             "target_date": "2026-08-10",
             "sources": [source.as_dict() for source in record.sources],
-            "source_attempts": [attempt],
+            "source_attempts": [attempt, make_matching_source_attempt(record.sources)],
         },
         source_base_dir=Path("regression/2026-08-10-baseline/runs/2026-08-10"),
     )
@@ -323,7 +329,11 @@ def test_source_ledger_treats_numeric_string_and_number_as_same_value():
     result = validate_source_ledger(
         "2026-08-10",
         [record],
-        {"target_date": "2026-08-10", "sources": ledger_sources},
+        {
+            "target_date": "2026-08-10",
+            "sources": ledger_sources,
+            "source_attempts": [make_matching_source_attempt(record.sources)],
+        },
     )
 
     assert result.valid is True
@@ -507,3 +517,165 @@ def test_official_ohlcv_audit_detects_conflict_without_rewriting_saved_value():
         {"field_name": "high", "saved_value": record.high, "official_value": "401"}
     ]
     assert record.high == 400
+
+
+# ----------------------------------------------------- FIX-R2-001C: 001C-3 ---
+#
+# MAPPED SOURCE FIELDS (company_name / market / share_unit) are authorized
+# only by the explicit contracts in market.MAPPED_FIELD_CONTRACTS, never by
+# a generic "any VERIFIED field_provenance will do" bypass. DIRECT SOURCE
+# FIELDS (previous_close / previous_high included) require a real, literal
+# same-named Source Record; a VERIFIED-looking field_provenance entry alone
+# is never sufficient for them.
+
+
+def _with_provenance(record, field_name, **overrides):
+    updated = []
+    for item in record.field_provenance:
+        if item["field_name"] == field_name:
+            updated.append({**item, **overrides})
+        else:
+            updated.append(item)
+    return replace(record, field_provenance=tuple(updated))
+
+
+def _mapped_provenance(record, field_name):
+    return next(item for item in record.field_provenance if item["field_name"] == field_name)
+
+
+def test_mapped_company_name_with_empty_source_refs_is_invalid():
+    record = make_market_record()
+    record = _with_provenance(record, "company_name", source_refs=[])
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert any("company_name" in error and "source_refs" in error for error in result.errors)
+
+
+def test_mapped_market_with_empty_source_refs_is_invalid():
+    record = make_market_record()
+    record = _with_provenance(record, "market", source_refs=[])
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert any("market" in error and "source_refs" in error for error in result.errors)
+
+
+def test_mapped_company_name_provenance_referencing_the_wrong_source_is_invalid():
+    record = make_market_record()
+    wrong_ref = next(
+        source.source_ref for source in record.sources if source.field_name == "trading_unit"
+    )
+    record = _with_provenance(record, "company_name", source_refs=[wrong_ref])
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert any(
+        "company_name" in error and "does not reference" in error for error in result.errors
+    )
+
+
+def test_mapped_company_name_source_value_mismatch_is_invalid():
+    record = make_market_record()
+    sources = [
+        replace(source, value="A Completely Different Name")
+        if source.field_name == "listed_company_name"
+        else source
+        for source in record.sources
+    ]
+    record = replace(record, sources=tuple(sources))
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert "No source value matches market data field: company_name" in result.errors
+
+
+def test_mapped_market_source_value_mismatch_is_invalid():
+    record = make_market_record()
+    sources = [
+        replace(source, value="Growth") if source.field_name == "market_segment" else source
+        for source in record.sources
+    ]
+    record = replace(record, sources=tuple(sources))
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert "No source value matches market data field: market" in result.errors
+
+
+def test_mapped_share_unit_source_value_mismatch_is_invalid():
+    record = make_market_record()
+    sources = [
+        replace(source, value="200") if source.field_name == "trading_unit" else source
+        for source in record.sources
+    ]
+    record = replace(record, sources=tuple(sources))
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert "No source value matches market data field: share_unit" in result.errors
+
+
+def test_previous_close_requires_a_real_source_record_not_just_provenance():
+    """A field_provenance entry claiming VERIFIED for previous_close, with no
+    actual YAHOO_JP_HISTORY/KABUTAN_HISTORY Source Record backing it, must
+    not substitute for the DIRECT SOURCE FIELD requirement."""
+    record = make_market_record()
+    sources = tuple(
+        source for source in record.sources if source.field_name != "previous_close"
+    )
+    record = replace(record, sources=sources)
+    record = replace(
+        record,
+        field_provenance=record.field_provenance
+        + (
+            {
+                "field_name": "previous_close",
+                "status": "VERIFIED",
+                "verified_value": str(record.previous_close),
+                "primary_source_ref": "FABRICATED:1",
+                "secondary_source_ref": "FABRICATED:2",
+                "source_refs": [],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
+        ),
+    )
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert "Missing source for market data field: previous_close" in result.errors
+
+
+def test_previous_high_requires_a_real_source_record_not_just_provenance():
+    record = make_market_record()
+    sources = tuple(
+        source for source in record.sources if source.field_name != "previous_high"
+    )
+    record = replace(record, sources=sources)
+    record = replace(
+        record,
+        field_provenance=record.field_provenance
+        + (
+            {
+                "field_name": "previous_high",
+                "status": "VERIFIED",
+                "verified_value": str(record.previous_high),
+                "primary_source_ref": "FABRICATED:1",
+                "secondary_source_ref": "FABRICATED:2",
+                "source_refs": [],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
+        ),
+    )
+
+    result = validate_market_data(record)
+
+    assert result.valid_for_trade is False
+    assert "Missing source for market data field: previous_high" in result.errors
