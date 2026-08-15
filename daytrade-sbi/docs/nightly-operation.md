@@ -159,3 +159,28 @@ Ranking完了後、main agentはCLI（Case A/Bは`build-ranking-terminal-recomme
 
 Risk Engineが`REJECTED`の場合は、提案値を変更せず`REJECTED`として記録します。
 `REJECTED`を回避するために提案値を都合よく変更して再実行しません。
+
+## Risk Result v2 と Production Verifier（FIX-R2-003）
+
+`config_schema_version: 6`の設定で`risk-check`を実行すると、`risk_result.json`は
+`schema_version: 2`で出力される（Case A/B/Cすべて）。v2では次の2フィールドが必須になる。
+
+- `evaluation_context`: Risk評価に実際に使った`current_positions` / `trades_today`。
+  Case C `TRADE`の場合だけ0以上の整数を記録し、Case A・Case B・Case C `NO_TRADE`では
+  Risk評価入力を使用しないため必ず`null` / `null`へ正規化される。
+- `input_hashes`: 上流Artifactの**生バイト**SHA256をちょうど12キー記録する。
+  `selection_sha256`はCase A/Bでは`null`、Case Cでは実際の`selection.json`のハッシュ。
+  `market_research_sha256`は`--market-research`を渡した場合だけ非`null`になる。
+
+`config_schema_version`が6未満の履歴Runは従来どおり`risk_result.schema_version: 1`のままで、
+引き続きスキーマ的に有効である。
+
+Production Verifierは`risk_result.json`に書かれた値を正本として信用しない。Selection /
+Recommendation / Riskをリポジトリ自身の公式Builder（`src/downstream_trust.py`経由で
+`risk-check`と共有）で再計算し、完全一致しなければ`INVALID_RUN`になる。
+
+- `verify-production-run`: Case A / Case B / Case Cのいずれも、Trust Chainが全て成功した
+  場合にのみ`VERIFIED_*`となる。
+- `verify-production-happy-path`: **Case Cのみ**を許可する。Case A・Case Bは正当なRunでは
+  あるが、Selectionが有効化された本番Happy Pathではないため`INVALID_RUN`になる。
+  Case C `NO_TRADE`も、Risk `REJECTED`も、正当なHappy Pathである（TRADEを強制しない）。
