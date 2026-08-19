@@ -237,7 +237,7 @@ def test_nightly_operation_documents_the_human_seccomp_attestation_marker():
     text = _text("docs/nightly-operation.md")
     for required in (
         "/etc/daytrade-seccomp-verified",
-        "DAYTRADE_SECCOMP_VERIFIED_V1",
+        "DAYTRADE_SECCOMP_VERIFIED_V2",
         "/sandbox",
         "uid 0",
         "sandbox_seccomp",

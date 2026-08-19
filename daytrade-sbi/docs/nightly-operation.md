@@ -214,25 +214,63 @@ sudo apt-get install bubblewrap socat
 
 - Claude Code >= 2.1.219（`sandbox.network.strictAllowlist`の要件）。
 - Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
-  seccompの有無を推測しません。次のHuman Runtime Acceptanceの結果だけを検証します。
+  seccompの有無を推測しません。次のHuman Runtime Acceptance v2（V2差分Probe方式）
+  の結果だけを検証します。`/sandbox`のDependencies表示だけをAcceptanceの根拠には
+  しません。
 
-  1. Humanが`claude`を起動し`/sandbox`のDependencies表示でseccomp filterが有効で
-     あることを確認する。
-  2. 確認できた場合のみ、Humanがroot権限でattestation markerを作成する。
+  以下のHuman Runtime Acceptance v2手順は、リポジトリの
+  `<repository-root>/daytrade-sbi`をcurrent working directoryとする。
+  Sandbox外Probeを実行した同じ`daytrade-sbi`ディレクトリからClaude Codeも起動する。
+
+  1. HumanがClaude Sandbox**外**の通常のWSL shellで`daytrade-sbi`へ移動し、
+     次を実行する。
 
      ```bash
-     sudo sh -c 'echo DAYTRADE_SECCOMP_VERIFIED_V1 > /etc/daytrade-seccomp-verified'
+     cd <repository-root>/daytrade-sbi
+     scripts/claude-seccomp-probe --expect-unsandboxed
+     ```
+
+     結果が`DAYTRADE_SECCOMP_PROBE=UNIX_SOCKET_CREATE_ALLOWED`でexit 0である
+     ことを確認する。
+
+  2. 手順1と同じ`daytrade-sbi`ディレクトリをCWDとして、Claude Codeを
+     Sandbox有効状態で起動する。
+
+  3. `/sandbox`でHumanが現在のSandbox設定を確認する（参考情報であり、これ単独では
+     Acceptanceの根拠にしない）。
+
+  4. Claude Sandbox**内**で次を実行する。
+
+     ```bash
+     scripts/claude-seccomp-probe --expect-sandboxed
+     ```
+
+     結果が`DAYTRADE_SECCOMP_PROBE=UNIX_SOCKET_CREATE_BLOCKED_EPERM`でexit 0で
+     あることを確認する。
+
+  5. 手順1と手順4の両方が確認できた場合に限り、Humanがroot権限でattestation
+     markerを作成する。
+
+     ```bash
+     sudo sh -c 'echo DAYTRADE_SECCOMP_VERIFIED_V2 > /etc/daytrade-seccomp-verified'
      sudo chown root:root /etc/daytrade-seccomp-verified
      sudo chmod 644 /etc/daytrade-seccomp-verified
      ```
 
-  3. Preflightは`/etc/daytrade-seccomp-verified`が regular file / uid 0 /
-     group・other非writable / 内容が`DAYTRADE_SECCOMP_VERIFIED_V1`であることを
-     検証します。ひとつでも満たさなければ`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`で
-     Hard Stopし、`claude`は起動せず`runtime_security.json`も書きません。
+     markerの内容は完全一致で`DAYTRADE_SECCOMP_VERIFIED_V2`とし、group・other
+     非writableにする。手順1または手順4のいずれかが確認できない場合はmarkerを
+     作成せず、ProductionはFail Closedのまま停止する。
 
-  このmarkerはHuman専用です。Coding AgentもRepository Scriptも作成しません。
-  Native LinuxでもWSL2でも同一の要件です（判断分岐を増やさないため）。
+  6. Preflightは`/etc/daytrade-seccomp-verified`が regular file / uid 0 /
+     group・other非writable / 内容が`DAYTRADE_SECCOMP_VERIFIED_V2`であることを
+     検証します。ひとつでも満たさなければ`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`で
+     Hard Stopし、`claude`は起動せず`runtime_security.json`も書きません。旧
+     `DAYTRADE_SECCOMP_VERIFIED_V1`のmarkerも同様にUnverified扱いです
+     （V1からV2への自動migrationはありません）。
+
+  このmarkerはHuman専用です。Probe自身・Coding Agent・Repository Scriptも
+  作成しません。Native LinuxでもWSL2でも同一の要件です（判断分岐を増やさない
+  ため）。
 - `/etc/daytrade-production-runtime`も同様に regular file / uid 0 /
   group・other非writable / 内容一致 を要求します（content-only verificationでは
   ありません）。

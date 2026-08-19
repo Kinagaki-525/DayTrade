@@ -548,7 +548,7 @@ def test_a_production_marker_directory_is_not_a_marker(tmp_path):
 
 def test_the_seccomp_attestation_marker_contract():
     assert crs.SECCOMP_MARKER_PATH == Path("/etc/daytrade-seccomp-verified")
-    assert crs.SECCOMP_MARKER_CONTENT == "DAYTRADE_SECCOMP_VERIFIED_V1"
+    assert crs.SECCOMP_MARKER_CONTENT == "DAYTRADE_SECCOMP_VERIFIED_V2"
 
 
 def test_a_valid_seccomp_marker_passes(tmp_path):
@@ -564,6 +564,16 @@ def test_a_missing_seccomp_marker_is_unverified(tmp_path):
 
 def test_a_seccomp_marker_with_wrong_content_is_unverified(tmp_path):
     marker = _marker(tmp_path, "daytrade-seccomp-verified", "SECCOMP_PROBABLY_FINE")
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_seccomp_marker(marker, expected_uid=UID)
+    assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_a_stale_v1_seccomp_marker_is_not_migrated_and_fails_closed(tmp_path):
+    """V1 -> V2 is not an automatic migration: an old V1 marker must fail closed."""
+    marker = _marker(
+        tmp_path, "daytrade-seccomp-verified", "DAYTRADE_SECCOMP_VERIFIED_V1"
+    )
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_seccomp_marker(marker, expected_uid=UID)
     assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
@@ -644,6 +654,18 @@ def test_unverified_seccomp_is_a_hard_stop_not_an_assumption(state):
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_sandbox_seccomp(state)
     assert excinfo.value.code == "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED"
+
+
+def test_unverified_seccomp_message_points_to_v2_runtime_acceptance():
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_sandbox_seccomp(False)
+
+    message = excinfo.value.message
+    assert "Human Runtime Acceptance v2" in message
+    assert "Sandbox-outside" in message
+    assert "Sandbox-inside" in message
+    assert "differential probe" in message
+    assert "/sandbox Dependencies" not in message
 
 
 def test_verified_seccomp_passes():
