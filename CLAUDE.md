@@ -24,6 +24,31 @@
 - `sources.json` / `market_data.json` / `recommendation.json` を手で編集しない
 - 市場数値（価格・出来高・売買代金・呼値・日付）をagentが読み取って書き写さない
 
+## Seccomp Human Runtime Acceptance時の限定許可（Claude Code固有）
+
+上記の絶対禁止は緩めない。そのうえで、Human Seccomp Runtime Acceptance
+（`daytrade-sbi/docs/nightly-operation.md`のV2差分Probe手順）を行う場合に限り、
+Claude Sandbox内で次のコマンドの実行だけを許可する。
+
+```
+scripts/claude-seccomp-probe --expect-sandboxed
+```
+
+この限定許可コマンドはHuman Runtime Acceptance v2手順に従い、
+リポジトリの`daytrade-sbi/`をcurrent working directoryとして実行する。
+
+- `--expect-unsandboxed`は許可しない。これはHumanがClaude Sandbox外の通常の
+  WSL shellで実行するものであり、Claude（Sandbox内）が実行してはならない
+- `socat` / `nc` / `netcat`、および生の`python -c`によるsocket操作等、
+  Probe以外の手段でsocket挙動を確認することは許可しない
+- `WebSearch` / `WebFetch`禁止、`curl` / `wget`等の禁止、
+  `git fetch` / `git pull` / `git push`禁止、`sudo`禁止は、この許可によって
+  一切緩まない
+- このProbeはProduction通常運用のPreflightや`APPROVED_SUBCOMMANDS`へは
+  追加しない。Human Seccomp Runtime Acceptanceの手動実行時にだけ使う
+- `/etc/daytrade-seccomp-verified`の作成・削除・上書きはClaudeが行わない。
+  Probeの結果を見てmarkerを作成するのはHumanだけ
+
 ## 外部取得はSource Acquisition CLIだけ
 
 外部ページの取得は、このリポジトリのSource Acquisition CLI

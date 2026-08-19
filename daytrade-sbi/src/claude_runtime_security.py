@@ -52,11 +52,13 @@ MANAGED_GUARD_PATH = DEFAULT_MANAGED_ROOT / MANAGED_GUARD_FILENAME
 PRODUCTION_MARKER_PATH = Path("/etc/daytrade-production-runtime")
 PRODUCTION_MARKER_CONTENT = "DAYTRADE_PRODUCTION_RUNTIME_V1"
 
-#: FIX-R2-004A section 12: a root-owned attestation that a human confirmed the
-#: Claude Sandbox seccomp filter via ``/sandbox`` Dependencies. Nothing in this
-#: repository ever creates it -- it is a Human Runtime Acceptance artifact.
+#: FIX-R2-004A section 12 (V2): a root-owned attestation that a human accepted
+#: Claude Sandbox seccomp enforcement via the repository's
+#: Sandbox-outside / Sandbox-inside differential probe. Nothing in this
+#: repository ever creates the marker -- it is a Human Runtime Acceptance
+#: artifact.
 SECCOMP_MARKER_PATH = Path("/etc/daytrade-seccomp-verified")
-SECCOMP_MARKER_CONTENT = "DAYTRADE_SECCOMP_VERIFIED_V1"
+SECCOMP_MARKER_CONTENT = "DAYTRADE_SECCOMP_VERIFIED_V2"
 
 REQUIRED_SANDBOX_BINARIES = ("bwrap", "socat")
 
@@ -553,9 +555,10 @@ def verify_seccomp_marker(
 ) -> None:
     """Verify the Human-created seccomp attestation marker (section 12/13).
 
-    The Claude Sandbox seccomp state is never *guessed* here. A human confirms
-    it via ``/sandbox`` Dependencies and records that acceptance as a
-    root-owned marker file; the preflight only verifies that attestation.
+    The Claude Sandbox seccomp state is never guessed here. A Human completes
+    the Sandbox-outside / Sandbox-inside differential probe and records that
+    Runtime Acceptance as a root-owned V2 marker; preflight only verifies that
+    attestation.
     """
     attested: bool | None
     detail = ""
@@ -601,7 +604,8 @@ def verify_sandbox_seccomp(seccomp_available: bool | None) -> None:
         raise _fail(
             "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
             "Claude Sandbox seccomp filter availability could not be verified; "
-            "confirm it via 'claude' /sandbox Dependencies before running",
+            "complete Human Runtime Acceptance v2 using the Sandbox-outside / "
+            "Sandbox-inside differential probe and V2 attestation marker",
         )
 
 

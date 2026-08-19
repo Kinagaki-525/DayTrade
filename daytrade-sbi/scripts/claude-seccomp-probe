@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Thin entry point for the Seccomp Human Runtime Acceptance v2 differential probe.
+
+Business Logic lives entirely in ``src/claude_seccomp_probe.py``; this file
+only wires it up as a runnable script. It does not create any attestation
+artifact, does not write to any privileged location, and does not shell out
+to any external installer or network tool.
+
+A Human runs this script twice: once with ``--expect-unsandboxed`` from a
+normal Linux/WSL shell, and once with ``--expect-sandboxed`` from inside the
+Claude Code Bash Sandbox.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.claude_seccomp_probe import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

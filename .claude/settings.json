@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/network_guard.py"
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/hooks/network_guard.py\""
           }
         ]
       }
