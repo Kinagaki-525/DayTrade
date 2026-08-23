@@ -90,7 +90,10 @@ def test_safe_git_security_002_noncanonical_push_url_never_echoes_credentials(re
 def test_safe_git_security_003_bisect_start_marker_is_fail_closed(repo):
     git_dir = _git(repo, "rev-parse", "--git-dir").stdout.strip()
     marker = repo / git_dir / "BISECT_START"
-    marker.write_text(_git(repo, "rev-parse", "HEAD").stdout.strip() + "\n", encoding="utf-8")
+    marker.write_text(
+        _git(repo, "rev-parse", "HEAD").stdout.strip() + "\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(safe_git.SafeGitError) as caught:
         safe_git.verify_no_git_operation(str(repo))
@@ -103,3 +106,14 @@ def test_safe_git_security_004_wrappers_are_committed_executable():
         mode = wrapper.stat().st_mode
         assert mode & stat.S_IXUSR, f"owner execute bit missing: {wrapper}"
         assert os.access(wrapper, os.X_OK), f"wrapper is not executable: {wrapper}"
+
+
+def test_safe_git_security_005_remote_vcs_helper_is_fail_closed(repo):
+    _git(repo, "config", "remote.origin.vcs", "evil-helper")
+
+    with pytest.raises(safe_git.SafeGitError) as caught:
+        safe_git.verify_canonical_origin(str(repo))
+
+    message = str(caught.value)
+    assert "remote.origin.vcs" in message
+    assert "custom remote helpers are not allowed" in message
