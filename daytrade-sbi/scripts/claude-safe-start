@@ -36,8 +36,10 @@ def main(argv: list[str]) -> int:
         root = repository_root()
         validate_target_branch(root, target)
         verify_canonical_origin(root)
-        verify_working_tree_clean(root)
+        # Operation markers are checked before status so a half-finished Git
+        # operation cannot be hidden behind a status/parsing failure.
         verify_no_git_operation(root)
+        verify_working_tree_clean(root)
 
         previous_branch = current_branch(root)
         verify_current_branch_allowed(previous_branch)
