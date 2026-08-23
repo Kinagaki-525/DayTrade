@@ -53,7 +53,7 @@ def _env() -> dict[str, str]:
 
 
 def _safe_url_for_error(url: str) -> str:
-    """Return a diagnostic URL with any userinfo credentials removed."""
+    """Return a diagnostic URL with userinfo, query and fragment removed."""
     try:
         parsed = urlsplit(url)
         if not parsed.scheme or not parsed.hostname:
@@ -61,7 +61,7 @@ def _safe_url_for_error(url: str) -> str:
         host = parsed.hostname
         if parsed.port is not None:
             host = f"{host}:{parsed.port}"
-        return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
     except ValueError:
         return "<redacted>"
 
@@ -231,8 +231,16 @@ def push_argv(branch: str) -> list[str]:
 
 def run_push(root: str, branch: str) -> None:
     argv = push_argv(branch)
-    completed = subprocess.run(argv, cwd=root, env=_env(), check=False)
+    completed = subprocess.run(
+        argv,
+        cwd=root,
+        env=_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if completed.returncode != 0:
+        # Never forward Git's stderr: auth/helper output may contain secrets.
         raise SafePushError(f"push rejected (git exit {completed.returncode})")
 
 
