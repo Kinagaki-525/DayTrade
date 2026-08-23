@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from urllib.parse import urlsplit, urlunsplit
 
 
 CANONICAL_ORIGIN_URL = "https://github.com/Kinagaki-525/DayTrade.git"
@@ -49,6 +50,20 @@ def _env() -> dict[str, str]:
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
+
+
+def _safe_url_for_error(url: str) -> str:
+    """Return a diagnostic URL with any userinfo credentials removed."""
+    try:
+        parsed = urlsplit(url)
+        if not parsed.scheme or not parsed.hostname:
+            return "<redacted>"
+        host = parsed.hostname
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, parsed.query, parsed.fragment))
+    except ValueError:
+        return "<redacted>"
 
 
 def _git(*args: str, cwd: str | None = None) -> str:
@@ -90,14 +105,7 @@ def _git_result(*args: str, cwd: str | None = None) -> tuple[int, str, str]:
 
 
 def resolve_push_urls(root: str) -> list[str]:
-    """Every URL ``git push origin`` would actually write to.
-
-    ``remote.<name>.url`` is only the *fetch* URL. When ``remote.<name>.pushurl``
-    is set it overrides it for pushes, and Git accepts several of them, which
-    makes one ``git push`` write to several repositories. Checking the fetch URL
-    alone would therefore approve a push aimed somewhere else entirely, so the
-    push side is resolved here and validated on its own.
-    """
+    """Every URL ``git push origin`` would actually write to."""
     code, out, _ = _git_result(
         "remote", "get-url", "--push", "--all", REMOTE, cwd=root
     )
@@ -113,7 +121,7 @@ def verify_remote_is_not_mirror(root: str) -> None:
     code, value, _ = _git_result(
         "config", "--get", f"remote.{REMOTE}.mirror", cwd=root
     )
-    if code == 1:  # not set
+    if code == 1:
         return
     if code != 0:
         raise SafePushError(
@@ -147,21 +155,26 @@ def verify_canonical_origin(root: str) -> None:
         )
     url = _git("remote", "get-url", REMOTE, cwd=root)
     if url != CANONICAL_ORIGIN_URL:
-        # Never echo a non-canonical URL: it may contain embedded credentials.
-        raise SafePushError(f"{REMOTE} fetch URL is not canonical; refusing to push")
+        safe_url = _safe_url_for_error(url)
+        raise SafePushError(
+            f"{REMOTE} is {safe_url!r}, not the canonical "
+            f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
+        )
 
     push_urls = resolve_push_urls(root)
     if not push_urls:
-        raise SafePushError(
-            f"{REMOTE} resolves to no push URL; refusing to push"
-        )
+        raise SafePushError(f"{REMOTE} resolves to no push URL; refusing to push")
     if len(push_urls) > 1:
         raise SafePushError(
             f"{REMOTE} resolves to {len(push_urls)} push URLs; this script pushes "
             "to exactly one repository. Refusing to push"
         )
     if push_urls[0] != CANONICAL_ORIGIN_URL:
-        raise SafePushError(f"{REMOTE} push URL is not canonical; refusing to push")
+        safe_url = _safe_url_for_error(push_urls[0])
+        raise SafePushError(
+            f"{REMOTE} pushes to {safe_url!r}, not the canonical "
+            f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
+        )
 
     verify_remote_is_not_mirror(root)
     verify_remote_vcs_is_unset(root)
@@ -199,12 +212,7 @@ def verify_branch_is_pushable(root: str, branch: str) -> None:
 
 
 def verify_working_tree_is_clean(root: str) -> None:
-    """Only a committed HEAD is ever sent.
-
-    This also covers the tampering case the Development control cares about:
-    an edited-but-uncommitted wrapper or network guard makes the tree dirty,
-    so the push is refused before it starts.
-    """
+    """Only a committed HEAD is ever sent."""
     status = _git("status", "--porcelain", "--untracked-files=all", cwd=root)
     if status:
         entries = status.splitlines()
