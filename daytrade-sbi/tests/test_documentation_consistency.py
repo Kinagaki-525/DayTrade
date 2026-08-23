@@ -370,3 +370,95 @@ def test_network_audit_ssot_is_the_physical_request_record():
     assert (
         "``runs/<target_date>/network_requests/<request_id>.json``" in source
     ), "src/source_acquisition.py no longer names the Request Record as the SSOT"
+
+
+# ------------------------------- FIX-PRD-005: production path contract ---
+#
+# The Runtime Acceptance failure was a documentation failure: the operating
+# procedure showed logical relative paths (`config/source_matrix.yaml`) and
+# said nothing about the guard's absolute-path contract, so a production
+# operator pasted them into a Bash call and was correctly denied. The guard
+# is right; the procedure was incomplete. These tests pin the *procedure*,
+# and pin that the guard's denials were not softened to compensate.
+
+#: The two contract names every agent-facing production document must carry,
+#: so that the Skill, the prompt and the operations doc point at one rule.
+PRODUCTION_CONTRACT_DOCS = (
+    "docs/nightly-operation.md",
+    "docs/canonical-pipeline.md",
+    "prompts/nightly_research.md",
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
+def test_production_docs_name_both_command_materialisation_contracts(name):
+    text = _text(name)
+    assert "Production Path Materialization Contract" in text, name
+    assert "1 Bash call = 1 canonical CLI command" in text, name
+
+
+#: The documents a production agent actually renders commands from. The
+#: canonical-pipeline doc names the contract but stays the pipeline-order
+#: SSOT, so it is not asked to repeat the syntax detail.
+COMMAND_RENDERING_DOCS = (
+    "docs/nightly-operation.md",
+    "prompts/nightly_research.md",
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", COMMAND_RENDERING_DOCS)
+def test_production_docs_forbid_every_unexpanded_path_form(name):
+    """A production command string is inspected before any shell expands it,
+    so each of these forms has to be called out as unusable, not just
+    'use absolute paths'."""
+    text = _text(name)
+    for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(pwd)"):
+        assert form in text, f"{name} does not mention the {form} form"
+
+
+def test_nightly_operation_states_the_materialisation_sources():
+    """Where the absolute paths come from -- the launcher's cwd and the run
+    directory -- rather than a hardcoded machine path."""
+    text = _text("docs/nightly-operation.md")
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+    assert "CLAUDE_PRODUCTION_BASH_DENIED" in text
+    assert "current working directory" in text
+    assert "runtime_security.json" in text
+    assert '; echo "EXIT_CODE=$?"' in text
+
+
+def test_no_document_hardcodes_the_operators_daytrade_root():
+    """The materialised path is derived at runtime; a machine-specific root
+    baked into a document is exactly what makes the contract wrong on the
+    next machine."""
+    hardcoded = "/home/daytrade/DayTrade"
+    for name in DOCS:
+        assert hardcoded not in _text(name), f"{name} hardcodes {hardcoded}"
+
+
+def test_skill_defers_to_the_operations_doc_for_the_production_contract():
+    text = _text("SKILL.md")
+    assert "scripts/claude-production" in text
+    assert "daytrade-sbi/docs/nightly-operation.md" in text
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+
+
+def test_claude_md_states_the_absolute_path_and_single_command_contract():
+    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Production Path Materialization Contract" in text
+    assert "1 Bash call = 1 canonical CLI command" in text
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+
+
+def test_the_runtime_guard_still_denies_relative_paths_and_metacharacters():
+    """The documented fix must not have been implemented by relaxing the
+    guard. Pinned against the guard source itself, not its docs."""
+    guard = (PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py").read_text(
+        encoding="utf-8"
+    )
+    assert "must be an absolute path in production" in guard
+    assert "if not candidate.is_absolute():" in guard
+    for meta in (";", "&&", "||", "|", "$(", "`", ">", "<"):
+        assert f'"{meta}"' in guard, f"the guard no longer lists {meta!r} as a metacharacter"

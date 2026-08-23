@@ -163,6 +163,20 @@ Production Security Boundaryの**正本はOS Managed Policy**
 - Production中のBashは既定でdeny。許可されるのは
   `<production python> -B -m src.cli <approved subcommand> ...`だけで、
   `cd` / パイプ / リダイレクト / command substitution / 複合コマンドは拒否される。
+- **Production Path Materialization Contract**: Runtime Guardはshell実行**前**のcommand
+  文字列を検査するため、path argumentは具体的なabsolute pathでなければならない。
+  ドキュメント・Skill・Prompt中の`config/source_matrix.yaml`や`runs/YYYY-MM-DD/...`は
+  論理パス表記であり、Bash Toolへそのままコピーすると
+  `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`で拒否される。Bash Toolへ渡す直前に、
+  DayTrade Root（Production Launcherが`chdir`済みのsession current working directory）と
+  Run Directory（`<DayTrade Root>/runs/<target-date>`）を基準として具体的なabsolute pathへ
+  materializeする。`./` `../` `~/`、`$DAYTRADE_ROOT` / `${DAYTRADE_ROOT}` /
+  `$DAYTRADE_RUN_DIR` / `${DAYTRADE_RUN_DIR}`、`$(pwd)`などshell展開に依存する表記を
+  command文字列へ残さない。特定OSの絶対パスをドキュメントへhardcodeしない。
+- **1 Bash call = 1 canonical CLI command**。終了コード確認のために
+  `; echo "EXIT_CODE=$?"`を付けない（`;`は`CLAUDE_PRODUCTION_BASH_DENIED`）。
+  Bash Tool自身がnon-zero exitを返す。出力ファイルが必要な場合はCLIの`--output`を使う。
+  Runtime Guardのrelative path拒否・shell metacharacter拒否を緩める変更は行わない。
 - Claudeが直接Write/Editできる唯一のArtifactは
   `runs/<date>/working/event_source_extraction.json`。
 - `sudo` / `apt` / `apt-get` / `npm install` / `pip install` を実行しない。

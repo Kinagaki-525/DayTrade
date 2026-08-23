@@ -45,6 +45,43 @@
 24. `build-ranking`
 25. Case A/B/C
 
+## Production Executor Path Contract（Claude Production Runtime Profileのみ）
+
+このPrompt中のcommand例は、すべての実行環境で共通の**論理パス表記**（`config/source_matrix.yaml`、
+`runs/YYYY-MM-DD/...`）で書かれている。Codex / Development Claude Codeはこの表記のまま
+実行できるが、**Production Claude Code（`scripts/claude-production`のPreflightを通したsession）は
+この文字列をBash Toolへそのままコピーしてはいけない**。
+
+Production Runtime Guardはshell実行前のcommand文字列だけを検査するため、
+相対パスは`CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`、`;`等は`CLAUDE_PRODUCTION_BASH_DENIED`で
+fail closedする。Guardを緩める変更は行わない。正本は
+[docs/nightly-operation.md](../docs/nightly-operation.md)の
+**Production Path Materialization Contract**と**Production 1-call-1-command Contract**。
+
+Productionで守ること:
+
+1. Bash Toolへ渡す直前に、論理パスを具体的なabsolute pathへmaterializeする。
+   DayTrade Rootはsessionのcurrent working directory（Launcherが`os.chdir`済み）、
+   Run Directoryは`<DayTrade Root>/runs/<target-date>`。
+   target dateは`runs/<target-date>/working/runtime_security.json`の`target_date`で確認する
+   （Readで確認し、Bashで`cat`しない）。特定のOS絶対パスをここへ書き足さない。
+2. Bash Toolへ渡すcommandに、`config/...`・`runs/...`のような相対パス、`./` `../` `~/`、
+   `$DAYTRADE_ROOT` / `${DAYTRADE_ROOT}` / `$DAYTRADE_RUN_DIR` / `${DAYTRADE_RUN_DIR}`、
+   `$(pwd)`などのshell展開依存の表記を残さない。
+3. **1 Bash call = 1 canonical CLI command**。終了コード確認のために
+   `; echo "EXIT_CODE=$?"`を付けない（Bash Tool自身がnon-zero exitを返す）。
+   `&&` / `||` / pipe / redirect / command substitution / `cd`も使わない。
+   出力ファイルはCLIの`--output`で指定する。
+4. Canonical CLI Pipeline Orderそのものは変わらない。変わるのはcommandのrendering
+   （path materialization）だけであり、stageの順序・引数の意味・業務ロジックは同一。
+
+例（`<DAYTRADE_ROOT>`と`<TARGET_DATE>`は実際のabsolute path・実日付へ置換済みであること）:
+
+```text
+<production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
+<production python> -B -m src.cli snapshot-config --config <DAYTRADE_ROOT>/config/strategy.yaml --output <DAYTRADE_ROOT>/runs/<TARGET_DATE>/strategy_snapshot.yaml
+```
+
 ## 保存先
 
 対象日のディレクトリへ次を保存する。
