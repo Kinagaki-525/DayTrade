@@ -291,3 +291,48 @@ def test_every_new_runtime_security_file_exists():
 
 def test_the_project_network_guard_is_not_deleted():
     assert (REPO_ROOT / ".claude" / "hooks" / "network_guard.py").is_file()
+
+
+# --------------------------------------------- FIX-PRD-002 / FIX-PRD-004 ---
+#
+# Three contracts only. These pin *meaning* the runtime enforces, not
+# wording: each one, if silently dropped from the docs, would let an
+# operator reach a conclusion the code refuses to support.
+
+
+#: How each document states "Discovery incomplete is not a NO_TRADE". The
+#: wording differs (AGENTS.md and the nightly prompt are Japanese, the Skill
+#: is English), so each document is pinned by its own phrase rather than one
+#: shared string -- and by the denial itself, not merely by both terms
+#: appearing somewhere in the file.
+DISCOVERY_NOT_NO_TRADE = {
+    "AGENTS.md": "は`NO_TRADE`ではない",
+    "prompts/nightly_research.md": "は`NO_TRADE`ではない",
+    "SKILL.md": "not** `NO_TRADE`",
+}
+
+
+def test_discovery_incomplete_is_documented_as_not_a_no_trade():
+    """An unbuildable candidate universe is a stop, not a daily decision."""
+    for name, denial_phrase in DISCOVERY_NOT_NO_TRADE.items():
+        text = _text(name)
+        assert "DISCOVERY_INCOMPLETE" in text, name
+        assert denial_phrase in text, name
+
+
+def test_docs_forbid_hand_writing_the_terminal_artifacts():
+    """Recommendation / Risk artifacts come from the Builders, never an agent."""
+    text = _text("AGENTS.md")
+    assert "recommendation.json" in text
+    assert "risk_result.json" in text
+    assert "手書き" in text
+
+
+def test_network_audit_ssot_is_the_physical_request_record():
+    """FIX-PRD-004: network_requests/, not source_attempts[], is the SSOT."""
+    text = _text("docs/source-acquisition.md")
+    assert "network_requests" in text
+    assert "request_id" in text
+    # The superseded claim -- attempt_id as the Request Budget key -- must
+    # not come back.
+    assert "`attempt_id`がそのまま予算キー" not in text

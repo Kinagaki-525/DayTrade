@@ -93,6 +93,40 @@ py -B -m src.cli resolve-research-window --target-date YYYY-MM-DD --previous-tra
 - 各ランキングはTOP50を保存する。2ランキングを証券コード単位でUnion/Dedupし、Discovery Candidateは最大100銘柄とする。
 - TDnet単独候補、ニュース、検索、SNS、アクセスランキング、AI選定テーマからDiscovery Candidateを追加しない。
 - `discovery_candidates` はDiscovery unionと完全一致させる。
+
+### Discovery Fail-Closed Gate
+
+`acquire-discovery`はDiscovery Candidate Universeそのものを生成するStageなので、
+失敗した場合は次のStageへ進まない。判定は必ず次の順序で行う。
+
+```
+run acquire-discovery
+
+if exit != 0:
+    STOP
+
+load runs/YYYY-MM-DD/market_research.json
+
+if overall_status == DISCOVERY_INCOMPLETE:
+    STOP
+
+only then:
+    init-candidate-research
+```
+
+- `acquire-discovery`のCLI resultが `status=CLOSED` のときはexit code 1であり、STOPする。
+  `reason_codes`は`market_research.notes`（`VOLUME_RANKING_UNAVAILABLE` /
+  `PRICE_GAIN_RANKING_UNAVAILABLE`等）そのままで、新しいReason Codeは作らない。
+- Discovery失敗時も`market_research.json` / `sources.json` /
+  `network_requests/` / `source_attempts[]`は証跡として保存する。消さない。
+- **Discovery未完了は`NO_TRADE`ではない。** 候補が無かったのではなく、候補Universeを
+  生成できなかった状態であり、`Pipeline: 未完了` / `停止Stage: DISCOVERY`として報告する。
+- `candidate_count == 0` だけを理由に`NO_TRADE`へ変換しない。Discovery成功時の
+  `candidate_count`は`len(discovery_candidates)`であり、Discovery自身の入力ticker数ではない。
+- Discovery未完了でSTOPした場合、正式な`recommendation.json` / `risk_result.json`を
+  agentが手書きして日次結果を補完してはいけない。Discovery Fail-Closedの証跡を
+  そのまま保持し、後続Stageへ進まない。
+
 - Discovery unionを保存したら、次を実行して全Discovery Candidate分の `candidate_research[]` を初期化する。
 
 ```powershell

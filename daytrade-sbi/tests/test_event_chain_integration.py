@@ -99,6 +99,31 @@ def _feature(value, estimated=False):
     }
 
 
+def _research_window(tmp_path):
+    """The canonical acquisition context every acquire-* command validates."""
+    path = tmp_path / "research_window.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "target_date": TARGET_DATE,
+                "previous_trading_day": TARGET_DATE,
+                "research_cutoff": CUTOFF,
+                "research_window": {
+                    "run_type": "FIRST_RUN",
+                    "window_start": "2026-08-10T20:00:00+09:00",
+                    "window_end": CUTOFF,
+                    "previous_research_cutoff": None,
+                    "previous_run_date": None,
+                    "bootstrap_lookback_days": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _candidates(tmp_path, tickers=TICKERS):
     payload = {
         "schema_version": 1,
@@ -233,6 +258,7 @@ def _acquire_event_sources(tmp_path, monkeypatch, routes=None, tickers=TICKERS):
     )
     _candidates(tmp_path, tickers)
     _candidate_pipeline(tmp_path, tickers)
+    _research_window(tmp_path)
     cli.main(
         [
             "acquire-event-sources",

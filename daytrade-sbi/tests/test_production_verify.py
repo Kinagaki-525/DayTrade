@@ -333,6 +333,30 @@ def test_raw_source_page_tamper_is_invalid(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    # This legacy run's CLI arguments are the SSOT here: the canonical
+    # acquisition context is written to match them exactly, rather than the
+    # arguments being reshaped to a nightly-shaped window. TURNOVER never
+    # calls validate_market_research(), so only the three string equalities
+    # in the Canonical Acquisition Context apply.
+    (run_dir / "research_window.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "target_date": "2026-08-12",
+                "previous_trading_day": "2026-08-12",
+                "research_cutoff": "2026-08-11T20:00:00+09:00",
+                "research_window": {
+                    "run_type": "FIRST_RUN",
+                    "window_start": "2026-08-10T20:00:00+09:00",
+                    "window_end": "2026-08-11T20:00:00+09:00",
+                    "previous_research_cutoff": None,
+                    "previous_run_date": None,
+                    "bootstrap_lookback_days": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     cli.main(
         [
             "acquire-actual-turnover",

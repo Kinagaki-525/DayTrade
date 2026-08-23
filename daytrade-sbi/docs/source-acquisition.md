@@ -57,9 +57,23 @@ Issuer（企業IR）ドメインだけは `config/issuer_domain_registry.yaml` �
 - **TSE Listing Gate**: バッチ全体でall-or-nothing。1銘柄でも上場確認に失敗したら
   `TSE_LISTING_BATCH_GATE_FAILED`。銘柄単位の黙示的除外も`.T`サフィックスの推測もしない。
 - **Turnover**: 取得失敗時は turnover=null。過去runのFOUNDを再利用しない。
-- **Request Budget**: (source, candidate, url, date, cutoff) の組に対しGETは1回だけ。
-  自動リトライなし。`attempt_id`がそのまま予算キーになっている。ネットワーク要求の前に`sources.json`を読み、同じ組の成果物が保存済みでSHA256も一致すれば`cache_status=HIT`で**GETを行わない**。保存済みページのハッシュが合わない場合は`SOURCE_PAGE_HASH_MISMATCH`でハード停止し、黙って再取得して「直す」ことはしない。
-- **共有ページ**: 全候補に関係する1枚のページ（TDnet indexなど）は**GET 1回**で取得し、候補ごとに別々のSource Attemptを作る。ネットワーク要求数は1、候補Attempt数はN。Network Auditは`cache_status`でこの2つを区別する。
+- **Request Budget（Physical Request）**: 実際のGETの単位は**Physical Request**であり、その識別子は
+  `request_id = f(url, target_date, research_cutoff)`（`src/request_budget.py`の`request_id_for`）。
+  同じ`request_id`に対しGETは1回だけで、**自動リトライは存在しない**。
+  Physical Requestの正本は`runs/<target_date>/network_requests/<request_id>.json`のRequest Recordで、
+  transport呼出**前**に`RESERVED`として保存し、終了**後**に`COMPLETED`へ更新する。
+  成功・失敗を問わずPhysical Requestは消費済みとして扱う（HTTP 200 / 403 / 404 / timeout /
+  `EXECUTION_FAILED` / `TRANSPORT_FAILED` / `PARSE_FAILED`のいずれでも同じ）。
+  `RESERVED`のまま残っているRecordを見つけた場合は`REQUEST_BUDGET_STATE_INDETERMINATE`で
+  ハード停止する。再試行もRecord削除による「やり直し」も行わない。
+  保存済みページのハッシュが合わない場合は`SOURCE_PAGE_HASH_MISMATCH`でハード停止し、
+  黙って再取得して「直す」ことはしない。
+- **Logical Attempt**: `sources.json`の`source_attempts[]`はLogical Attemptであり、
+  識別子は`attempt_id = f(source_id, candidate_code, url, target_date, research_cutoff)`。
+  Physical Requestとは別の概念で、`len(source_attempts)`はPhysical Request数ではない。
+- **共有ページ**: 全候補に関係する1枚のページ（TDnet indexなど）は**GET 1回**で取得し、
+  候補ごとに別々のLogical Attemptを作る。Physical Request 1に対しLogical Attempt N、
+  Request Record 1という関係になる。
 - **Stage Budget**: 上流のGateが閉じた場合、下流のネットワーク呼び出しは行わない。
 
 ## Event AI Classification
@@ -133,6 +147,10 @@ config SHAの一致まで含む。
 `TRADE`を要求しない。要求してしまえば、SelectionかRisk Engineを弱めることでしか
 検証を通せなくなる。
 
-Network Auditは `sources.json.source_attempts` だけを根拠にし、`cache_status`で
-実際のネットワーク要求（MISS）と保存済みページの再利用（HIT）を区別する。
-`len(source_attempts)`は要求数ではない。
+Network Auditの正本は`runs/<target_date>/network_requests/*.json`のPhysical Request Recordであり、
+`sources.json.source_attempts`ではない。`source_attempts[]`はLogical Attemptの記録で、
+`len(source_attempts)`はPhysical Request数ではない。`cache_status`はそのLogical Attemptが
+どう満たされたかを示すだけなので、それだけから実ネットワーク要求数を判定しない。
+Physical Requestの監査はRequest Recordの`state`を含めて行う。`COMPLETED`は完了した
+Physical Requestを示す。`RESERVED`が残っている場合は、transportが実際に呼び出されたかを
+推測せず、`REQUEST_BUDGET_STATE_INDETERMINATE`としてFail-Closedに扱う。

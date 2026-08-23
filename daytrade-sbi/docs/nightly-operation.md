@@ -338,7 +338,21 @@ sudo apt-get install bubblewrap socat
 
 `runtime_security.json`には`DAYTRADE_HTTP_USER_AGENT`の値、環境変数一式、token、
 API key、cookie、credentialを書きません。User-Agentは`http_user_agent_present: true`
-だけを記録します。
+だけを記録します。実値は`runtime_security.json`にも、logにも、`report.md`にも、
+`recommendation.md`にも書きません。
+
+### Production Entry Contract
+
+Production Nightly Runは、`scripts/claude-production`のRuntime Security Preflightを
+PASSしたProduction Claudeからのみ開始します。単に`claude`を起動しただけのsessionは、
+同じマシン上であってもProduction Runtimeとして扱いません。Preflightを通っていない
+sessionからSource Acquisition CLIを実行しないでください。
+
+`DAYTRADE_HTTP_USER_AGENT`は必須です。未設定または空白のみの場合、Preflightは
+`CLAUDE_HTTP_USER_AGENT_MISSING`でfail closedになり、`src/source_fetch.py`側も
+`HTTP_USER_AGENT_NOT_CONFIGURED`で停止します。コード側のdefault User-Agentも
+fallbackも存在せず、追加してはいけません。診断のためにHumanが一時的に使った値を
+Repositoryのcanonical defaultへ昇格させることもしません。
 
 ### Production Boundaryの正本
 
