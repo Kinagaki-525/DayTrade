@@ -16,12 +16,19 @@ CLAUDE_MD = REPOSITORY_ROOT / "CLAUDE.md"
 SETTINGS = REPOSITORY_ROOT / ".claude" / "settings.json"
 HOOK = REPOSITORY_ROOT / ".claude" / "hooks" / "network_guard.py"
 
+#: Market data hosts. Derived from the Source Matrix, never hand-picked.
 ALLOWED_DOMAINS = {
     "www.jpx.co.jp",
     "finance.yahoo.co.jp",
     "kabutan.jp",
     "www.release.tdnet.info",
 }
+
+#: The single Development-only host, added for ``scripts/claude-safe-push``.
+#: It is *not* a market data source and must never reach the Production
+#: allowlist, which is derived from the Source Matrix and issuer registry
+#: alone (see ``claude_runtime_security.derive_expected_domains``).
+DEVELOPMENT_ONLY_DOMAINS = {"github.com"}
 
 
 def _settings() -> dict:
@@ -106,18 +113,44 @@ def test_settings_deny_list(rule):
 def test_sandbox_is_enabled_with_a_restricted_domain_list():
     sandbox = _settings()["sandbox"]
     assert sandbox["enabled"] is True
-    assert set(sandbox["network"]["allowedDomains"]) == ALLOWED_DOMAINS
+    assert (
+        set(sandbox["network"]["allowedDomains"])
+        == ALLOWED_DOMAINS | DEVELOPMENT_ONLY_DOMAINS
+    )
 
 
 def test_sandbox_allowlist_is_exactly_the_approved_host_set():
     """The allowlist is derived security policy, not a wishlist: it must equal
-    the Source Matrix template hosts plus every human-approved issuer host --
-    no extra host, no missing host."""
+    the Source Matrix template hosts plus every human-approved issuer host,
+    plus the one enumerated Development-only host -- no other extra host, no
+    missing host.
+
+    ``DEVELOPMENT_ONLY_DOMAINS`` is an explicit enumeration precisely so that
+    it cannot absorb host creep: a second entry has to be added here, by hand,
+    with a reason. The runtime check (``verify_sandbox_allowlist``) only fails
+    on *missing* required hosts, so this test is what keeps unrelated hosts
+    out of the Development sandbox.
+    """
     from src.network_policy import required_sandbox_domains, sandbox_allowed_domains
     from src.source_matrix import load_source_matrix
 
     required = set(required_sandbox_domains(load_source_matrix()))
-    assert set(sandbox_allowed_domains(SETTINGS)) == required
+    allowed = set(sandbox_allowed_domains(SETTINGS))
+    assert required <= allowed, f"missing required host(s): {required - allowed}"
+    assert allowed - required == DEVELOPMENT_ONLY_DOMAINS, (
+        f"unapproved host(s) in the Development sandbox: "
+        f"{allowed - required - DEVELOPMENT_ONLY_DOMAINS}"
+    )
+
+
+def test_the_development_only_host_never_reaches_production():
+    """github.com is a Development workflow host, not a market data source."""
+    from src.claude_runtime_security import derive_expected_domains
+
+    production = set(derive_expected_domains())
+    assert not (production & DEVELOPMENT_ONLY_DOMAINS), (
+        "a Development-only host leaked into the Production allowlist"
+    )
 
 
 def test_sandbox_unavailability_may_not_silently_fall_back_to_the_host():

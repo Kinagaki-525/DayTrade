@@ -767,6 +767,76 @@ def _complete_event_research(
     return 0
 
 
+def _load_and_validate_acquisition_context(
+    stage: str,
+    args: argparse.Namespace,
+) -> tuple[Path, dict[str, Any]]:
+    """The run's Canonical Acquisition Context: ``<run-dir>/research_window.json``.
+
+    ``--target-date`` / ``--trading-date`` / ``--research-cutoff`` stay on the
+    CLI, but they are no longer independent inputs: each must match the run's
+    own research_window.json exactly (string equality, never "same instant in
+    a different form"). Callers must run this before reserving any Physical
+    Request, so a wrong context can never reach the network or mutate an
+    artifact.
+    """
+    run_dir = Path(args.run_dir).resolve()
+    canonical_path = run_dir / "research_window.json"
+
+    if not canonical_path.is_file():
+        raise ValueError(
+            "ACQUISITION_RESEARCH_WINDOW_MISSING: canonical research window "
+            f"not found at {canonical_path}"
+        )
+
+    try:
+        canonical_research_window = load_json_document(
+            canonical_path,
+            "research_window.schema.json",
+        )
+    except (ValueError, OSError) as exc:
+        raise ValueError(
+            "ACQUISITION_RESEARCH_WINDOW_INVALID: canonical research window "
+            f"at {canonical_path} could not be loaded: {exc}"
+        ) from exc
+
+    canonical_target_date = canonical_research_window["target_date"]
+    if args.target_date != canonical_target_date:
+        raise ValueError(
+            "ACQUISITION_TARGET_DATE_MISMATCH: --target-date "
+            f"{args.target_date!r} does not match research_window.json "
+            f"target_date {canonical_target_date!r}"
+        )
+
+    canonical_trading_date = canonical_research_window["previous_trading_day"]
+    if args.trading_date != canonical_trading_date:
+        raise ValueError(
+            "ACQUISITION_TRADING_DATE_MISMATCH: --trading-date "
+            f"{args.trading_date!r} does not match research_window.json "
+            f"previous_trading_day {canonical_trading_date!r}"
+        )
+
+    canonical_cutoff = canonical_research_window["research_cutoff"]
+    if args.research_cutoff != canonical_cutoff:
+        raise ValueError(
+            "ACQUISITION_RESEARCH_CUTOFF_MISMATCH: --research-cutoff "
+            f"{args.research_cutoff!r} does not match research_window.json "
+            f"research_cutoff {canonical_cutoff!r}"
+        )
+
+    if stage == "DISCOVERY":
+        # One canonical artifact, not "a file with the same content": a copy
+        # elsewhere would reintroduce the two-sources-of-truth this closes.
+        supplied_path = Path(args.research_window).resolve()
+        if supplied_path != canonical_path:
+            raise ValueError(
+                "ACQUISITION_RESEARCH_WINDOW_PATH_MISMATCH: --research-window "
+                f"{supplied_path} is not the canonical {canonical_path}"
+            )
+
+    return run_dir, canonical_research_window
+
+
 def _acquire_sources(
     stage: str,
     args: argparse.Namespace,
@@ -796,7 +866,9 @@ def _acquire_sources(
         write_market_research,
     )
 
-    run_dir = Path(args.run_dir)
+    run_dir, canonical_research_window = (
+        _load_and_validate_acquisition_context(stage, args)
+    )
     source_matrix = load_source_matrix(args.source_matrix)
     existing = load_ledger(args.sources)
     tickers = resolve_stage_candidates(stage, run_dir)
@@ -816,16 +888,18 @@ def _acquire_sources(
     merged = merge_ledger(existing, result.as_ledger())
 
     artifact: str | None = None
+    candidate_count = len(tickers)
     if stage == "DISCOVERY":
-        research_window = load_json_document(
-            args.research_window, "research_window.schema.json"
-        )
         market_research = build_market_research(
             result,
-            research_window=research_window,
+            research_window=canonical_research_window,
             source_matrix=source_matrix,
             research_executed_at=_utc_now(),
         )
+        candidate_count = len(market_research["discovery_candidates"])
+        if market_research["overall_status"] == "DISCOVERY_INCOMPLETE":
+            result.gate_status = "CLOSED"
+            result.gate_reason_codes = list(market_research["notes"])
         write_market_research(run_dir / "market_research.json", market_research)
         artifact = "market_research.json"
     elif stage in {"STAGE1", "STAGE2", "TURNOVER"}:
@@ -877,7 +951,7 @@ def _acquire_sources(
             "status": result.gate_status,
             "stage": stage,
             "reason_codes": result.gate_reason_codes,
-            "candidate_count": len(tickers),
+            "candidate_count": candidate_count,
             "attempt_count": len(result.attempts),
             "value_count": len(result.values),
             "network_request_count": sum(

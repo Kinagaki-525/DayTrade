@@ -7,6 +7,7 @@ No test in this file touches the network: the curl subprocess is replaced by
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 import pytest
 
@@ -16,35 +17,58 @@ from tests import source_page_fixtures as pages
 from tests.factories import make_market_record, make_matching_source_attempt
 
 
-TARGET_DATE = pages.TRADING_DATE
-PREVIOUS_DAY = "2026-08-11"
-CUTOFF = "2026-08-11T20:00:00+09:00"
+# The nightly relation, never the same-day shortcut: acquisition runs on the
+# evening of the previous trading day (which is what the page fixtures are
+# dated, and what the OHLCV parsers match rows against) for the next session.
+TRADING_DATE = pages.TRADING_DATE
+PREVIOUS_DAY = TRADING_DATE
+TARGET_DATE = "2026-08-13"
+CUTOFF = f"{TRADING_DATE}T20:00:00+09:00"
 TICKERS = ("7203", "6758")
 
 
-def _base_args(tmp_path):
+def _acquisition_args(tmp_path):
+    """CLI args **and** the canonical research_window.json they must match.
+
+    The two are deliberately produced together: every acquisition command
+    validates its --target-date / --trading-date / --research-cutoff against
+    <run-dir>/research_window.json, so a test that supplies one without the
+    other is not a runnable nightly context.
+    """
+    _research_window(tmp_path)
     return [
         "--target-date", TARGET_DATE,
-        "--trading-date", TARGET_DATE,
+        "--trading-date", TRADING_DATE,
         "--research-cutoff", CUTOFF,
         "--run-dir", str(tmp_path),
         "--sources", str(tmp_path / "sources.json"),
     ]
 
 
-def _research_window(tmp_path):
+def _research_window(
+    tmp_path,
+    *,
+    target_date=TARGET_DATE,
+    previous_trading_day=PREVIOUS_DAY,
+    research_cutoff=CUTOFF,
+):
+    """Write the run's canonical research_window.json and return its path."""
+    window_start = (
+        f"{date.fromisoformat(previous_trading_day) - timedelta(days=1)}"
+        "T20:00:00+09:00"
+    )
     path = tmp_path / "research_window.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "target_date": TARGET_DATE,
-                "previous_trading_day": PREVIOUS_DAY,
-                "research_cutoff": CUTOFF,
+                "target_date": target_date,
+                "previous_trading_day": previous_trading_day,
+                "research_cutoff": research_cutoff,
                 "research_window": {
                     "run_type": "FIRST_RUN",
-                    "window_start": "2026-08-10T20:00:00+09:00",
-                    "window_end": CUTOFF,
+                    "window_start": window_start,
+                    "window_end": research_cutoff,
                     "previous_research_cutoff": None,
                     "previous_run_date": None,
                     "bootstrap_lookback_days": 1,
@@ -107,13 +131,13 @@ def test_no_acquisition_cli_accepts_an_injected_ticker(command, tmp_path):
         assert forbidden not in option_strings, f"{command} exposes {forbidden}"
 
     with pytest.raises(SystemExit):
-        cli.main([command, *_base_args(tmp_path), "--ticker", "7203"])
+        cli.main([command, *_acquisition_args(tmp_path), "--ticker", "7203"])
 
 
 def test_stage1_cli_derives_tickers_from_discovery(tmp_path, clean_curl):
     _market_research(tmp_path, TICKERS)
     output = tmp_path / "result.json"
-    cli.main(["acquire-stage1-sources", *_base_args(tmp_path), "--output", str(output)])
+    cli.main(["acquire-stage1-sources", *_acquisition_args(tmp_path), "--output", str(output)])
 
     ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
     acquired = {
@@ -129,14 +153,14 @@ def test_stage1_without_discovery_refuses_to_fetch(tmp_path, clean_curl):
     from src.stage_wiring import StageWiringError
 
     with pytest.raises(StageWiringError) as excinfo:
-        cli.main(["acquire-stage1-sources", *_base_args(tmp_path)])
+        cli.main(["acquire-stage1-sources", *_acquisition_args(tmp_path)])
     assert excinfo.value.code == "STAGE1_REQUIRES_MARKET_RESEARCH"
     assert clean_curl.call_count == 0
 
 
 def test_stage2_cli_derives_tickers_from_stage1(tmp_path, clean_curl):
     _market_research(tmp_path, TICKERS, stage1_passed=("7203",))
-    cli.main(["acquire-stage2-market-sources", *_base_args(tmp_path)])
+    cli.main(["acquire-stage2-market-sources", *_acquisition_args(tmp_path)])
 
     ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
     acquired = {
@@ -164,7 +188,7 @@ def test_same_acquisition_cli_twice_performs_one_get(tmp_path, clean_curl):
     real GET), not a fiction about how the second run obtained it.
     """
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    args = ["acquire-actual-turnover", *_base_args(tmp_path)]
+    args = ["acquire-actual-turnover", *_acquisition_args(tmp_path)]
 
     cli.main(args)
     assert clean_curl.call_count == 1
@@ -201,7 +225,7 @@ def test_tampered_cached_page_hard_stops_instead_of_refetching(tmp_path, clean_c
     from src.source_fetch import SourceFetchError
 
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    args = ["acquire-actual-turnover", *_base_args(tmp_path)]
+    args = ["acquire-actual-turnover", *_acquisition_args(tmp_path)]
     cli.main(args)
 
     ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
@@ -219,7 +243,7 @@ def test_acquire_actual_turnover_writes_a_v3_ledger(tmp_path, clean_curl):
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
     output = tmp_path / "result.json"
     code = cli.main(
-        ["acquire-actual-turnover", *_base_args(tmp_path), "--output", str(output)]
+        ["acquire-actual-turnover", *_acquisition_args(tmp_path), "--output", str(output)]
     )
     assert code == 0
 
@@ -246,7 +270,7 @@ def test_acquire_stage1_reports_a_closed_listing_gate(tmp_path, monkeypatch):
 
     output = tmp_path / "result.json"
     code = cli.main(
-        ["acquire-stage1-sources", *_base_args(tmp_path), "--output", str(output)]
+        ["acquire-stage1-sources", *_acquisition_args(tmp_path), "--output", str(output)]
     )
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["status"] == "CLOSED"
@@ -270,7 +294,7 @@ def test_discovery_cli_builds_market_research(tmp_path, monkeypatch):
     code = cli.main(
         [
             "acquire-discovery",
-            *_base_args(tmp_path),
+            *_acquisition_args(tmp_path),
             "--research-window", str(window),
             "--output", str(output),
         ]
@@ -309,7 +333,7 @@ def test_discovery_feeds_init_candidate_research_through_the_real_cli(
     )
     window = _research_window(tmp_path)
     cli.main(
-        ["acquire-discovery", *_base_args(tmp_path), "--research-window", str(window)]
+        ["acquire-discovery", *_acquisition_args(tmp_path), "--research-window", str(window)]
     )
 
     initialized = tmp_path / "market_research_initialized.json"
@@ -329,7 +353,7 @@ def test_discovery_reports_incomplete_when_a_ranking_is_short(tmp_path, monkeypa
     fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
     window = _research_window(tmp_path)
     cli.main(
-        ["acquire-discovery", *_base_args(tmp_path), "--research-window", str(window)]
+        ["acquire-discovery", *_acquisition_args(tmp_path), "--research-window", str(window)]
     )
     research = json.loads(
         (tmp_path / "market_research.json").read_text(encoding="utf-8")
@@ -347,7 +371,7 @@ def test_discovery_reports_incomplete_when_a_ranking_is_short(tmp_path, monkeypa
 
 def test_stage1_reflects_into_market_data(tmp_path, clean_curl):
     _market_research(tmp_path, ("7203",))
-    cli.main(["acquire-stage1-sources", *_base_args(tmp_path)])
+    cli.main(["acquire-stage1-sources", *_acquisition_args(tmp_path)])
 
     market_data = json.loads(
         (tmp_path / "market_data.json").read_text(encoding="utf-8")
@@ -366,7 +390,7 @@ def test_stage1_reflects_into_market_data(tmp_path, clean_curl):
 
 def test_stage2_cross_checks_ohlcv_into_market_data(tmp_path, clean_curl):
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    cli.main(["acquire-stage2-market-sources", *_base_args(tmp_path)])
+    cli.main(["acquire-stage2-market-sources", *_acquisition_args(tmp_path)])
 
     record = json.loads(
         (tmp_path / "market_data.json").read_text(encoding="utf-8")
@@ -398,7 +422,7 @@ def test_stage2_conflicting_ohlcv_is_a_conflict_not_a_preference(
         monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
     )
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    cli.main(["acquire-stage2-market-sources", *_base_args(tmp_path)])
+    cli.main(["acquire-stage2-market-sources", *_acquisition_args(tmp_path)])
 
     record = json.loads(
         (tmp_path / "market_data.json").read_text(encoding="utf-8")
@@ -409,7 +433,7 @@ def test_stage2_conflicting_ohlcv_is_a_conflict_not_a_preference(
 
 def test_turnover_updates_market_data_deterministically(tmp_path, clean_curl):
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    args = _base_args(tmp_path)
+    args = _acquisition_args(tmp_path)
     cli.main(["acquire-stage1-sources", *args])
     cli.main(["acquire-stage2-market-sources", *args])
     cli.main(["acquire-actual-turnover", *args])
@@ -457,6 +481,12 @@ CASE_B_EXPECTED_PREVIOUS = "2026-08-10"
 
 
 def _run_args(tmp_path, *, target_date, trading_date, research_cutoff):
+    _research_window(
+        tmp_path,
+        target_date=target_date,
+        previous_trading_day=trading_date,
+        research_cutoff=research_cutoff,
+    )
     return [
         "--target-date", target_date,
         "--trading-date", trading_date,
@@ -1149,3 +1179,367 @@ def test_activate_selection_config_cli_requires_a_pair_id(tmp_path):
         cli.main(
             ["activate-selection-config", "--calibration", str(tmp_path / "c.json")]
         )
+
+
+# ------------------------------------------------------------- FIX-PRD-001 ---
+#
+# <run-dir>/research_window.json is the run's only acquisition context:
+# --target-date / --trading-date / --research-cutoff are compared against it
+# as exact strings *before* any Physical Request is reserved.
+
+
+def _context_args(tmp_path, **overrides):
+    """Canonical nightly CLI args, with deliberate single-value overrides."""
+    values = {
+        "target_date": TARGET_DATE,
+        "trading_date": TRADING_DATE,
+        "research_cutoff": CUTOFF,
+    }
+    values.update(overrides)
+    return [
+        "--target-date", values["target_date"],
+        "--trading-date", values["trading_date"],
+        "--research-cutoff", values["research_cutoff"],
+        "--run-dir", str(tmp_path),
+        "--sources", str(tmp_path / "sources.json"),
+    ]
+
+
+def _assert_no_request_was_reserved(tmp_path, fake):
+    """Nothing physical happened: no GET, no Request Record, no artifact.
+
+    A Physical Request is reserved by writing network_requests/<id>.json
+    *before* the transport runs, so an absent network_requests directory is
+    the evidence the budget was never touched -- asserted alongside the
+    transport call count, not instead of it.
+    """
+    assert fake.call_count == 0
+    assert fake.urls == []
+    assert not (tmp_path / "network_requests").exists()
+    assert not (tmp_path / "source_pages").exists()
+    assert not (tmp_path / "sources.json").exists()
+    assert not (tmp_path / "market_research.json").exists()
+    assert not (tmp_path / "market_data.json").exists()
+
+
+def test_acquire_rejects_missing_canonical_research_window_before_network(
+    tmp_path, monkeypatch
+):
+    """TEST-001: no canonical context, no acquisition."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(["acquire-stage1-sources", *_context_args(tmp_path)])
+
+    assert "ACQUISITION_RESEARCH_WINDOW_MISSING" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_acquire_rejects_invalid_canonical_research_window_before_network(
+    tmp_path, monkeypatch
+):
+    """TEST-002: an unreadable context is a hard stop, not a fresh start."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    (tmp_path / "research_window.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(["acquire-stage1-sources", *_context_args(tmp_path)])
+
+    assert "ACQUISITION_RESEARCH_WINDOW_INVALID" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_acquire_rejects_target_date_mismatch_before_network(tmp_path, monkeypatch):
+    """TEST-003: a target_date the resolved window does not agree with."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    _research_window(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                *_context_args(tmp_path, target_date="2026-08-14"),
+            ]
+        )
+
+    assert "ACQUISITION_TARGET_DATE_MISMATCH" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_acquire_rejects_trading_date_mismatch_before_network(tmp_path, monkeypatch):
+    """TEST-004: the 2026-08-24 incident shape -- trading_date off by a day."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    _research_window(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                *_context_args(tmp_path, trading_date="2026-08-11"),
+            ]
+        )
+
+    assert "ACQUISITION_TRADING_DATE_MISMATCH" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_acquire_rejects_research_cutoff_mismatch_before_network(
+    tmp_path, monkeypatch
+):
+    """TEST-005: exact strings, not "the same instant".
+
+    ``2026-08-12T11:00:00Z`` is the very same moment as the canonical
+    ``2026-08-12T20:00:00+09:00`` and is still rejected: research_cutoff is
+    part of the Physical Request identity, so two spellings of one instant
+    would be two Request Budgets for a single run.
+    """
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    _research_window(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                *_context_args(tmp_path, research_cutoff="2026-08-12T11:00:00Z"),
+            ]
+        )
+
+    assert "ACQUISITION_RESEARCH_CUTOFF_MISMATCH" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_acquire_discovery_rejects_noncanonical_research_window_path(
+    tmp_path, monkeypatch
+):
+    """TEST-006: path identity, not content equality."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    canonical = _research_window(tmp_path)
+    copy = tmp_path / "copied_research_window.json"
+    copy.write_bytes(canonical.read_bytes())
+    assert copy.read_bytes() == canonical.read_bytes()
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-discovery",
+                *_context_args(tmp_path),
+                "--research-window", str(copy),
+            ]
+        )
+
+    assert "ACQUISITION_RESEARCH_WINDOW_PATH_MISMATCH" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+def test_context_mismatch_leaves_existing_artifacts_byte_identical(
+    tmp_path, monkeypatch
+):
+    """TEST-007: a rejected context mutates nothing that already exists.
+
+    Artifacts from earlier steps are present here, so the shared
+    _assert_no_request_was_reserved() (which requires market_research.json to
+    be absent) does not apply: the no-network and no-mutation conditions are
+    spelled out directly instead.
+    """
+    fake = fake_transport.install(
+        monkeypatch,
+        fake_transport.clean_fake(("7203",)),
+    )
+
+    canonical = _research_window(tmp_path)
+
+    research_path = _market_research(
+        tmp_path,
+        ("7203",),
+        stage1_passed=("7203",),
+    )
+
+    before = {
+        canonical: canonical.read_bytes(),
+        research_path: research_path.read_bytes(),
+    }
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-actual-turnover",
+                *_context_args(
+                    tmp_path,
+                    trading_date="2026-08-11",
+                ),
+            ]
+        )
+
+    assert "ACQUISITION_TRADING_DATE_MISMATCH" in str(excinfo.value)
+
+    assert fake.call_count == 0
+    assert fake.urls == []
+
+    assert not (tmp_path / "network_requests").exists()
+    assert not (tmp_path / "source_pages").exists()
+    assert not (tmp_path / "sources.json").exists()
+
+    for path, content in before.items():
+        assert path.read_bytes() == content, f"{path.name} was mutated"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "acquire-discovery",
+        "acquire-stage1-sources",
+        "acquire-stage2-market-sources",
+        "acquire-actual-turnover",
+        "acquire-event-sources",
+    ],
+)
+def test_every_acquisition_command_validates_the_canonical_context_first(
+    command, tmp_path, monkeypatch
+):
+    """The context check is the entry point of every acquire-* command.
+
+    No stage artifact is created on purpose: the mismatch must be reported
+    before resolve_stage_candidates would demand market_research.json, which
+    is exactly the ordering FIX-PRD-001 requires.
+    """
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+
+    _research_window(tmp_path)
+
+    argv = [
+        command,
+        *_context_args(
+            tmp_path,
+            target_date="2026-08-14",
+        ),
+    ]
+    if command == "acquire-discovery":
+        argv += [
+            "--research-window",
+            str(tmp_path / "research_window.json"),
+        ]
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(argv)
+
+    assert "ACQUISITION_TARGET_DATE_MISMATCH" in str(excinfo.value)
+    _assert_no_request_was_reserved(tmp_path, fake)
+
+
+# ------------------------------------------------------------- FIX-PRD-002 ---
+#
+# Discovery creates the candidate universe, so an incomplete Discovery is a
+# terminal stop -- never an OPEN gate the orchestrator walks past into
+# Stage1, and never a NO_TRADE.
+
+
+def test_discovery_incomplete_closes_the_gate_after_writing_evidence(
+    tmp_path, monkeypatch
+):
+    """TEST-008: CLOSED + exit 1, with the failure evidence kept on disk."""
+    fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    window = _research_window(tmp_path)
+    output = tmp_path / "result.json"
+
+    code = cli.main(
+        [
+            "acquire-discovery",
+            *_context_args(tmp_path),
+            "--research-window", str(window),
+            "--output", str(output),
+        ]
+    )
+
+    market_research = json.loads(
+        (tmp_path / "market_research.json").read_text(encoding="utf-8")
+    )
+    summary = json.loads(output.read_text(encoding="utf-8"))
+
+    assert market_research["overall_status"] == "DISCOVERY_INCOMPLETE"
+    assert code == 1
+    assert summary["status"] == "CLOSED"
+    # market_research's own canonical notes -- no new reason code invented.
+    assert summary["reason_codes"] == market_research["notes"]
+    assert market_research["notes"]
+
+    # Evidence First: the run's record of what happened survives the stop.
+    assert (tmp_path / "market_research.json").is_file()
+
+    ledger = json.loads(
+        (tmp_path / "sources.json").read_text(encoding="utf-8")
+    )
+    assert ledger["source_attempts"]
+
+    network_request_files = list(
+        (tmp_path / "network_requests").glob("*.json")
+    )
+    assert network_request_files
+
+
+def test_discovery_summary_candidate_count_is_the_discovery_union(
+    tmp_path, monkeypatch
+):
+    """TEST-009: Discovery reports what it produced, not what it was given.
+
+    ``resolve_stage_candidates("DISCOVERY", ...)`` is empty by contract --
+    Discovery *creates* the universe -- so counting the stage's input tickers
+    reported 0 candidates for a fully successful Discovery.
+    """
+    from src.stage_wiring import resolve_stage_candidates
+
+    top50 = pages.top50_tickers()
+    fake_transport.install(
+        monkeypatch, fake_transport.clean_fake(top50, ranking_tickers=top50)
+    )
+    window = _research_window(tmp_path)
+    output = tmp_path / "result.json"
+
+    code = cli.main(
+        [
+            "acquire-discovery",
+            *_context_args(tmp_path),
+            "--research-window", str(window),
+            "--output", str(output),
+        ]
+    )
+
+    market_research = json.loads(
+        (tmp_path / "market_research.json").read_text(encoding="utf-8")
+    )
+    summary = json.loads(output.read_text(encoding="utf-8"))
+
+    assert code == 0
+    assert resolve_stage_candidates("DISCOVERY", tmp_path) == []
+    assert summary["candidate_count"] == len(
+        market_research["discovery_candidates"]
+    )
+    assert summary["candidate_count"] > 0
+
+
+def test_successful_discovery_keeps_the_gate_open(tmp_path, monkeypatch):
+    """TEST-010: fail-closed must not close the happy path."""
+    top50 = pages.top50_tickers()
+    fake_transport.install(
+        monkeypatch, fake_transport.clean_fake(top50, ranking_tickers=top50)
+    )
+    window = _research_window(tmp_path)
+    output = tmp_path / "result.json"
+
+    code = cli.main(
+        [
+            "acquire-discovery",
+            *_context_args(tmp_path),
+            "--research-window", str(window),
+            "--output", str(output),
+        ]
+    )
+
+    market_research = json.loads(
+        (tmp_path / "market_research.json").read_text(encoding="utf-8")
+    )
+    summary = json.loads(output.read_text(encoding="utf-8"))
+
+    assert market_research["overall_status"] != "DISCOVERY_INCOMPLETE"
+    assert code == 0
+    assert summary["status"] == "OPEN"
+    assert summary["reason_codes"] == []

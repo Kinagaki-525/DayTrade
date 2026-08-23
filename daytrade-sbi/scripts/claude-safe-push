@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""DEVELOPMENT-ONLY: push the current claude/* branch to canonical origin.
+
+This is the *only* push path Development Claude Code may use. Raw ``git push``
+stays denied by ``.claude/settings.json`` and ``.claude/hooks/network_guard.py``.
+
+What it allows, and nothing else:
+
+    HEAD  ->  origin  refs/heads/<current branch>
+
+with the branch required to be a ``claude/`` feature branch, the working tree
+required to be clean, and the remote required to be exactly the canonical
+repository -- on the push side as well as the fetch side, since ``pushurl`` and
+``mirror`` can otherwise redirect or multiply where a push lands. There are no
+arguments: the caller cannot choose the remote, the
+branch, the refspec, or any option. No force, no delete, no tags, no
+main/master. A non-fast-forward is left for Git/GitHub to reject -- this script
+never fetches, pulls, merges, rebases or resets to "fix" one.
+
+NOT A SECURITY BOUNDARY. This file lives in the repository and Development
+Claude Code can edit it. It is a Development workflow control that prevents
+mistakes and keeps raw ``git push`` out of the agent's hands; it is not
+comparable to the Production boundary, which is the OS Managed Policy
+(``/etc/claude-code/managed-settings.json``) and the OS Managed Runtime Guard.
+The PreToolUse hook inspects Bash tool invocations, not their child processes,
+so the ``git push`` this script runs is deliberately outside the hook's view.
+
+Production must never run this script. Production denies push entirely.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+
+CANONICAL_ORIGIN_URL = "https://github.com/Kinagaki-525/DayTrade.git"
+REMOTE = "origin"
+BRANCH_PREFIX = "claude/"
+FORBIDDEN_BRANCHES = ("main", "master")
+
+
+class SafePushError(Exception):
+    """A validation failed. The push is refused; nothing is retried."""
+
+
+def _git(*args: str, cwd: str | None = None) -> str:
+    """Run a git command with shell=False and return its stripped stdout."""
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SafePushError(
+            f"git {' '.join(args)} failed (exit {completed.returncode}): "
+            f"{completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+def repository_root() -> str:
+    try:
+        return _git("rev-parse", "--show-toplevel")
+    except SafePushError as error:
+        raise SafePushError(f"not inside a git repository: {error}") from error
+
+
+def _git_result(*args: str, cwd: str | None = None) -> tuple[int, str, str]:
+    """Run a git command with shell=False, returning (code, stdout, stderr)."""
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def resolve_push_urls(root: str) -> list[str]:
+    """Every URL ``git push origin`` would actually write to.
+
+    ``remote.<name>.url`` is only the *fetch* URL. When ``remote.<name>.pushurl``
+    is set it overrides it for pushes, and Git accepts several of them, which
+    makes one ``git push`` write to several repositories. Checking the fetch URL
+    alone would therefore approve a push aimed somewhere else entirely, so the
+    push side is resolved here and validated on its own.
+    """
+    code, out, err = _git_result(
+        "remote", "get-url", "--push", "--all", REMOTE, cwd=root
+    )
+    if code != 0:
+        raise SafePushError(
+            f"could not resolve the push URL of {REMOTE} (git exit {code}): {err}"
+        )
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def verify_remote_is_not_mirror(root: str) -> None:
+    """``remote.<name>.mirror`` turns every push into a ``--mirror`` push.
+
+    That replicates *all* refs and deletes remote refs missing locally, which is
+    irreconcilable with this script's single-ref contract. The setting is
+    refused, never rewritten: Safe Push does not edit Git configuration.
+    """
+    code, value, err = _git_result(
+        "config", "--get", f"remote.{REMOTE}.mirror", cwd=root
+    )
+    if code == 1:  # not set
+        return
+    if code != 0:
+        raise SafePushError(
+            f"could not read remote.{REMOTE}.mirror (git exit {code}): {err}"
+        )
+    if value.strip().lower() not in ("false", "no", "off", "0", ""):
+        raise SafePushError(
+            f"remote.{REMOTE}.mirror is {value.strip()!r}; a mirror push cannot "
+            "honour this script's single-ref contract. Refusing to push"
+        )
+
+
+def verify_canonical_origin(root: str) -> None:
+    """The remote is fixed. An arbitrary remote is never pushed to."""
+    remotes = _git("remote", cwd=root).splitlines()
+    if REMOTE not in remotes:
+        raise SafePushError(
+            f"no {REMOTE!r} remote in this repository; refusing to push"
+        )
+    url = _git("remote", "get-url", REMOTE, cwd=root)
+    if url != CANONICAL_ORIGIN_URL:
+        raise SafePushError(
+            f"{REMOTE} is {url!r}, not the canonical "
+            f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
+        )
+
+    push_urls = resolve_push_urls(root)
+    if not push_urls:
+        raise SafePushError(
+            f"{REMOTE} resolves to no push URL; refusing to push"
+        )
+    if len(push_urls) > 1:
+        listed = ", ".join(repr(candidate) for candidate in push_urls)
+        raise SafePushError(
+            f"{REMOTE} resolves to {len(push_urls)} push URLs ({listed}); "
+            "this script pushes to exactly one repository. Refusing to push"
+        )
+    if push_urls[0] != CANONICAL_ORIGIN_URL:
+        raise SafePushError(
+            f"{REMOTE} pushes to {push_urls[0]!r}, not the canonical "
+            f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
+        )
+
+    verify_remote_is_not_mirror(root)
+
+
+def current_branch(root: str) -> str:
+    """The branch is read from Git, never supplied by the caller."""
+    # A detached HEAD makes `symbolic-ref` exit non-zero with no output, which
+    # would otherwise surface as an unhelpful raw git error.
+    completed = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    head = completed.stdout.strip()
+    if completed.returncode != 0 or not head:
+        raise SafePushError("HEAD is not a branch ref (detached); refusing to push")
+    if not head.startswith("refs/heads/"):
+        raise SafePushError(f"HEAD is not a branch ref ({head!r}); refusing to push")
+    branch = head[len("refs/heads/") :]
+    if not branch:
+        raise SafePushError("could not determine the current branch")
+    return branch
+
+
+def verify_branch_is_pushable(root: str, branch: str) -> None:
+    if branch in FORBIDDEN_BRANCHES:
+        raise SafePushError(f"{branch!r} is never pushed by this script")
+    if not branch.startswith(BRANCH_PREFIX):
+        raise SafePushError(
+            f"{branch!r} is not a {BRANCH_PREFIX}* feature branch; refusing to push"
+        )
+    _git("check-ref-format", "--branch", branch, cwd=root)
+
+
+def verify_working_tree_is_clean(root: str) -> None:
+    """Only a committed HEAD is ever sent.
+
+    This also covers the tampering case the Development control cares about:
+    an edited-but-uncommitted wrapper or network guard makes the tree dirty,
+    so the push is refused before it starts.
+    """
+    status = _git("status", "--porcelain", "--untracked-files=all", cwd=root)
+    if status:
+        entries = status.splitlines()
+        shown = "\n  ".join(entries[:20])
+        more = "" if len(entries) <= 20 else f"\n  ... and {len(entries) - 20} more"
+        raise SafePushError(
+            "the working tree is not clean; commit or remove these first:\n  "
+            f"{shown}{more}"
+        )
+
+
+def push_argv(branch: str) -> list[str]:
+    """The exact push command. Built here, never from caller input.
+
+    No force, no lease, no delete refspec, no tag refspec.
+    """
+    return ["git", "push", REMOTE, f"HEAD:refs/heads/{branch}"]
+
+
+def run_push(root: str, branch: str) -> None:
+    env = dict(os.environ)
+    # Fail instead of blocking forever when no credential is configured.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    argv = push_argv(branch)
+    completed = subprocess.run(argv, cwd=root, env=env, check=False)
+    if completed.returncode != 0:
+        raise SafePushError(f"push rejected (git exit {completed.returncode})")
+
+
+def main(argv: list[str]) -> int:
+    if argv:
+        print(
+            "claude-safe-push takes no arguments; the remote, branch and "
+            "refspec are fixed",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        root = repository_root()
+        verify_canonical_origin(root)
+        branch = current_branch(root)
+        verify_branch_is_pushable(root, branch)
+        verify_working_tree_is_clean(root)
+        head = _git("rev-parse", "HEAD", cwd=root)
+        print(f"branch: {branch}")
+        print(f"HEAD:   {head}")
+        print(f"remote: {REMOTE} {CANONICAL_ORIGIN_URL}")
+        print(f"push:   HEAD:refs/heads/{branch}")
+        # Flush before handing the terminal to git, so this summary cannot be
+        # reordered after git's own output.
+        sys.stdout.flush()
+        run_push(root, branch)
+    except SafePushError as error:
+        print(f"claude-safe-push: {error}", file=sys.stderr)
+        return 1
+    print("push success")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
