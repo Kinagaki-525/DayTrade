@@ -69,6 +69,23 @@ def _single_url(args: tuple[str, ...], *, label: str, root: str) -> str:
     return urls[0]
 
 
+def verify_remote_vcs_unset(root: str) -> None:
+    """Reject Git's custom remote-helper override for the canonical remote.
+
+    ``remote.<name>.vcs`` makes Git invoke ``git-remote-<vcs>`` for fetch/push.
+    A canonical-looking URL is therefore not enough to prove which transport
+    implementation will run. Safe wrappers require the setting to be absent.
+    """
+    code, _, _ = git_result("config", "--get", f"remote.{REMOTE}.vcs", cwd=root)
+    if code == 1:
+        return
+    if code == 0:
+        raise SafeGitError(
+            f"remote.{REMOTE}.vcs is set; custom remote helpers are not allowed"
+        )
+    raise SafeGitError(f"could not read remote.{REMOTE}.vcs (git exit {code})")
+
+
 def verify_canonical_origin(root: str) -> None:
     remotes = git("remote", cwd=root).splitlines()
     if REMOTE not in remotes:
@@ -93,13 +110,15 @@ def verify_canonical_origin(root: str) -> None:
 
     code, value, _ = git_result("config", "--get", f"remote.{REMOTE}.mirror", cwd=root)
     if code == 1:
-        return
-    if code != 0:
+        pass
+    elif code != 0:
         raise SafeGitError(
             f"could not read remote.{REMOTE}.mirror (git exit {code})"
         )
-    if value.strip().lower() not in ("false", "no", "off", "0", ""):
+    elif value.strip().lower() not in ("false", "no", "off", "0", ""):
         raise SafeGitError(f"remote.{REMOTE}.mirror is enabled; refusing")
+
+    verify_remote_vcs_unset(root)
 
 
 def verify_working_tree_clean(root: str) -> None:
@@ -167,6 +186,7 @@ def fetch_main(root: str) -> None:
     code, _, _ = git_result(
         "fetch",
         "--no-tags",
+        "--no-recurse-submodules",
         REMOTE,
         MAIN_FETCH_REFSPEC,
         cwd=root,
