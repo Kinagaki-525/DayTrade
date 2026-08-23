@@ -45,9 +45,10 @@ def test_ci_006_to_010_is_read_only_and_runs_from_project_directory():
 
     checkout = next(step for step in job["steps"] if step.get("name") == "Checkout")
     assert checkout["with"]["persist-credentials"] == "false"
+    assert checkout["with"]["fetch-depth"] == "2"
 
 
-def test_ci_011_to_014_python_and_full_pytest_contract():
+def test_ci_011_to_015_python_full_pytest_and_diff_check_contract():
     data = _workflow()
     steps = data["jobs"]["pytest"]["steps"]
     setup = next(step for step in steps if step.get("name") == "Set up Python")
@@ -55,6 +56,7 @@ def test_ci_011_to_014_python_and_full_pytest_contract():
     assert PYTHON_VERSION.read_text(encoding="utf-8").strip() == "3.14.4"
 
     commands = [step.get("run", "") for step in steps]
+    assert "git diff --check HEAD^1 HEAD" in commands
     assert any(
         "python -m pip install --disable-pip-version-check -r requirements-dev.txt"
         == command
@@ -63,7 +65,7 @@ def test_ci_011_to_014_python_and_full_pytest_contract():
     assert "python -B -m pytest -q" in commands
 
 
-def test_ci_015_no_write_or_network_side_effect_commands():
+def test_ci_016_no_write_or_network_side_effect_commands():
     text = WORKFLOW.read_text(encoding="utf-8").lower()
     for forbidden in (
         ": write",
