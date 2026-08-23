@@ -25,30 +25,129 @@
 - `sources.json` / `market_data.json` / `recommendation.json` を手で編集しない
 - 市場数値（価格・出来高・売買代金・呼値・日付）をagentが読み取って書き写さない
 
-## Development限定: Safe Sync / Safe Start / Safe Push（Claude Code固有）
+## Development限定: Launcher / Safe Sync / Safe Start / Safe Push（Claude Code固有）
 
-Developmentの標準Git workflowは次の3 wrapperだけを使用する。
+Development Claude Codeは**Git repository root**をcurrent working directoryとして起動する。
+起動には`daytrade-sbi/scripts/claude-development`だけを使い、`daytrade-sbi/`からraw `claude`を
+起動する手順は正式運用としない。`daytrade-sbi/`から起動するとrepository rootの`.git`が
+Sandboxからread-onlyとなり、`git add`が`.git/index.lock`を作成できない。
+
+Developmentの標準Git workflowは次のwrapperだけを使用する。commandはすべて
+**repository root（Development Claude Codeのcurrent working directory）からの相対path**で記載する。
 
 ```text
-scripts/claude-safe-sync-main
-scripts/claude-safe-start claude/<new-branch>
-scripts/claude-safe-push
+daytrade-sbi/scripts/claude-development
+daytrade-sbi/scripts/claude-safe-sync-main
+daytrade-sbi/scripts/claude-safe-start claude/<new-branch>
+daytrade-sbi/scripts/claude-safe-push
 ```
+
+以降の文章で`claude-development` / `claude-safe-sync-main` / `claude-safe-start` /
+`claude-safe-push`と書く場合は説明用の名称であり、実行するcommandは上記のpathである。
 
 標準順序:
 
 ```text
 Safe Sync Main
 → Safe Start
+→ claude-development（repository rootから起動）
 → Edit / Test
-→ 明示pathでgit add
-→ git commit
+→ git add -- <明示path>
+→ git commit -m "<message>"
 → Safe Push
 → Draft PR
 → GitHub Actions CI
 → Human / ChatGPT Review
 → Human Merge
 ```
+
+Development Claudeが実行するraw Gitは**repository rootからの直接実行**だけである
+（**1 Bash call = 1 direct git command**）。git executableの次のtokenはsubcommandそのもので
+なければならず、executableの綴りは`git`でも`/usr/bin/git`でもよい。
+正式Development workflowにGit global optionは不要なので、raw Gitのglobal optionは
+すべてFail-Closedで拒否する。`git -C <dir>`、`git --git-dir[=]<dir>`、`git --work-tree[=]<dir>`、
+`git --namespace`、`git --exec-path`、`git --super-prefix`、`git --attr-source`、
+`git -c <key>=<value>`、`git --config-env=`はもちろん、`git --no-pager`のような無害なoptionも
+個別に許可しない。分割executable（`git-add`等）も許可しない。
+
+shell側のexecution contextも固定する。`GIT_WORK_TREE=/etc git add -- passwd`、
+`GIT_DIR=/tmp/x git status`、`env GIT_WORK_TREE=/etc git ...`、
+`cd daytrade-sbi && git add -- ...`、`bash -c "git add -- ..."`、`sh -c "git commit -m message"`は
+すべてFail-Closedで拒否する。`add` / `restore` / `commit`はrepository rootから
+1 Bash callで直接実行する。gitを含まないcommand（`cd daytrade-sbi && .venv/bin/python -B -m pytest`等）は
+この契約の対象外である。
+
+`git add -- <path>`と`git restore --staged -- <path>`のpathがdisk上に存在しない場合は、
+`git ls-files`のtracked entryが**入力pathと完全一致してちょうど1件**のときだけ許可する。
+0件（未作成のuntracked path）、2件以上（wholesale削除されたdirectory）、
+1件だが入力pathと不一致、照合不能はすべてDENYである。
+
+`claude-development`はrepository rootをlauncher自身のsource位置から導出し、
+`git rev-parse --show-toplevel`と一致することを確認してから`exec claude`直前にchdirする。
+`DAYTRADE_RUNTIME_PROFILE=production`、Production runtime marker、
+OS Managed Policyのいずれかを検出した場合は起動を拒否する（Fail-Closed）。
+Git repository semanticsを変更する環境変数（`GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` /
+`GIT_COMMON_DIR` / `GIT_NAMESPACE` / `GIT_OBJECT_DIRECTORY` /
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` / `GIT_CEILING_DIRECTORIES`）が1つでも設定済みなら
+起動を拒否する（`CLAUDE_DEVELOPMENT_GIT_ENVIRONMENT_OVERRIDE`）。値ではなく設定の有無で
+判定し、空文字でも拒否する。値を黙って削除して続行しない。
+current branchが`claude/*`でない場合も起動を拒否する（`main` / その他branch /
+detached HEAD / branch名取得失敗はすべてFail-Closed）。これはDevelopment sessionが
+local `main`へ`git add` / `git commit`できる状態で始まらないようにするためである。
+Sandboxを無効化せず、`allowUnsandboxedCommands`を変更せず、`.git`へchmod/chownせず、
+fileを1つも書き込まない。**`daytrade-sbi/scripts/claude-production`とは完全に別物**である。
+
+Production関連資産の扱いは次のとおり。
+
+- Production runtime marker（`/etc/daytrade-production-runtime`）とOS Managed Policy
+  （`/etc/claude-code/managed-settings.json`）の**存在有無だけをread-onlyで参照する**。
+  これはDevelopment launcherの起動拒否判定のためである
+- これらの内容を書き換えない
+- Production Managed Policyをdeploy・変更しない
+- Production Runtime Guard（`ops/claude/daytrade_runtime_guard.py`）を変更しない
+- Production Security Boundaryを緩和しない
+- Production launcher（`daytrade-sbi/scripts/claude-production`）を変更しない
+
+local Git操作では`git restore --staged -- <path>`（indexのみをHEADへ戻すunstage）だけを許可する。
+`git restore <path>` / `--worktree` / `-W` / `--source` / `--patch`、および`--`の無い曖昧な形式は拒否する。
+
+`git add`は`git add -- <explicit-file> [<explicit-file> ...]`だけを許可する。
+`--`は必須で、`--`後に1つ以上の**明示file path**が必要。`git add <path>`（`--`なし）、`git add .`、
+`git add -A` / `--all`、`git add -u` / `--update`、`git add -p` / `--patch`、
+`git add -i` / `--interactive`、`git add -N` / `--intent-to-add`、glob（`*`等）は
+すべてFail-Closedで拒否する。
+
+`git add -- <path>`と`git restore --staged -- <path>`のpathには同一のvalidatorを適用する。
+Git pathspec magic（`:` で始まるpath: `:/` / `:` / `:(top)` / `:(exclude)foo` / `:!foo`）、
+absolute path、path componentとしての`.` / `..`（`src/..` / `src/.` / `../x`）、
+先頭・重複・末尾の`/`、glob（`*` `?` `[` `]`）、backslash区切り、
+実在するdirectory（`git add -- daytrade-sbi`）、realpathがrepository外へ出るpathは
+すべてFail-Closedで拒否する。今回の正式契約は「明示file単位のstage」であり、
+directoryを再帰stageする形式は許可しない。
+削除済みtracked fileをstageできる契約は維持する。disk上に無いpathはread-onlyの
+`git ls-files`でindexと照合し、tracked fileちょうど1件に対応する場合だけ許可する。
+
+`git commit`は「`git add -- <path>`済みのindexから、message付きで新しいcommitを作る」形式だけを許可する。
+許可するのは`git commit -m "<message>"` / `--message="<message>"` / `--message "<message>"`だけである。
+`-F <message-file>` / `--file=<message-file>`は廃止した（任意のreadable fileをcommit messageへ
+取り込めるため）。message未指定の`git commit`（editor経路）も拒否する。
+`-a` / `--all` / `--amend` / `--fixup` / `--squash` / `-o` / `--only` / `-i` / `--include` /
+`--allow-empty` / `--no-verify`、`git commit -- <path>`、`git commit <path>`、
+その他allowlist外optionもすべて拒否する。
+commit messageはdataとして扱い、message中に`git push`等が含まれてもcommandとして解析しない
+（`bash -c` / `sh -c`は引き続き拒否）。
+
+shell expansionはfail-closedである。guardが検査したpath / messageとGitが実際に受け取るargvが
+異なる形式は許可しない。command substitution（`$(...)` / `` `...` `` / `<(...)`）はcommand全体で
+拒否し、中身を解析して許可する方式は廃止した。raw Git invocation内では
+parameter expansion（`$VAR` / `${VAR}`）、glob / brace（`*` `?` `[` `]` `{` `}`）、
+先頭の`~`も拒否する。したがって`git add -- "$(printf ':/' )"`、`git add -- "$PATH"`、
+`git commit -m "$(cat /etc/passwd)"`、`git commit -m "$HOME"`、`git commit -m *`は
+すべてFail-Closedで拒否される。commit messageはこれらの文字を含まないcanonical formへ狭める。
+
+`git branch`はinspectionだけを許可する。`git branch --show-current`と`git branch --list`
+（引数なし）以外はすべて拒否し、branch作成・削除・rename・copy・force移動・upstream設定を行わない。
+branch作成は`daytrade-sbi/scripts/claude-safe-start`だけが担当する。
 
 `claude-safe-sync-main`は引数を受け取らず、canonical `origin`の`main`だけをexact refspecでfetchする。local `main`が`origin/main`と同一またはfast-forward可能な場合だけ成功し、local mainがahead/divergedならreset/rebase/merge/pullで修復せず停止する。
 
@@ -66,10 +165,10 @@ raw `git fetch` / `git pull` / `git push` / `git switch` / `git checkout` / `git
 現在checkoutしているBranchをpushできる。
 
 ```
-scripts/claude-safe-push
+daytrade-sbi/scripts/claude-safe-push
 ```
 
-このコマンドはリポジトリの`daytrade-sbi/`をcurrent working directoryとして、
+このコマンドはrepository root（Development Claude Codeのcurrent working directory）から、
 引数なしで実行する。remote / branch / refspecはscript内部で固定されており、
 callerからは一切指定できない。許可される操作は次の1つだけ。
 
@@ -92,7 +191,7 @@ HEAD  ->  origin  refs/heads/<現在のclaude/* branch>
 - 任意remote / 任意refspecへのpush
 - `WebSearch` / `WebFetch`禁止、`curl` / `wget`等の禁止、`sudo`禁止
 
-**Productionでは`scripts/claude-safe-sync-main` / `scripts/claude-safe-start` / `scripts/claude-safe-push`のすべてが許可されない。** ProductionはGitHub操作を一切許可せず、Production Security BoundaryはOS Managed Policyのままである。
+**Productionでは`daytrade-sbi/scripts/claude-development` / `daytrade-sbi/scripts/claude-safe-sync-main` / `daytrade-sbi/scripts/claude-safe-start` / `daytrade-sbi/scripts/claude-safe-push`のすべてが許可されない。** ProductionはGitHub操作を一切許可せず、Production Security BoundaryはOS Managed Policyのままである。
 
 **これはSecurity Boundaryではない。** これらscriptはリポジトリ内にあり、
 Development Claude Code自身が編集できる。目的は誤操作防止とraw Git network操作の
