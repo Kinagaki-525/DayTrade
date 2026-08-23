@@ -462,3 +462,94 @@ def test_the_runtime_guard_still_denies_relative_paths_and_metacharacters():
     assert "if not candidate.is_absolute():" in guard
     for meta in (";", "&&", "||", "|", "$(", "`", ">", "<"):
         assert f'"{meta}"' in guard, f"the guard no longer lists {meta!r} as a metacharacter"
+
+
+# --------------------------------------------------------------------------
+# PR #9 review: a documented production example that the guard would deny is
+# worse than no example -- the operator pastes it, gets CLAUDE_PRODUCTION_*,
+# and cannot tell whether the doc or the guard is wrong. So the flag set in
+# the build-ranking example is pinned against the guard's own SUBCOMMAND_FLAGS
+# rather than against a second hand-maintained list.
+
+
+def _guard_module():
+    """Import the runtime guard as a module so its contract tables are the
+    single source of truth for these documentation assertions."""
+    import importlib.util
+
+    guard_path = PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
+    spec = importlib.util.spec_from_file_location(
+        "daytrade_runtime_guard_docs_ssot", guard_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _production_build_ranking_examples(name):
+    """Every documented production build-ranking command line, i.e. the ones
+    rendered as '<production python> -B -m src.cli build-ranking ...'."""
+    return [
+        line.strip()
+        for line in _text(name).splitlines()
+        if line.strip().startswith("<production python>")
+        and " -m src.cli build-ranking " in line
+    ]
+
+
+def test_nightly_operation_shows_a_production_build_ranking_example():
+    assert _production_build_ranking_examples("docs/nightly-operation.md")
+
+
+def test_the_production_build_ranking_example_matches_the_guard_contract():
+    """--ranking is an input of build-selection, not of build-ranking; the
+    guard denies it with CLAUDE_PRODUCTION_NOT_CANONICAL. The example must be
+    a complete, pasteable command, so no ellipsis either."""
+    allowed = _guard_module().SUBCOMMAND_FLAGS["build-ranking"]
+    examples = _production_build_ranking_examples("docs/nightly-operation.md")
+    for example in examples:
+        assert "--ranking " not in example, example
+        assert "--output " in example, example
+        assert "..." not in example, example
+        flags = {token for token in example.split() if token.startswith("--")}
+        assert flags == set(allowed), example
+
+
+def test_the_production_build_ranking_example_is_one_materialised_command():
+    """Materialising the documented placeholders must yield exactly what the
+    guard accepts: one line, absolute paths only, no shell expansion and no
+    metacharacter left to expand."""
+    for example in _production_build_ranking_examples("docs/nightly-operation.md"):
+        materialised = (
+            example.replace("<production python>", "/opt/daytrade/bin/python3")
+            .replace("<DAYTRADE_ROOT>", "/srv/daytrade-sbi")
+            .replace("<TARGET_DATE>", "2026-08-14")
+        )
+        assert "<" not in materialised and ">" not in materialised, materialised
+        for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(", "`"):
+            assert form not in materialised, f"{form} survives in {materialised}"
+        for meta in (";", "&&", "||", "|"):
+            assert meta not in materialised, f"{meta} survives in {materialised}"
+        tokens = materialised.split()
+        assert tokens[:4] == [
+            "/opt/daytrade/bin/python3",
+            "-B",
+            "-m",
+            "src.cli",
+        ], materialised
+        values = [token for token in tokens[5:] if not token.startswith("--")]
+        assert values, materialised
+        for value in values:
+            assert value.startswith("/srv/daytrade-sbi/"), value
+            for relative in ("./", "../", "~/"):
+                assert relative not in value, value
+
+
+@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
+def test_production_docs_never_equate_a_bash_call_with_a_pipeline_step(name):
+    """'1 Bash call = 1 stage' is wrong: one canonical-pipeline number can
+    hold several canonical CLI commands (e.g. init/complete event-research),
+    so the contract is per command, not per stage."""
+    text = _text(name)
+    for wrong in ("1 Bash call = 1 stage", "1 Bash call = 1 Stage"):
+        assert wrong not in text, name

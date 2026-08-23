@@ -412,7 +412,7 @@ materializeした結果、Bash Toolへ渡すcommandには次のいずれも残�
 
 ```text
 <production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
-<production python> -B -m src.cli build-ranking --ranking <DAYTRADE_ROOT>/runs/<TARGET_DATE>/ranking.json ...
+<production python> -B -m src.cli build-ranking --candidates <DAYTRADE_ROOT>/runs/<TARGET_DATE>/candidates.json --config <DAYTRADE_ROOT>/runs/<TARGET_DATE>/strategy_snapshot.yaml --event-gate <DAYTRADE_ROOT>/runs/<TARGET_DATE>/event_gate.json --market-data <DAYTRADE_ROOT>/runs/<TARGET_DATE>/market_data.json --output <DAYTRADE_ROOT>/runs/<TARGET_DATE>/ranking.json --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml --sources <DAYTRADE_ROOT>/runs/<TARGET_DATE>/sources.json
 ```
 
 `<production python>`も同様に、`runtime_security.json`の`production_python`と完全一致する
@@ -430,8 +430,11 @@ canonical `src.cli` commandをちょうど1個だけ実行します。
 - `&&` / `||` / `|` / `&` / redirect（`>` `>>` `<`）/ command substitution（`$(...)`
   / `` `...` ``）/ process substitution / 改行 / `cd`はすべて拒否されます。
 - 出力ファイルが必要な場合はredirectではなくCLI自身の`--output`を使います。
-- 複数stageを1 Bash callへまとめない。Canonical CLI Pipeline Orderは
-  1 Bash call = 1 stageで逐次実行します（Business Pipeline Orderは変わりません）。
+- 複数のcanonical CLI commandを1つのBash callへまとめない。Canonical CLI Pipeline Orderの
+  各canonical `src.cli` commandを、それぞれ独立したBash callとして逐次実行します。
+  Pipelineの番号とBash callは1:1ではありません（`init/complete event-research`のように
+  1つの番号表現に複数のcanonical CLI commandが含まれる箇所があります）。
+  Canonical CLI Pipeline Order自体は変わりません。
 
 ### Production Boundaryの正本
 
