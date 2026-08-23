@@ -25,8 +25,10 @@ def main(argv: list[str]) -> int:
     try:
         root = repository_root()
         verify_canonical_origin(root)
-        verify_working_tree_clean(root)
+        # Operation markers are checked before status so a half-finished Git
+        # operation cannot be hidden behind a status/parsing failure.
         verify_no_git_operation(root)
+        verify_working_tree_clean(root)
         branch = current_branch(root)
         verify_current_branch_allowed(branch)
         result = sync_main(root, branch)
