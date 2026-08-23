@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""DEVELOPMENT-ONLY: sync main, then start one new claude/* branch from it."""
+
+from __future__ import annotations
+
+import sys
+
+from claude_safe_git import (
+    SafeGitError,
+    create_target_branch,
+    current_branch,
+    git,
+    repository_root,
+    sync_main,
+    validate_target_branch,
+    verify_canonical_origin,
+    verify_current_branch_allowed,
+    verify_no_git_operation,
+    verify_target_local_absent,
+    verify_target_remote_absent,
+    verify_working_tree_clean,
+)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(
+            "usage: claude-safe-start claude/<new-branch>; exactly one argument is required",
+            file=sys.stderr,
+        )
+        return 2
+
+    target = argv[0]
+
+    try:
+        root = repository_root()
+        validate_target_branch(root, target)
+        verify_canonical_origin(root)
+        verify_working_tree_clean(root)
+        verify_no_git_operation(root)
+
+        previous_branch = current_branch(root)
+        verify_current_branch_allowed(previous_branch)
+        previous_head = git("rev-parse", "HEAD", cwd=root)
+
+        verify_target_local_absent(root, target)
+        sync_result = sync_main(root, previous_branch)
+        verify_target_remote_absent(root, target)
+
+        new_head = create_target_branch(root, target)
+    except SafeGitError as error:
+        print(f"claude-safe-start: {error}", file=sys.stderr)
+        return 1
+
+    print(f"previous_branch: {previous_branch}")
+    print(f"previous_head: {previous_head}")
+    print(f"synced_main_sha: {sync_result['new_local_main_sha']}")
+    print(f"new_branch: {target}")
+    print(f"new_head: {new_head}")
+    print("result: STARTED")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

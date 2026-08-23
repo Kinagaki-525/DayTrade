@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""DEVELOPMENT-ONLY: safely synchronize local main with canonical origin/main."""
+
+from __future__ import annotations
+
+import sys
+
+from claude_safe_git import (
+    SafeGitError,
+    current_branch,
+    repository_root,
+    sync_main,
+    verify_canonical_origin,
+    verify_current_branch_allowed,
+    verify_no_git_operation,
+    verify_working_tree_clean,
+)
+
+
+def main(argv: list[str]) -> int:
+    if argv:
+        print("claude-safe-sync-main takes no arguments", file=sys.stderr)
+        return 2
+
+    try:
+        root = repository_root()
+        verify_canonical_origin(root)
+        verify_working_tree_clean(root)
+        verify_no_git_operation(root)
+        branch = current_branch(root)
+        verify_current_branch_allowed(branch)
+        result = sync_main(root, branch)
+    except SafeGitError as error:
+        print(f"claude-safe-sync-main: {error}", file=sys.stderr)
+        return 1
+
+    print(f"current_branch: {branch}")
+    print(f"old_local_main_sha: {result['old_local_main_sha']}")
+    print(f"origin_main_sha: {result['origin_main_sha']}")
+    print(f"new_local_main_sha: {result['new_local_main_sha']}")
+    print(f"result: {result['result']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
