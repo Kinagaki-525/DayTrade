@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 
 
@@ -87,6 +88,178 @@ FORBIDDEN_PATTERNS = tuple(
 DENY_EXIT_CODE = 2
 
 
+# --------------------------------------------------------- raw git allowlist --
+#
+# Blacklisting Git's network subcommands cannot hold on its own, because Git
+# lets any subcommand be renamed:
+#
+#     git -c alias.ship=push ship origin claude/example
+#     git config alias.ship push  &&  git ship origin claude/example
+#
+# The command string says "ship", so no list of *known* network subcommands can
+# recognise it, and no amount of adding names to that list ever will. Raw Git is
+# therefore judged the other way round: only the local-only subcommands needed
+# for development work are allowed, and everything else -- unknown subcommands,
+# aliases, and the network subcommands alike -- is refused. The blacklist above
+# is kept as a second layer, not as the decision.
+#
+# scripts/claude-safe-push stays allowed: it is not a git token, and the push it
+# runs is a child process, which a PreToolUse hook never sees. Nothing raw is
+# allowlisted in its place.
+#
+# This is a Development workflow control. The Production Security Boundary
+# remains the OS Managed Policy and the OS Managed Runtime Guard.
+
+_LOCAL_GIT_SUBCOMMANDS = frozenset(
+    {
+        # Inspection.
+        "status",
+        "diff",
+        "log",
+        "show",
+        "rev-parse",
+        "branch",
+        "ls-files",
+        "diff-index",
+        "diff-tree",
+        "merge-base",
+        "cat-file",
+        "check-ref-format",
+        # Verifying .git/info/exclude, which is what keeps the tree clean enough
+        # for claude-safe-push to run at all.
+        "check-ignore",
+        # Recording work.
+        "add",
+        "commit",
+        # Read-only forms only; see _config_reason.
+        "config",
+    }
+)
+
+# `git config` can create an alias, so it is allowed only in the forms that
+# cannot write anything.
+_CONFIG_READ_ONLY_FLAGS = frozenset(
+    {
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--list",
+        "-l",
+        "--show-origin",
+        "--show-scope",
+    }
+)
+
+# Global options that consume the next token, which would otherwise be mistaken
+# for the subcommand.
+_GIT_VALUE_OPTIONS = frozenset(
+    {
+        "-C",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--super-prefix",
+        "--attr-source",
+    }
+)
+
+_GIT_EXE_TOKEN = re.compile(r"^(?:[\w.\-/]*/)?git$")
+_GIT_DASHED_TOKEN = re.compile(r"^(?:[\w.\-/]*/)?git-([\w-]+)$")
+_GIT_MENTION = re.compile(r"(?<![\w.-])(?:[\w./-]*/)?git(?![\w.-])")
+
+_MAX_NESTING = 3
+
+
+def _config_reason(args: list[str]) -> str | None:
+    """`git config` is allowed only where it provably cannot write."""
+    if any(arg == "alias" or arg.startswith("alias.") for arg in args):
+        return "git config touching alias.*"
+    if not any(arg in _CONFIG_READ_ONLY_FLAGS for arg in args):
+        return "git config without a read-only flag (a write can define an alias)"
+    return None
+
+
+def _subcommand_reason(subcommand: str, args: list[str]) -> str | None:
+    name = subcommand.lower()
+    if name not in _LOCAL_GIT_SUBCOMMANDS:
+        return (
+            f"raw git {name!r}, which is not one of the local-only git "
+            "subcommands Development Claude may run"
+        )
+    if name == "config":
+        return _config_reason(args)
+    return None
+
+
+def _invocation_reason(rest: list[str]) -> str | None:
+    """Skip Git's global options, then judge the subcommand they precede."""
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        # -c injects configuration for one command, which is enough to define an
+        # alias (and to reach credential.helper, core.pager and friends). It is
+        # never needed for local development work, so it is refused outright.
+        # -C (upper case) is a directory change and stays allowed, which is why
+        # this parse is case-sensitive.
+        if token == "-c" or (token.startswith("-c") and len(token) > 2):
+            return "git -c (inline configuration, which can define an alias)"
+        if token == "--config-env" or token.startswith("--config-env="):
+            return "git --config-env (inline configuration, which can define an alias)"
+        if token in _GIT_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return _subcommand_reason(token, rest[index + 1 :])
+    return "a git invocation with no recognisable subcommand"
+
+
+def _scan_tokens(tokens: list[str], depth: int = 0) -> str | None:
+    """Judge every git invocation in a token list, including chained ones."""
+    for index, token in enumerate(tokens):
+        dashed = _GIT_DASHED_TOKEN.match(token)
+        if dashed:
+            # Git ships each subcommand as its own executable (git-send-pack).
+            reason = _subcommand_reason(dashed.group(1), list(tokens[index + 1 :]))
+            if reason:
+                return reason
+            continue
+        if _GIT_EXE_TOKEN.match(token):
+            reason = _invocation_reason(list(tokens[index + 1 :]))
+            if reason:
+                return reason
+            continue
+        # A quoted argument can carry a whole command of its own, as in
+        # `bash -c "git ship ..."`.
+        if depth < _MAX_NESTING and any(char.isspace() for char in token):
+            try:
+                nested = shlex.split(token)
+            except ValueError:
+                if _GIT_MENTION.search(token):
+                    return "an unparsable quoted git command"
+                continue
+            reason = _scan_tokens(nested, depth + 1)
+            if reason:
+                return reason
+    return None
+
+
+def raw_git_reason(command: str) -> str | None:
+    """Refuse any raw git invocation outside the local-only allowlist."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # An unparsable command is only refused when git is actually in it;
+        # everything else stays with the pattern list above.
+        if _GIT_MENTION.search(command):
+            return "an unparsable git command"
+        return None
+    return _scan_tokens(tokens)
+
+
 def forbidden_reason(command: str) -> str | None:
     """Return the label of the first forbidden construct found, else None."""
     if not isinstance(command, str):
@@ -95,7 +268,8 @@ def forbidden_reason(command: str) -> str | None:
     for label, pattern in FORBIDDEN_PATTERNS:
         if pattern.search(haystack):
             return label
-    return None
+    # Case-sensitive on purpose: `git -c` and `git -C` mean different things.
+    return raw_git_reason(command)
 
 
 def command_from_payload(payload: object) -> str:

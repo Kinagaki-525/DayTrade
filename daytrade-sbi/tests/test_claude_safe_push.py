@@ -399,15 +399,85 @@ def test_the_network_guard_still_blocks_raw_git_network_commands(command):
     assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
 
 
+# ------------------------------------------------ aliases defeat a blacklist --
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Git lets any subcommand be renamed, so the command string need never
+        # contain the word "push" for a push to happen.
+        pytest.param(
+            "git -c alias.ship=push ship origin claude/example", id="SAFE-PUSH-033"
+        ),
+        pytest.param("git config alias.ship push", id="SAFE-PUSH-034"),
+        pytest.param("git config --global alias.ship push", id="SAFE-PUSH-035"),
+        pytest.param("git config --local alias.ship push", id="SAFE-PUSH-035b"),
+        # An alias configured earlier leaves nothing to recognise at all, which
+        # is why an unknown subcommand has to be refused on sight.
+        pytest.param("git ship origin claude/example", id="SAFE-PUSH-036"),
+        pytest.param("git some-unknown-command", id="SAFE-PUSH-037"),
+        # A safe first command does not license the second.
+        pytest.param(
+            "git status && git ship origin claude/example", id="SAFE-PUSH-044"
+        ),
+        pytest.param(
+            "git diff ; git ship origin claude/example", id="SAFE-PUSH-044b"
+        ),
+        pytest.param(
+            "git status | git ship origin claude/example", id="SAFE-PUSH-044c"
+        ),
+        pytest.param(
+            "/usr/bin/git -c alias.ship=push ship origin claude/example",
+            id="SAFE-PUSH-045",
+        ),
+        # An alias body can carry the push itself.
+        pytest.param(
+            "git config alias.ship '!git push origin'", id="SAFE-PUSH-034b"
+        ),
+        pytest.param("git --config-env=alias.ship=X ship", id="SAFE-PUSH-033b"),
+        # A quoted argument can carry a whole command of its own.
+        pytest.param(
+            'bash -c "git ship origin claude/example"', id="SAFE-PUSH-044d"
+        ),
+        # `git remote update` fetches, so `remote` is not a local-only command.
+        pytest.param("git remote update", id="SAFE-PUSH-037b"),
+    ],
+)
+def test_the_network_guard_fails_closed_on_raw_git_aliases(command):
+    """A blacklist of known network subcommands cannot see through an alias."""
+    assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
+
+
 @pytest.mark.parametrize(
     "command",
     [
         pytest.param("scripts/claude-safe-push", id="SAFE-PUSH-032"),
+        pytest.param(
+            "cd daytrade-sbi && scripts/claude-safe-push", id="SAFE-PUSH-046"
+        ),
         # Closing the raw git network paths must not cost us read-only git.
         pytest.param("git status --short", id="SAFE-PUSH-032a"),
         pytest.param("git log --oneline -5", id="SAFE-PUSH-032b"),
         pytest.param("git ls-files .claude", id="SAFE-PUSH-032c"),
         pytest.param("git diff --check", id="SAFE-PUSH-032d"),
+        # The local-only work the allowlist exists to keep possible.
+        pytest.param("git status", id="SAFE-PUSH-038"),
+        pytest.param("git diff", id="SAFE-PUSH-039"),
+        pytest.param("git log -1 --oneline", id="SAFE-PUSH-040"),
+        pytest.param("git branch --show-current", id="SAFE-PUSH-041"),
+        pytest.param("git add path/to/file", id="SAFE-PUSH-042"),
+        pytest.param('git commit -m "test"', id="SAFE-PUSH-043"),
+        # -C is a directory change, unlike -c: the parse is case-sensitive.
+        pytest.param("git -C /home/daytrade/DayTrade status", id="SAFE-PUSH-043a"),
+        pytest.param("git --no-pager diff", id="SAFE-PUSH-043b"),
+        pytest.param("git rev-parse HEAD", id="SAFE-PUSH-043c"),
+        # Read-only config forms cannot define an alias.
+        pytest.param("git config --get remote.origin.mirror", id="SAFE-PUSH-043d"),
+        pytest.param("git config --list", id="SAFE-PUSH-043e"),
+        pytest.param(
+            "git status --short && git log --oneline -3", id="SAFE-PUSH-043f"
+        ),
     ],
 )
 def test_the_network_guard_lets_the_safe_push_wrapper_through(command):
