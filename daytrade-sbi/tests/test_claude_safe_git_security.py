@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -35,10 +36,16 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _run_script(cwd: Path, script: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_script(
+    cwd: Path,
+    script: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(script), *args],
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -210,3 +217,38 @@ def test_safe_git_security_010_safe_push_rejects_remote_vcs_before_push(repo):
     assert result.returncode == 1
     assert "remote.origin.vcs" in result.stderr
     assert "custom remote helpers are not allowed" in result.stderr
+
+
+def test_safe_git_security_011_safe_push_suppresses_git_push_stderr(repo, tmp_path):
+    secret = "TOP_SECRET_FROM_GIT_PUSH_STDERR"
+    real_git = shutil.which("git")
+    assert real_git
+
+    _git(repo, "checkout", "-b", "claude/example")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "git"
+    shim.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, subprocess, sys\n"
+        "args = sys.argv[1:]\n"
+        "if args and args[0] == 'push':\n"
+        f"    print('{secret}', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+        "sys.exit(subprocess.run([os.environ['SAFE_PUSH_REAL_GIT'], *args]).returncode)\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "SAFE_PUSH_REAL_GIT": real_git,
+    }
+
+    result = _run_script(repo, SAFE_PUSH, env=env)
+
+    assert result.returncode == 1
+    assert secret not in result.stderr
+    assert "push rejected" in result.stderr
