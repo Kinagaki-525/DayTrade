@@ -44,9 +44,11 @@ def git_result(*args: str, cwd: str | None = None) -> tuple[int, str, str]:
 
 
 def git(*args: str, cwd: str | None = None) -> str:
-    code, out, err = git_result(*args, cwd=cwd)
+    code, out, _ = git_result(*args, cwd=cwd)
     if code != 0:
-        raise SafeGitError(f"git {' '.join(args)} failed (exit {code}): {err}")
+        # stderr may contain helper/authentication details. Never echo it from
+        # the wrapper; the command shape and exit code are enough to fail closed.
+        raise SafeGitError(f"git {' '.join(args)} failed (exit {code})")
     return out
 
 
@@ -58,9 +60,9 @@ def repository_root() -> str:
 
 
 def _single_url(args: tuple[str, ...], *, label: str, root: str) -> str:
-    code, out, err = git_result(*args, cwd=root)
+    code, out, _ = git_result(*args, cwd=root)
     if code != 0:
-        raise SafeGitError(f"could not resolve {label} (git exit {code}): {err}")
+        raise SafeGitError(f"could not resolve {label} (git exit {code})")
     urls = [line.strip() for line in out.splitlines() if line.strip()]
     if len(urls) != 1:
         raise SafeGitError(f"{label} must resolve to exactly one URL; got {len(urls)}")
@@ -78,10 +80,8 @@ def verify_canonical_origin(root: str) -> None:
         root=root,
     )
     if fetch_url != CANONICAL_ORIGIN_URL:
-        raise SafeGitError(
-            f"{REMOTE} fetch URL is {fetch_url!r}, not canonical "
-            f"{CANONICAL_ORIGIN_URL!r}"
-        )
+        # Do not echo a non-canonical URL: it may contain embedded credentials.
+        raise SafeGitError(f"{REMOTE} fetch URL is not canonical; refusing")
 
     push_url = _single_url(
         ("remote", "get-url", "--push", "--all", REMOTE),
@@ -89,22 +89,17 @@ def verify_canonical_origin(root: str) -> None:
         root=root,
     )
     if push_url != CANONICAL_ORIGIN_URL:
-        raise SafeGitError(
-            f"{REMOTE} push URL is {push_url!r}, not canonical "
-            f"{CANONICAL_ORIGIN_URL!r}"
-        )
+        raise SafeGitError(f"{REMOTE} push URL is not canonical; refusing")
 
-    code, value, err = git_result("config", "--get", f"remote.{REMOTE}.mirror", cwd=root)
+    code, value, _ = git_result("config", "--get", f"remote.{REMOTE}.mirror", cwd=root)
     if code == 1:
         return
     if code != 0:
         raise SafeGitError(
-            f"could not read remote.{REMOTE}.mirror (git exit {code}): {err}"
+            f"could not read remote.{REMOTE}.mirror (git exit {code})"
         )
     if value.strip().lower() not in ("false", "no", "off", "0", ""):
-        raise SafeGitError(
-            f"remote.{REMOTE}.mirror is enabled ({value.strip()!r}); refusing"
-        )
+        raise SafeGitError(f"remote.{REMOTE}.mirror is enabled; refusing")
 
 
 def verify_working_tree_clean(root: str) -> None:
@@ -127,6 +122,7 @@ def verify_no_git_operation(root: str) -> None:
         "CHERRY_PICK_HEAD",
         "REVERT_HEAD",
         "BISECT_LOG",
+        "BISECT_START",
         "rebase-apply",
         "rebase-merge",
     )
@@ -154,12 +150,12 @@ def verify_current_branch_allowed(branch: str) -> None:
 
 
 def local_ref_exists(root: str, ref: str) -> bool:
-    code, _, err = git_result("show-ref", "--verify", "--quiet", ref, cwd=root)
+    code, _, _ = git_result("show-ref", "--verify", "--quiet", ref, cwd=root)
     if code == 0:
         return True
     if code == 1:
         return False
-    raise SafeGitError(f"could not inspect {ref!r}: {err}")
+    raise SafeGitError(f"could not inspect local ref {ref!r}")
 
 
 def require_local_main(root: str) -> None:
@@ -168,7 +164,7 @@ def require_local_main(root: str) -> None:
 
 
 def fetch_main(root: str) -> None:
-    code, _, err = git_result(
+    code, _, _ = git_result(
         "fetch",
         "--no-tags",
         REMOTE,
@@ -176,16 +172,16 @@ def fetch_main(root: str) -> None:
         cwd=root,
     )
     if code != 0:
-        raise SafeGitError(f"exact main fetch failed (git exit {code}): {err}")
+        raise SafeGitError(f"exact main fetch failed (git exit {code})")
 
 
 def _is_ancestor(root: str, older: str, newer: str) -> bool:
-    code, _, err = git_result("merge-base", "--is-ancestor", older, newer, cwd=root)
+    code, _, _ = git_result("merge-base", "--is-ancestor", older, newer, cwd=root)
     if code == 0:
         return True
     if code == 1:
         return False
-    raise SafeGitError(f"could not compare ancestry {older!r} -> {newer!r}: {err}")
+    raise SafeGitError(f"could not compare ancestry {older!r} -> {newer!r}")
 
 
 def sync_main(root: str, branch: str) -> dict[str, str]:
@@ -209,12 +205,14 @@ def sync_main(root: str, branch: str) -> dict[str, str]:
         if branch == MAIN_BRANCH:
             git("merge", "--ff-only", MAIN_REMOTE_REF, cwd=root)
         else:
+            # mainが別worktreeでcheckout中ならGit自身が拒否する。回避しない。
             git("branch", "-f", MAIN_BRANCH, MAIN_REMOTE_REF, cwd=root)
         new_local = git("rev-parse", MAIN_LOCAL_REF, cwd=root)
         if new_local != remote:
             raise SafeGitError(
                 "main fast-forward completed but local main does not equal origin/main"
             )
+        verify_working_tree_clean(root)
         return {
             "old_local_main_sha": old_local,
             "origin_main_sha": remote,
@@ -237,8 +235,6 @@ def validate_target_branch(root: str, target: str) -> None:
         raise SafeGitError(
             f"target branch {target!r} must start with {BRANCH_PREFIX!r}"
         )
-    if target.startswith("refs/heads/"):
-        raise SafeGitError("target must be a branch name, not a refs/heads/* ref")
     git("check-ref-format", "--branch", target, cwd=root)
 
 
@@ -249,7 +245,7 @@ def verify_target_local_absent(root: str, target: str) -> None:
 
 def verify_target_remote_absent(root: str, target: str) -> None:
     ref = f"refs/heads/{target}"
-    code, _, err = git_result(
+    code, _, _ = git_result(
         "ls-remote", "--exit-code", "--heads", REMOTE, ref, cwd=root
     )
     if code == 0:
@@ -258,7 +254,7 @@ def verify_target_remote_absent(root: str, target: str) -> None:
         return
     raise SafeGitError(
         f"could not determine whether remote branch {target!r} exists "
-        f"(git exit {code}): {err}"
+        f"(git exit {code})"
     )
 
 
@@ -275,4 +271,5 @@ def create_target_branch(root: str, target: str) -> str:
         raise SafeGitError(
             "created branch HEAD does not equal the synchronized local main"
         )
+    verify_working_tree_clean(root)
     return head
