@@ -329,6 +329,7 @@ def test_safe_sync_017_to_021_fetch_is_exact_and_no_repair_commands(repo):
         [
             "fetch",
             "--no-tags",
+            "--no-recurse-submodules",
             "origin",
             "refs/heads/main:refs/remotes/origin/main",
         ]
