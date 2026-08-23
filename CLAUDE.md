@@ -14,7 +14,8 @@
 - `python -c` / `py -c` によるHTTPアクセス（`requests` / `httpx` / `urllib.request` / `socket`）を行わない
 - `node -e` / `npx` によるHTTPアクセスを行わない
 - `nc` / `netcat` / `telnet` / `ssh` / `scp` / `ftp` / `gh` を実行しない
-- `git fetch` / `git pull` / `git push` を実行しない
+- `git fetch` / `git pull` / `git push` をBashから直接実行しない
+  （Developmentに限り`scripts/claude-safe-push`だけが例外。後述）
 - `pip install` / `npm install` などのパッケージインストールを実行しない
 - 本番の`config/strategy.yaml`の`selection.enabled`、
   `selection.rules.minimum_turnover_yen.threshold_yen`、
@@ -23,6 +24,48 @@
   `activate-selection-config` CLIを実行する）
 - `sources.json` / `market_data.json` / `recommendation.json` を手で編集しない
 - 市場数値（価格・出来高・売買代金・呼値・日付）をagentが読み取って書き写さない
+
+## Development限定: Safe Push（Claude Code固有）
+
+**Developmentでのみ**、Claude Codeは次のコマンドだけを使って、
+現在checkoutしているBranchをpushできる。
+
+```
+scripts/claude-safe-push
+```
+
+このコマンドはリポジトリの`daytrade-sbi/`をcurrent working directoryとして、
+引数なしで実行する。remote / branch / refspecはscript内部で固定されており、
+callerからは一切指定できない。許可される操作は次の1つだけ。
+
+```
+HEAD  ->  origin  refs/heads/<現在のclaude/* branch>
+```
+
+前提条件（1つでも満たさなければscriptがnon-zeroで停止する）:
+
+- originのURLが`https://github.com/Kinagaki-525/DayTrade.git`と完全一致
+- 現在Branchが`claude/`prefixを持つ（detached HEAD / `main` / `master`は拒否）
+- Working Treeがclean（unstaged / staged / untrackedが1件でもあれば拒否）
+
+この限定許可によって、次は**一切緩まない**。
+
+- raw `git push`（`.claude/settings.json`のdenyと`network_guard.py`のblockを維持）
+- `git fetch` / `git pull` / `git clone`
+- force push（`--force` / `--force-with-lease` / `-f` / `+`refspec）
+- `main` / `master`へのpush、branch削除、tag push
+- 任意remote / 任意refspecへのpush
+- `WebSearch` / `WebFetch`禁止、`curl` / `wget`等の禁止、`sudo`禁止
+
+**Productionでは`scripts/claude-safe-push`も許可されない。** Productionはpushを
+一切許可せず、Production Security BoundaryはOS Managed Policyのままである。
+
+**これはSecurity Boundaryではない。** このscriptはリポジトリ内にあり、
+Development Claude Code自身が編集できる。目的は誤操作防止とraw `git push`の
+排除であって、Production Managed Policyと同等のimmutableな境界ではない。
+PreToolUse hookはBash Tool呼び出しの文字列だけを見て子プロセスは見ないため、
+このscriptが内部で実行する`git push`はhookの視界の外にある。これは設計どおりだが、
+「wrapperを通せばhookを迂回できる」ことを意味するので、上記の位置付けを厳守する。
 
 ## Seccomp Human Runtime Acceptance時の限定許可（Claude Code固有）
 

@@ -35,6 +35,7 @@
       "allowUnixSockets": [],
       "allowedDomains": [
         "finance.yahoo.co.jp",
+        "github.com",
         "kabutan.jp",
         "www.jpx.co.jp",
         "www.release.tdnet.info"
