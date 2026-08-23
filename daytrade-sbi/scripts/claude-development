@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""DEVELOPMENT-ONLY entry point for a Development Claude Code session.
+
+This is the official way to start Development Claude Code. It resolves the git
+repository root from the source tree, refuses to run on a Production runtime,
+refuses to start anywhere but a ``claude/*`` branch, and ``chdir``s to that root
+immediately before ``exec claude`` -- so a human may call it from
+``daytrade-sbi/`` (or anywhere else) and Claude still starts at the repository
+root, where the Claude Sandbox can write ``.git`` and ``git add`` /
+``git commit`` therefore work with the sandbox fully enabled.
+
+    daytrade-sbi/scripts/claude-development
+
+It is NOT ``scripts/claude-production``. That launcher is a separate, human-only
+Production entry point with its own fail-closed runtime-security preflight; this
+one has nothing to do with it and stops immediately if a Production runtime is
+detected.
+
+NOT A SECURITY BOUNDARY. This file lives in the repository and Development
+Claude Code can edit it, exactly like ``scripts/claude-safe-push``. It disables
+no sandbox, sets no ``allowUnsandboxedCommands``, relaxes no permission, changes
+no Production Managed Policy, and touches no ``.git`` ownership or mode. Raw
+``git push`` stays denied; ``scripts/claude-safe-push`` remains the only push
+path.
+
+The preflight core lives in ``src/claude_development_launcher.py`` so that it is
+unit-testable; this file stays a thin entry point.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.claude_development_launcher import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

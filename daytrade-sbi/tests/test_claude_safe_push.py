@@ -452,6 +452,24 @@ def test_the_network_guard_fails_closed_on_raw_git_aliases(command):
 @pytest.mark.parametrize(
     "command",
     [
+        # FIX-DEV-GIT-011. -C was once allowed here because it is not -c: it
+        # changes a directory rather than injecting configuration. But a
+        # directory is exactly what the pathspec validator resolves operands
+        # against, so `-C` breaks the explicit-file contract just as thoroughly
+        # as `--work-tree` does. The canonical form has no global option at all,
+        # so --no-pager goes with it rather than being carved out by name.
+        pytest.param("git -C /home/daytrade/DayTrade status", id="SAFE-PUSH-043a"),
+        pytest.param("git --no-pager diff", id="SAFE-PUSH-043b"),
+    ],
+)
+def test_safe_push_the_guard_fixes_the_git_execution_context(command):
+    """Raw git is `git <subcommand>` from the repository root, nothing before it."""
+    assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         pytest.param("scripts/claude-safe-push", id="SAFE-PUSH-032"),
         pytest.param(
             "cd daytrade-sbi && scripts/claude-safe-push", id="SAFE-PUSH-046"
@@ -466,11 +484,9 @@ def test_the_network_guard_fails_closed_on_raw_git_aliases(command):
         pytest.param("git diff", id="SAFE-PUSH-039"),
         pytest.param("git log -1 --oneline", id="SAFE-PUSH-040"),
         pytest.param("git branch --show-current", id="SAFE-PUSH-041"),
-        pytest.param("git add path/to/file", id="SAFE-PUSH-042"),
+        # Explicit paths after '--' only; see _add_reason in the guard.
+        pytest.param("git add -- CLAUDE.md", id="SAFE-PUSH-042"),
         pytest.param('git commit -m "test"', id="SAFE-PUSH-043"),
-        # -C is a directory change, unlike -c: the parse is case-sensitive.
-        pytest.param("git -C /home/daytrade/DayTrade status", id="SAFE-PUSH-043a"),
-        pytest.param("git --no-pager diff", id="SAFE-PUSH-043b"),
         pytest.param("git rev-parse HEAD", id="SAFE-PUSH-043c"),
         # Read-only config forms cannot define an alias.
         pytest.param("git config --get remote.origin.mirror", id="SAFE-PUSH-043d"),
