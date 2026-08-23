@@ -10,7 +10,9 @@ What it allows, and nothing else:
 
 with the branch required to be a ``claude/`` feature branch, the working tree
 required to be clean, and the remote required to be exactly the canonical
-repository. There are no arguments: the caller cannot choose the remote, the
+repository -- on the push side as well as the fetch side, since ``pushurl`` and
+``mirror`` can otherwise redirect or multiply where a push lands. There are no
+arguments: the caller cannot choose the remote, the
 branch, the refspec, or any option. No force, no delete, no tags, no
 main/master. A non-fast-forward is left for Git/GitHub to reject -- this script
 never fetches, pulls, merges, rebases or resets to "fix" one.
@@ -67,6 +69,60 @@ def repository_root() -> str:
         raise SafePushError(f"not inside a git repository: {error}") from error
 
 
+def _git_result(*args: str, cwd: str | None = None) -> tuple[int, str, str]:
+    """Run a git command with shell=False, returning (code, stdout, stderr)."""
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def resolve_push_urls(root: str) -> list[str]:
+    """Every URL ``git push origin`` would actually write to.
+
+    ``remote.<name>.url`` is only the *fetch* URL. When ``remote.<name>.pushurl``
+    is set it overrides it for pushes, and Git accepts several of them, which
+    makes one ``git push`` write to several repositories. Checking the fetch URL
+    alone would therefore approve a push aimed somewhere else entirely, so the
+    push side is resolved here and validated on its own.
+    """
+    code, out, err = _git_result(
+        "remote", "get-url", "--push", "--all", REMOTE, cwd=root
+    )
+    if code != 0:
+        raise SafePushError(
+            f"could not resolve the push URL of {REMOTE} (git exit {code}): {err}"
+        )
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def verify_remote_is_not_mirror(root: str) -> None:
+    """``remote.<name>.mirror`` turns every push into a ``--mirror`` push.
+
+    That replicates *all* refs and deletes remote refs missing locally, which is
+    irreconcilable with this script's single-ref contract. The setting is
+    refused, never rewritten: Safe Push does not edit Git configuration.
+    """
+    code, value, err = _git_result(
+        "config", "--get", f"remote.{REMOTE}.mirror", cwd=root
+    )
+    if code == 1:  # not set
+        return
+    if code != 0:
+        raise SafePushError(
+            f"could not read remote.{REMOTE}.mirror (git exit {code}): {err}"
+        )
+    if value.strip().lower() not in ("false", "no", "off", "0", ""):
+        raise SafePushError(
+            f"remote.{REMOTE}.mirror is {value.strip()!r}; a mirror push cannot "
+            "honour this script's single-ref contract. Refusing to push"
+        )
+
+
 def verify_canonical_origin(root: str) -> None:
     """The remote is fixed. An arbitrary remote is never pushed to."""
     remotes = _git("remote", cwd=root).splitlines()
@@ -80,6 +136,25 @@ def verify_canonical_origin(root: str) -> None:
             f"{REMOTE} is {url!r}, not the canonical "
             f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
         )
+
+    push_urls = resolve_push_urls(root)
+    if not push_urls:
+        raise SafePushError(
+            f"{REMOTE} resolves to no push URL; refusing to push"
+        )
+    if len(push_urls) > 1:
+        listed = ", ".join(repr(candidate) for candidate in push_urls)
+        raise SafePushError(
+            f"{REMOTE} resolves to {len(push_urls)} push URLs ({listed}); "
+            "this script pushes to exactly one repository. Refusing to push"
+        )
+    if push_urls[0] != CANONICAL_ORIGIN_URL:
+        raise SafePushError(
+            f"{REMOTE} pushes to {push_urls[0]!r}, not the canonical "
+            f"{CANONICAL_ORIGIN_URL!r}; refusing to push"
+        )
+
+    verify_remote_is_not_mirror(root)
 
 
 def current_branch(root: str) -> str:

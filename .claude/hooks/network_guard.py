@@ -22,6 +22,33 @@ import re
 import sys
 
 
+# Git's network subcommands are the one write path to GitHub that the
+# Development sandbox can now reach, so they cannot be matched as the literal
+# string "git push": the executable may be spelled as a path
+# (``/usr/bin/git push``), and any number of global options may sit between it
+# and the subcommand (``git -c credential.helper=... push``). Both spellings
+# reach the network without passing through scripts/claude-safe-push, so the
+# executable and the subcommand are matched independently of each other.
+#
+# The wrapper itself stays allowed: "scripts/claude-safe-push" contains no
+# ``git`` token, and the ``git push`` it runs is a child process, which a
+# PreToolUse hook never sees. Raw ``git push`` is never allowlisted.
+_GIT_EXE = r"(?<![\w.-])(?:[\w./-]*/)?git(?![\w.-])"
+_GIT_GLOBAL_OPTS = r"(?:\s+(?:-c\s*\S+|--[\w-]+(?:=\S+)?|-[a-z]+))*"
+
+# Git also ships each subcommand as its own executable (``git-send-pack``),
+# which is a network path that never spells the subcommand as an argument.
+_GIT_NETWORK_SUBCOMMANDS = ("push", "fetch", "pull", "clone", "ls-remote", "send-pack")
+
+
+def _git_network_pattern(subcommand: str) -> str:
+    """Match ``git <subcommand>`` however the executable and options are written."""
+    return (
+        rf"(?:{_GIT_EXE}{_GIT_GLOBAL_OPTS}\s+{subcommand}(?![\w-])"
+        rf"|(?<![\w.-])(?:[\w./-]*/)?git-{subcommand}(?![\w-]))"
+    )
+
+
 # Each entry is a (label, compiled pattern) pair. Patterns are matched against
 # the lower-cased full command string. Word boundaries keep innocuous
 # substrings (e.g. "concurrent" containing "nc") from tripping the guard,
@@ -45,9 +72,10 @@ _FORBIDDEN = (
     ("scp", r"(?<![\w./-])scp(?![\w.-])"),
     ("ftp", r"(?<![\w./-])s?ftp(?![\w.-])"),
     ("gh", r"(?<![\w./-])gh(?![\w.-])"),
-    ("git fetch", r"(?<![\w./-])git\s+fetch(?![\w-])"),
-    ("git pull", r"(?<![\w./-])git\s+pull(?![\w-])"),
-    ("git push", r"(?<![\w./-])git\s+push(?![\w-])"),
+    *(
+        (f"git {subcommand}", _git_network_pattern(subcommand))
+        for subcommand in _GIT_NETWORK_SUBCOMMANDS
+    ),
     ("pip install", r"(?<![\w./-])(pip|pip3)(?![\w.-])(\s+[\w.=/-]+)*\s+install(?![\w-])"),
     ("npm install", r"(?<![\w./-])npm(?![\w.-])(\s+[\w.=/-]+)*\s+(install|i|add)(?![\w-])"),
 )

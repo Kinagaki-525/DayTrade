@@ -268,6 +268,60 @@ def test_safe_push_013_no_force_delete_or_tag_option_is_ever_built(repo):
         assert "refs/tags/" not in refspec
 
 
+# ------------------------------------------------ where the push really goes --
+
+
+def test_safe_push_021_a_redirected_pushurl_is_refused(repo):
+    """`remote.origin.url` is only the fetch URL; `pushurl` overrides it."""
+    repo["git"](
+        "remote", "set-url", "--push", "origin",
+        "https://github.com/attacker/DayTrade.git",
+    )
+    result = run_safe_push(repo)
+    assert result.returncode == 1
+    assert "attacker" in result.stderr
+    assert pushes(repo) == []
+
+
+def test_safe_push_022_multiple_pushurls_are_refused(repo):
+    """Several pushurls make one `git push` write to several repositories."""
+    repo["git"]("remote", "set-url", "--push", "origin", CANONICAL_ORIGIN_URL)
+    repo["git"](
+        "remote", "set-url", "--push", "--add", "origin",
+        "https://github.com/attacker/DayTrade.git",
+    )
+    result = run_safe_push(repo)
+    assert result.returncode == 1
+    assert "2 push URLs" in result.stderr
+    assert pushes(repo) == []
+
+
+def test_safe_push_023_a_canonical_pushurl_is_accepted(repo):
+    """An explicit pushurl equal to the canonical URL is the one allowed case."""
+    repo["git"]("remote", "set-url", "--push", "origin", CANONICAL_ORIGIN_URL)
+    result = run_safe_push(repo)
+    assert result.returncode == 0, result.stderr
+    assert len(pushes(repo)) == 1
+
+
+def test_safe_push_024_mirror_remote_is_refused(repo):
+    """`remote.origin.mirror` makes every push a --mirror push."""
+    repo["git"]("config", "remote.origin.mirror", "true")
+    result = run_safe_push(repo)
+    assert result.returncode == 1
+    assert "mirror" in result.stderr
+    assert pushes(repo) == []
+    # The setting is refused, never rewritten.
+    still_set = subprocess.run(
+        ["git", "config", "--get", "remote.origin.mirror"],
+        cwd=repo["work"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert still_set.stdout.strip() == "true"
+
+
 # ------------------------------------------- the guard still denies raw git --
 
 
@@ -295,6 +349,49 @@ def _guard_verdict(command: str):
         pytest.param("git push -f", id="SAFE-PUSH-016b"),
         pytest.param("git fetch origin", id="SAFE-PUSH-016c"),
         pytest.param("git pull", id="SAFE-PUSH-016d"),
+        # The executable may be spelled as a path, and global options may sit
+        # between it and the subcommand. Neither may be relied on to identify
+        # the command, or github.com becomes reachable around the wrapper.
+        pytest.param(
+            "/usr/bin/git push origin claude/example", id="SAFE-PUSH-025"
+        ),
+        pytest.param(
+            "git -c core.askPass=true push origin claude/example",
+            id="SAFE-PUSH-026",
+        ),
+        pytest.param(
+            "/usr/bin/git -c core.askPass=true push origin claude/example",
+            id="SAFE-PUSH-027",
+        ),
+        pytest.param(
+            "git send-pack https://github.com/Kinagaki-525/DayTrade.git HEAD",
+            id="SAFE-PUSH-028",
+        ),
+        pytest.param(
+            "/usr/bin/git send-pack https://github.com/Kinagaki-525/DayTrade.git HEAD",
+            id="SAFE-PUSH-029",
+        ),
+        pytest.param(
+            "git clone https://github.com/Kinagaki-525/DayTrade.git",
+            id="SAFE-PUSH-030",
+        ),
+        pytest.param(
+            "git ls-remote https://github.com/Kinagaki-525/DayTrade.git",
+            id="SAFE-PUSH-031",
+        ),
+        # Git ships each subcommand as its own executable too.
+        pytest.param(
+            "/usr/lib/git-core/git-send-pack https://github.com/x/y.git HEAD",
+            id="SAFE-PUSH-029b",
+        ),
+        pytest.param(
+            "git -c credential.helper=/tmp/x push origin claude/foo",
+            id="SAFE-PUSH-026b",
+        ),
+        pytest.param(
+            "git -C /home/daytrade/DayTrade push origin claude/foo",
+            id="SAFE-PUSH-026c",
+        ),
     ],
 )
 def test_the_network_guard_still_blocks_raw_git_network_commands(command):
@@ -302,9 +399,20 @@ def test_the_network_guard_still_blocks_raw_git_network_commands(command):
     assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
 
 
-def test_the_network_guard_lets_the_safe_push_wrapper_through():
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("scripts/claude-safe-push", id="SAFE-PUSH-032"),
+        # Closing the raw git network paths must not cost us read-only git.
+        pytest.param("git status --short", id="SAFE-PUSH-032a"),
+        pytest.param("git log --oneline -5", id="SAFE-PUSH-032b"),
+        pytest.param("git ls-files .claude", id="SAFE-PUSH-032c"),
+        pytest.param("git diff --check", id="SAFE-PUSH-032d"),
+    ],
+)
+def test_the_network_guard_lets_the_safe_push_wrapper_through(command):
     """The wrapper is not a git push string, so no guard exception was needed."""
-    result = _guard_verdict("scripts/claude-safe-push")
+    result = _guard_verdict(command)
     assert result.returncode == 0, result.stderr
 
 
