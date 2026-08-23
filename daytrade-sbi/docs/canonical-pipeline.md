@@ -86,3 +86,18 @@ Runtime Security Gate  →  Business Canonical Pipeline
   （`src/claude_runtime_security.derive_expected_domains`）。Hostを手で書き足す運用は
   ありません。
 - 手順の詳細は[docs/nightly-operation.md](nightly-operation.md)を参照してください。
+
+### Executor-specific command rendering
+
+Business Canonical Pipeline Order（上記25 step）は、どのexecutorでも同一です。変わるのは
+**commandのrendering**だけです。
+
+- このドキュメント・`prompts/nightly_research.md`・`.agents/skills/prepare-daytrade-plan/SKILL.md`の
+  `config/source_matrix.yaml`・`runs/YYYY-MM-DD/...`は、executor非依存の**論理パス表記**です。
+- Claude Production executorは、同じCanonical Pipelineを、Runtime Guardの契約に従って
+  **具体的なabsolute pathへmaterializeしてから**実行します。さらにBash Tool 1回につき
+  canonical CLI commandを1個だけ実行します（**1 Bash call = 1 canonical CLI command**）。
+  正本は[docs/nightly-operation.md](nightly-operation.md)の
+  **Production Path Materialization Contract**と**Production 1-call-1-command Contract**。
+- Canonical Pipeline Orderそのものと、Production command renderingを混同しないでください。
+  path materializationはstage順序・引数の意味・業務ロジックを一切変えません。

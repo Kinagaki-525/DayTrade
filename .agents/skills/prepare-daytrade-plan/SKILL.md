@@ -24,6 +24,37 @@ Read these files before starting:
 
 Follow the nightly prompt as the procedural source of truth. Do not copy or replace its commands with inferred alternatives.
 
+## Production Runtime Profile (Claude Code production executor only)
+
+Every command shown in this Skill and in `nightly_research.md` uses **logical relative paths**
+(`config/source_matrix.yaml`, `runs/<date>/ranking.json`). Codex and Development Claude Code run
+them as written. A Claude Code session started through `scripts/claude-production` (production
+runtime profile) must **not** copy those strings into the Bash tool: the OS-managed Production
+Runtime Guard inspects the command string *before* any shell runs it, so a relative path is denied
+with `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN` and a `;` with `CLAUDE_PRODUCTION_BASH_DENIED`. That is
+the guard's contract, not a defect — never work around it, and never ask for it to be relaxed.
+
+Source of truth: the **Production Path Materialization Contract** and the **Production
+1-call-1-command Contract** in `daytrade-sbi/docs/nightly-operation.md`. In the production runtime
+profile:
+
+- Materialize every path argument into a concrete absolute path immediately before the Bash call.
+  The DayTrade root is the session's current working directory (the launcher `chdir`s there before
+  `exec claude`); the run directory is `<DayTrade root>/runs/<target-date>`; the target date and the
+  canonical production interpreter are recorded in
+  `runs/<target-date>/working/runtime_security.json` (read it with the Read tool — `cat` is not an
+  approved command). Never hardcode a machine-specific absolute path into this Skill or any
+  document.
+- Leave no relative or shell-expanded form in the command string: no `config/...` or `runs/...`,
+  no `./` `../` `~/`, no `$DAYTRADE_ROOT` / `${DAYTRADE_ROOT}` / `$DAYTRADE_RUN_DIR` /
+  `${DAYTRADE_RUN_DIR}`, no `$(pwd)` or backticks. The guard sees the unexpanded string.
+- **1 Bash call = 1 canonical CLI command.** Do not append `; echo "EXIT_CODE=$?"` to read the exit
+  status — the Bash tool already reports a non-zero exit. No `&&`, `||`, pipes, redirection, command
+  substitution, process substitution, or `cd`. When a step needs an output file, use the CLI's own
+  `--output`.
+- Only the command rendering changes. The Canonical CLI Pipeline Order, the flags, and the business
+  logic are identical in every runtime profile.
+
 ## Orchestration
 
 1. Confirm the target and previous trading dates from authoritative evidence. Stop if either date is uncertain.

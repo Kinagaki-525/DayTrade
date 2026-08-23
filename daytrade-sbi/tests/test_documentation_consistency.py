@@ -370,3 +370,186 @@ def test_network_audit_ssot_is_the_physical_request_record():
     assert (
         "``runs/<target_date>/network_requests/<request_id>.json``" in source
     ), "src/source_acquisition.py no longer names the Request Record as the SSOT"
+
+
+# ------------------------------- FIX-PRD-005: production path contract ---
+#
+# The Runtime Acceptance failure was a documentation failure: the operating
+# procedure showed logical relative paths (`config/source_matrix.yaml`) and
+# said nothing about the guard's absolute-path contract, so a production
+# operator pasted them into a Bash call and was correctly denied. The guard
+# is right; the procedure was incomplete. These tests pin the *procedure*,
+# and pin that the guard's denials were not softened to compensate.
+
+#: The two contract names every agent-facing production document must carry,
+#: so that the Skill, the prompt and the operations doc point at one rule.
+PRODUCTION_CONTRACT_DOCS = (
+    "docs/nightly-operation.md",
+    "docs/canonical-pipeline.md",
+    "prompts/nightly_research.md",
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
+def test_production_docs_name_both_command_materialisation_contracts(name):
+    text = _text(name)
+    assert "Production Path Materialization Contract" in text, name
+    assert "1 Bash call = 1 canonical CLI command" in text, name
+
+
+#: The documents a production agent actually renders commands from. The
+#: canonical-pipeline doc names the contract but stays the pipeline-order
+#: SSOT, so it is not asked to repeat the syntax detail.
+COMMAND_RENDERING_DOCS = (
+    "docs/nightly-operation.md",
+    "prompts/nightly_research.md",
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", COMMAND_RENDERING_DOCS)
+def test_production_docs_forbid_every_unexpanded_path_form(name):
+    """A production command string is inspected before any shell expands it,
+    so each of these forms has to be called out as unusable, not just
+    'use absolute paths'."""
+    text = _text(name)
+    for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(pwd)"):
+        assert form in text, f"{name} does not mention the {form} form"
+
+
+def test_nightly_operation_states_the_materialisation_sources():
+    """Where the absolute paths come from -- the launcher's cwd and the run
+    directory -- rather than a hardcoded machine path."""
+    text = _text("docs/nightly-operation.md")
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+    assert "CLAUDE_PRODUCTION_BASH_DENIED" in text
+    assert "current working directory" in text
+    assert "runtime_security.json" in text
+    assert '; echo "EXIT_CODE=$?"' in text
+
+
+def test_no_document_hardcodes_the_operators_daytrade_root():
+    """The materialised path is derived at runtime; a machine-specific root
+    baked into a document is exactly what makes the contract wrong on the
+    next machine."""
+    hardcoded = "/home/daytrade/DayTrade"
+    for name in DOCS:
+        assert hardcoded not in _text(name), f"{name} hardcodes {hardcoded}"
+
+
+def test_skill_defers_to_the_operations_doc_for_the_production_contract():
+    text = _text("SKILL.md")
+    assert "scripts/claude-production" in text
+    assert "daytrade-sbi/docs/nightly-operation.md" in text
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+
+
+def test_claude_md_states_the_absolute_path_and_single_command_contract():
+    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Production Path Materialization Contract" in text
+    assert "1 Bash call = 1 canonical CLI command" in text
+    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
+
+
+def test_the_runtime_guard_still_denies_relative_paths_and_metacharacters():
+    """The documented fix must not have been implemented by relaxing the
+    guard. Pinned against the guard source itself, not its docs."""
+    guard = (PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py").read_text(
+        encoding="utf-8"
+    )
+    assert "must be an absolute path in production" in guard
+    assert "if not candidate.is_absolute():" in guard
+    for meta in (";", "&&", "||", "|", "$(", "`", ">", "<"):
+        assert f'"{meta}"' in guard, f"the guard no longer lists {meta!r} as a metacharacter"
+
+
+# --------------------------------------------------------------------------
+# PR #9 review: a documented production example that the guard would deny is
+# worse than no example -- the operator pastes it, gets CLAUDE_PRODUCTION_*,
+# and cannot tell whether the doc or the guard is wrong. So the flag set in
+# the build-ranking example is pinned against the guard's own SUBCOMMAND_FLAGS
+# rather than against a second hand-maintained list.
+
+
+def _guard_module():
+    """Import the runtime guard as a module so its contract tables are the
+    single source of truth for these documentation assertions."""
+    import importlib.util
+
+    guard_path = PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
+    spec = importlib.util.spec_from_file_location(
+        "daytrade_runtime_guard_docs_ssot", guard_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _production_build_ranking_examples(name):
+    """Every documented production build-ranking command line, i.e. the ones
+    rendered as '<production python> -B -m src.cli build-ranking ...'."""
+    return [
+        line.strip()
+        for line in _text(name).splitlines()
+        if line.strip().startswith("<production python>")
+        and " -m src.cli build-ranking " in line
+    ]
+
+
+def test_nightly_operation_shows_a_production_build_ranking_example():
+    assert _production_build_ranking_examples("docs/nightly-operation.md")
+
+
+def test_the_production_build_ranking_example_matches_the_guard_contract():
+    """--ranking is an input of build-selection, not of build-ranking; the
+    guard denies it with CLAUDE_PRODUCTION_NOT_CANONICAL. The example must be
+    a complete, pasteable command, so no ellipsis either."""
+    allowed = _guard_module().SUBCOMMAND_FLAGS["build-ranking"]
+    examples = _production_build_ranking_examples("docs/nightly-operation.md")
+    for example in examples:
+        assert "--ranking " not in example, example
+        assert "--output " in example, example
+        assert "..." not in example, example
+        flags = {token for token in example.split() if token.startswith("--")}
+        assert flags == set(allowed), example
+
+
+def test_the_production_build_ranking_example_is_one_materialised_command():
+    """Materialising the documented placeholders must yield exactly what the
+    guard accepts: one line, absolute paths only, no shell expansion and no
+    metacharacter left to expand."""
+    for example in _production_build_ranking_examples("docs/nightly-operation.md"):
+        materialised = (
+            example.replace("<production python>", "/opt/daytrade/bin/python3")
+            .replace("<DAYTRADE_ROOT>", "/srv/daytrade-sbi")
+            .replace("<TARGET_DATE>", "2026-08-14")
+        )
+        assert "<" not in materialised and ">" not in materialised, materialised
+        for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(", "`"):
+            assert form not in materialised, f"{form} survives in {materialised}"
+        for meta in (";", "&&", "||", "|"):
+            assert meta not in materialised, f"{meta} survives in {materialised}"
+        tokens = materialised.split()
+        assert tokens[:4] == [
+            "/opt/daytrade/bin/python3",
+            "-B",
+            "-m",
+            "src.cli",
+        ], materialised
+        values = [token for token in tokens[5:] if not token.startswith("--")]
+        assert values, materialised
+        for value in values:
+            assert value.startswith("/srv/daytrade-sbi/"), value
+            for relative in ("./", "../", "~/"):
+                assert relative not in value, value
+
+
+@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
+def test_production_docs_never_equate_a_bash_call_with_a_pipeline_step(name):
+    """'1 Bash call = 1 stage' is wrong: one canonical-pipeline number can
+    hold several canonical CLI commands (e.g. init/complete event-research),
+    so the contract is per command, not per stage."""
+    text = _text(name)
+    for wrong in ("1 Bash call = 1 stage", "1 Bash call = 1 Stage"):
+        assert wrong not in text, name

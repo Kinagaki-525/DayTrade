@@ -314,6 +314,17 @@ sudo apt-get install bubblewrap socat
    *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
    sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
 10. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
+    後述のProduction Path Materialization Contractに従い、path argumentは具体的な
+    absolute pathへmaterializeし、1 Bash callにcanonical CLI commandを1個だけ入れる。
+
+    ```text
+    <production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
+    ```
+
+    期待結果は`{"valid": true, "errors": []}`とexit code 0。終了コードを見るために
+    `; echo "EXIT_CODE=$?"`を付け足さない（`;`はGuardが拒否する）。
+    `--source-matrix config/source_matrix.yaml`のような相対パスは
+    `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`で拒否される。
 11. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
 
 ### Runtime Security Preflight
@@ -353,6 +364,77 @@ sessionからSource Acquisition CLIを実行しないでください。
 `HTTP_USER_AGENT_NOT_CONFIGURED`で停止します。コード側のdefault User-Agentも
 fallbackも存在せず、追加してはいけません。診断のためにHumanが一時的に使った値を
 Repositoryのcanonical defaultへ昇格させることもしません。
+
+### Production Path Materialization Contract
+
+このリポジトリのドキュメント（[canonical-pipeline.md](canonical-pipeline.md)・
+[prompts/nightly_research.md](../prompts/nightly_research.md)・
+`.agents/skills/prepare-daytrade-plan/SKILL.md`・本ドキュメント）に現れる
+`config/source_matrix.yaml`や`runs/YYYY-MM-DD/ranking.json`のような相対パスは、
+すべての実行環境（Codex / Development Claude Code / Production Claude Code）で共通の
+**論理パス表記**です。Production Claude Codeでは、これはBash Toolへそのまま渡せる
+command文字列**ではありません**。
+
+Production Runtime Guardはshell実行**前**のcommand文字列だけを検査するため、
+path argumentが具体的なabsolute pathでなければ
+`CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`でfail closedします
+（例: `--source-matrix must be an absolute path in production`）。
+これはGuardの欠陥ではなくGuardの契約そのものであり、
+Guard側でrelative pathやshell expansionを許可する変更は行いません。
+
+したがってProduction Claude Codeは、Bash Toolへ渡す直前に、論理パスを次の2つの
+runtime contextから具体的なabsolute pathへmaterializeします。DayTrade Rootを
+特定のOS絶対パスとしてドキュメントやSkillへhardcodeしません。
+
+- **DayTrade Root**: Production Launcher（`scripts/claude-production`）は
+  `exec claude`の直前に`os.chdir(<daytrade root>)`するため、Production Claude Code
+  sessionのcurrent working directoryがDayTrade Rootです。sessionが提示している
+  working directoryのabsolute pathをそのまま使います。
+- **Run Directory / Target Date**: Run Directoryは`<DayTrade Root>/runs/<target-date>`
+  です。target dateはHumanが`scripts/claude-production --target-date`で指定した日付で、
+  Preflightが書いた`runs/<target-date>/working/runtime_security.json`の`target_date`
+  （および`production_python`）で確認できます。この確認はReadで行い、Bashで`cat`しません。
+
+materializeした結果、Bash Toolへ渡すcommandには次のいずれも残してはいけません。
+
+| 残してはいけない表記 | 例 |
+| --- | --- |
+| repository相対パス | `config/source_matrix.yaml` / `runs/YYYY-MM-DD/ranking.json` |
+| `./` `../` `~/` | `./runs/...` / `../daytrade-sbi/config/...` / `~/DayTrade/...` |
+| 環境変数展開 | `$DAYTRADE_ROOT/...` / `${DAYTRADE_ROOT}/...` / `$DAYTRADE_RUN_DIR/...` / `${DAYTRADE_RUN_DIR}/...` |
+| command substitution | `$(pwd)/...` / `` `pwd`/... `` |
+
+環境変数もcommand substitutionもshell実行時にしか展開されないため、Guardから見れば
+前者は「絶対パスでない値」、後者は「shell metacharacter」であり、いずれも拒否されます。
+
+正しいmaterialization（`<DAYTRADE_ROOT>`と`<TARGET_DATE>`は、実際のabsolute path・
+実日付へ置換済みの具体的な文字列であること）:
+
+```text
+<production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
+<production python> -B -m src.cli build-ranking --candidates <DAYTRADE_ROOT>/runs/<TARGET_DATE>/candidates.json --config <DAYTRADE_ROOT>/runs/<TARGET_DATE>/strategy_snapshot.yaml --event-gate <DAYTRADE_ROOT>/runs/<TARGET_DATE>/event_gate.json --market-data <DAYTRADE_ROOT>/runs/<TARGET_DATE>/market_data.json --output <DAYTRADE_ROOT>/runs/<TARGET_DATE>/ranking.json --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml --sources <DAYTRADE_ROOT>/runs/<TARGET_DATE>/sources.json
+```
+
+`<production python>`も同様に、`runtime_security.json`の`production_python`と完全一致する
+canonical absolute pathです（`python3`やsymlink aliasは拒否されます）。
+
+### Production 1-call-1-command Contract
+
+Productionでは **1 Bash call = 1 canonical CLI command** です。Bash Tool 1回につき
+canonical `src.cli` commandをちょうど1個だけ実行します。
+
+- 終了コード確認のために`; echo "EXIT_CODE=$?"`を付けない。`;`は
+  `CLAUDE_PRODUCTION_BASH_DENIED`（`shell metacharacter ';' is not permitted in
+  production`）になります。Bash Tool自身がcommandのnon-zero exitを返すため、
+  終了コード確認用の追加shell commandは不要です。
+- `&&` / `||` / `|` / `&` / redirect（`>` `>>` `<`）/ command substitution（`$(...)`
+  / `` `...` ``）/ process substitution / 改行 / `cd`はすべて拒否されます。
+- 出力ファイルが必要な場合はredirectではなくCLI自身の`--output`を使います。
+- 複数のcanonical CLI commandを1つのBash callへまとめない。Canonical CLI Pipeline Orderの
+  各canonical `src.cli` commandを、それぞれ独立したBash callとして逐次実行します。
+  Pipelineの番号とBash callは1:1ではありません（`init/complete event-research`のように
+  1つの番号表現に複数のcanonical CLI commandが含まれる箇所があります）。
+  Canonical CLI Pipeline Order自体は変わりません。
 
 ### Production Boundaryの正本
 

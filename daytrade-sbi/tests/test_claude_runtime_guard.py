@@ -527,6 +527,77 @@ def test_symlink_escape_from_the_run_dir_is_denied(production, tmp_path):
     assert b"CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in result.stderr
 
 
+# ------------------------------------ production path materialization ---
+#
+# The Runtime Acceptance incident: an operator copied the documented logical
+# path (``--source-matrix config/source_matrix.yaml``) straight into a
+# production Bash call, and appended ``; echo "EXIT_CODE=$?"`` to read the
+# exit status. Both are denials by contract, so both stay denials -- the fix
+# was to the documented procedure, never to the guard.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "config/source_matrix.yaml",
+        "./config/source_matrix.yaml",
+        "../daytrade-sbi/config/source_matrix.yaml",
+        "~/DayTrade/daytrade-sbi/config/source_matrix.yaml",
+        "$DAYTRADE_ROOT/config/source_matrix.yaml",
+        "${DAYTRADE_ROOT}/config/source_matrix.yaml",
+    ],
+)
+def test_unmaterialised_source_matrix_path_is_denied(production, value):
+    """A logical path -- and every unexpanded shell form of it -- is denied.
+
+    The guard reads the command string *before* a shell would expand it, so
+    ``$DAYTRADE_ROOT/...`` is simply a relative path to it.
+    """
+    result = _bash(
+        production, _cli(production, f"validate-source-matrix --source-matrix {value}")
+    )
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "$DAYTRADE_RUN_DIR/ranking.json",
+        "${DAYTRADE_RUN_DIR}/ranking.json",
+        "runs/2026-08-14/ranking.json",
+    ],
+)
+def test_unmaterialised_run_artifact_path_is_denied(production, value):
+    result = _bash(production, _cli(production, f"build-selection --ranking {value}"))
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "suffix", ['; echo "EXIT_CODE=$?"', " ; echo EXIT_CODE=$?", " && echo done"]
+)
+def test_appending_an_exit_code_probe_is_denied(production, suffix):
+    """One Bash call carries exactly one canonical CLI command."""
+    base = _cli(production, _canonical_commands(production)["validate-source-matrix"])
+    result = _bash(production, base + suffix)
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_BASH_DENIED" in result.stderr
+
+
+@pytest.mark.parametrize("expansion", ["$(pwd)", "`pwd`"])
+def test_command_substitution_in_a_path_is_denied(production, expansion):
+    result = _bash(
+        production,
+        _cli(
+            production,
+            f"validate-source-matrix --source-matrix {expansion}/config/source_matrix.yaml",
+        ),
+    )
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_BASH_DENIED" in result.stderr
+
+
 # ----------------------------------------------------------- edit/write ---
 
 
