@@ -15,7 +15,7 @@
 - `node -e` / `npx` によるHTTPアクセスを行わない
 - `nc` / `netcat` / `telnet` / `ssh` / `scp` / `ftp` / `gh` を実行しない
 - `git fetch` / `git pull` / `git push` をBashから直接実行しない
-  （Developmentに限り`scripts/claude-safe-push`だけが例外。後述）
+  （Developmentで許可されるGitHub操作は、後述の専用wrapper内部処理だけ。raw Gitは例外なし）
 - `pip install` / `npm install` などのパッケージインストールを実行しない
 - 本番の`config/strategy.yaml`の`selection.enabled`、
   `selection.rules.minimum_turnover_yen.threshold_yen`、
@@ -24,6 +24,41 @@
   `activate-selection-config` CLIを実行する）
 - `sources.json` / `market_data.json` / `recommendation.json` を手で編集しない
 - 市場数値（価格・出来高・売買代金・呼値・日付）をagentが読み取って書き写さない
+
+## Development限定: Safe Sync / Safe Start / Safe Push（Claude Code固有）
+
+Developmentの標準Git workflowは次の3 wrapperだけを使用する。
+
+```text
+scripts/claude-safe-sync-main
+scripts/claude-safe-start claude/<new-branch>
+scripts/claude-safe-push
+```
+
+標準順序:
+
+```text
+Safe Sync Main
+→ Safe Start
+→ Edit / Test
+→ 明示pathでgit add
+→ git commit
+→ Safe Push
+→ Draft PR
+→ GitHub Actions CI
+→ Human / ChatGPT Review
+→ Human Merge
+```
+
+`claude-safe-sync-main`は引数を受け取らず、canonical `origin`の`main`だけをexact refspecでfetchする。local `main`が`origin/main`と同一またはfast-forward可能な場合だけ成功し、local mainがahead/divergedならreset/rebase/merge/pullで修復せず停止する。
+
+`claude-safe-start`は新規`claude/*` branch名1件だけを受け取り、Safe Sync Mainと同じ契約で`main`を同期した後、その最新local mainから新branchを`--no-track`で作成する。既存local/remote branchの上書き、`switch -C`、`checkout -B`、branch削除は行わない。
+
+Squash Merge後は旧feature HEADがmainのancestorにならない場合があるため、Safe Startは現在いる`claude/*` branchのHEADがmainのancestorかどうかを開始条件にしない。旧branch refは変更・削除しない。
+
+raw `git fetch` / `git pull` / `git push` / `git switch` / `git checkout` / `git ls-remote`は禁止を維持し、`.claude/hooks/network_guard.py`のraw Git positive allowlistを広げない。
+
+詳細: [daytrade-sbi/docs/development-workflow.md](daytrade-sbi/docs/development-workflow.md)
 
 ## Development限定: Safe Push（Claude Code固有）
 
@@ -57,14 +92,13 @@ HEAD  ->  origin  refs/heads/<現在のclaude/* branch>
 - 任意remote / 任意refspecへのpush
 - `WebSearch` / `WebFetch`禁止、`curl` / `wget`等の禁止、`sudo`禁止
 
-**Productionでは`scripts/claude-safe-push`も許可されない。** Productionはpushを
-一切許可せず、Production Security BoundaryはOS Managed Policyのままである。
+**Productionでは`scripts/claude-safe-sync-main` / `scripts/claude-safe-start` / `scripts/claude-safe-push`のすべてが許可されない。** ProductionはGitHub操作を一切許可せず、Production Security BoundaryはOS Managed Policyのままである。
 
-**これはSecurity Boundaryではない。** このscriptはリポジトリ内にあり、
-Development Claude Code自身が編集できる。目的は誤操作防止とraw `git push`の
+**これはSecurity Boundaryではない。** これらscriptはリポジトリ内にあり、
+Development Claude Code自身が編集できる。目的は誤操作防止とraw Git network操作の
 排除であって、Production Managed Policyと同等のimmutableな境界ではない。
 PreToolUse hookはBash Tool呼び出しの文字列だけを見て子プロセスは見ないため、
-このscriptが内部で実行する`git push`はhookの視界の外にある。これは設計どおりだが、
+wrapper内部のGit child processはhookの視界の外にある。これは設計どおりだが、
 「wrapperを通せばhookを迂回できる」ことを意味するので、上記の位置付けを厳守する。
 
 ## Seccomp Human Runtime Acceptance時の限定許可（Claude Code固有）
