@@ -10,6 +10,9 @@ REPO_ROOT = PROJECT_ROOT.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 PYTHON_VERSION = PROJECT_ROOT / ".python-version"
 
+CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97"
+
 
 def _workflow():
     return yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
@@ -29,13 +32,16 @@ def test_ci_006_to_010_is_read_only_and_runs_from_project_directory():
     data = _workflow()
     assert data["permissions"] == {"contents": "read"}
     job = data["jobs"]["pytest"]
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == "ubuntu-24.04"
     assert "self-hosted" not in job["runs-on"]
     assert job["timeout-minutes"] == "10"
     assert job["defaults"]["run"]["working-directory"] == "daytrade-sbi"
 
     uses = [step.get("uses") for step in job["steps"] if step.get("uses")]
-    assert uses == ["actions/checkout@v7.0.1", "actions/setup-python@v7.0.0"]
+    assert uses == [
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"actions/setup-python@{SETUP_PYTHON_SHA}",
+    ]
 
     checkout = next(step for step in job["steps"] if step.get("name") == "Checkout")
     assert checkout["with"]["persist-credentials"] == "false"
