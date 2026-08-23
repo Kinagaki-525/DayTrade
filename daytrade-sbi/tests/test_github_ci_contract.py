@@ -31,11 +31,14 @@ def test_ci_006_to_010_is_read_only_and_runs_from_project_directory():
     job = data["jobs"]["pytest"]
     assert job["runs-on"] == "ubuntu-latest"
     assert "self-hosted" not in job["runs-on"]
-    assert int(job["timeout-minutes"]) > 0
+    assert job["timeout-minutes"] == "10"
     assert job["defaults"]["run"]["working-directory"] == "daytrade-sbi"
 
     uses = [step.get("uses") for step in job["steps"] if step.get("uses")]
     assert uses == ["actions/checkout@v7.0.1", "actions/setup-python@v7.0.0"]
+
+    checkout = next(step for step in job["steps"] if step.get("name") == "Checkout")
+    assert checkout["with"]["persist-credentials"] == "false"
 
 
 def test_ci_011_to_014_python_and_full_pytest_contract():
