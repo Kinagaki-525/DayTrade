@@ -333,11 +333,15 @@ def test_raw_source_page_tamper_is_invalid(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    # This legacy run's CLI arguments are the SSOT here: the canonical
-    # acquisition context is written to match them exactly, rather than the
-    # arguments being reshaped to a nightly-shaped window. TURNOVER never
-    # calls validate_market_research(), so only the three string equalities
-    # in the Canonical Acquisition Context apply.
+    # This fixture exists only to keep this legacy test's values unchanged:
+    # the canonical research_window.json is written to match the existing
+    # fixture's CLI arguments, rather than the arguments being reshaped to a
+    # nightly-shaped window (which would change the raw source page bytes the
+    # tamper assertions below depend on). This does NOT make CLI arguments an
+    # SSOT: at runtime the Canonical Acquisition Context / SSOT is always
+    # <run-dir>/research_window.json, and the CLI arguments are validated
+    # against it. TURNOVER never calls validate_market_research(), so only the
+    # three string equalities in the Canonical Acquisition Context apply.
     (run_dir / "research_window.json").write_text(
         json.dumps(
             {

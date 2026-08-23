@@ -6,8 +6,12 @@ Every stage:
 1. resolves its URL from ``config/source_matrix.yaml`` (never from a page,
    never from an agent),
 2. verifies the ``source_id -> parser`` binding **before** any network call,
-3. fetches at most one GET per (source, candidate, url, date, cutoff) tuple
-   (Request Budget) through :mod:`src.source_fetch`,
+3. fetches at most one GET per **Physical Request** -- identified by
+   ``request_id = f(url, target_date, research_cutoff)`` and recorded in
+   ``runs/<target_date>/network_requests/<request_id>.json``, which is the
+   Request Budget SSOT -- through :mod:`src.source_fetch`. One Physical
+   Request can satisfy N Logical Attempts (a shared page such as the TDnet
+   index), so the Logical ``attempt_id`` is *not* the Request Budget key,
 4. stores the unmodified raw bytes with their SHA256,
 5. parses them with the registered deterministic parser,
 6. writes a Source Ledger v3 attempt.
@@ -138,11 +142,18 @@ def attempt_id_for(
     target_date: str,
     research_cutoff: str,
 ) -> str:
-    """Deterministic attempt id.
+    """Deterministic **Logical Attempt** identity.
 
-    It doubles as the Request Budget key: the same (source, candidate, url,
-    date, cutoff) tuple can only ever produce one attempt per run, so no
-    retry loop and no accidental duplicate GET is representable.
+    ``attempt_id = f(source_id, candidate_code, url, target_date,
+    research_cutoff)``: the same tuple can only ever produce one Logical
+    Attempt per run, so no retry loop over one Attempt is representable.
+
+    This is *not* the Physical Request Budget key. The Physical Request is
+    identified by ``request_id = f(url, target_date, research_cutoff)`` and
+    the SSOT for the Request Budget is its Request Record at
+    ``runs/<target_date>/network_requests/<request_id>.json`` -- see
+    :mod:`src.request_budget`. A shared page is one Physical Request serving
+    N Logical Attempts, so the two identities are deliberately distinct.
     """
     payload = "|".join(
         [source_id, candidate_code or "GLOBAL", url, target_date, research_cutoff]

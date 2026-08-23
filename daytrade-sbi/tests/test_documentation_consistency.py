@@ -321,18 +321,52 @@ def test_discovery_incomplete_is_documented_as_not_a_no_trade():
 
 
 def test_docs_forbid_hand_writing_the_terminal_artifacts():
-    """Recommendation / Risk artifacts come from the Builders, never an agent."""
+    """Recommendation / Risk artifacts come from the Builders, never an agent.
+
+    The mere presence of the three words would pass trivially, so the whole
+    prohibition sentence is pinned: an agent may not hand-write
+    ``recommendation.json`` / ``risk_result.json`` to fill in a daily result
+    after Discovery stopped the pipeline.
+    """
     text = _text("AGENTS.md")
-    assert "recommendation.json" in text
-    assert "risk_result.json" in text
-    assert "手書き" in text
+    assert (
+        "agentが`recommendation.json`・`risk_result.json`を手書きして"
+        "日次結果を補完してはいけない"
+    ) in text, "AGENTS.md no longer forbids hand-writing the terminal artifacts"
+    assert (
+        "Discovery未完了でPipelineが停止した場合、後続のRecommendation / "
+        "Risk Builderを実行して日次結果を新規生成・補完しない"
+    ) in text, "AGENTS.md no longer ties the prohibition to Discovery Fail-Closed"
 
 
 def test_network_audit_ssot_is_the_physical_request_record():
-    """FIX-PRD-004: network_requests/, not source_attempts[], is the SSOT."""
+    """FIX-PRD-004: network_requests/, not source_attempts[], is the SSOT.
+
+    Pinned by the sentence that states it, not by the two nouns appearing
+    somewhere in the file -- and the superseded ``attempt_id``-as-budget-key
+    claim is pinned as absent, in the doc and in the implementation alike.
+    """
     text = _text("docs/source-acquisition.md")
-    assert "network_requests" in text
-    assert "request_id" in text
+    assert (
+        "Network Auditの正本は`runs/<target_date>/network_requests/*.json`の"
+        "Physical Request Recordであり、\n`sources.json.source_attempts`ではない"
+    ) in text, "docs/source-acquisition.md no longer names the Network Audit SSOT"
+    assert (
+        "`len(source_attempts)`はPhysical Request数ではない" in text
+    ), "docs/source-acquisition.md no longer separates Logical from Physical"
     # The superseded claim -- attempt_id as the Request Budget key -- must
     # not come back.
     assert "`attempt_id`がそのまま予算キー" not in text
+
+    # Same superseded claim, in the implementation's own docstrings.
+    source = (PROJECT_ROOT / "src" / "source_acquisition.py").read_text(
+        encoding="utf-8"
+    )
+    assert "doubles as the Request Budget key" not in source, (
+        "src/source_acquisition.py revived attempt_id as the Request Budget key"
+    )
+    assert "Deterministic **Logical Attempt** identity." in source
+    assert "This is *not* the Physical Request Budget key." in source
+    assert (
+        "``runs/<target_date>/network_requests/<request_id>.json``" in source
+    ), "src/source_acquisition.py no longer names the Request Record as the SSOT"

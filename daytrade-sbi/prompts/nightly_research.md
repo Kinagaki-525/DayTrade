@@ -117,15 +117,27 @@ only then:
 - `acquire-discovery`のCLI resultが `status=CLOSED` のときはexit code 1であり、STOPする。
   `reason_codes`は`market_research.notes`（`VOLUME_RANKING_UNAVAILABLE` /
   `PRICE_GAIN_RANKING_UNAVAILABLE`等）そのままで、新しいReason Codeは作らない。
-- Discovery失敗時も`market_research.json` / `sources.json` /
-  `network_requests/` / `source_attempts[]`は証跡として保存する。消さない。
+- Discovery失敗は2種類あり、残るFail-Closed Evidenceの範囲が異なる。
+  - **A. Acquisition実行後の失敗**（`market_research.overall_status == DISCOVERY_INCOMPLETE`まで
+    到達した場合）: すでに生成された`market_research.json` / `sources.json` /
+    `network_requests/` / `source_attempts[]`をFail-Closed Evidenceとして保持する。
+    消さない・再生成しない・補完しない。後続Stageへ進まない。
+  - **B. pre-acquisition Hard Error**（Canonical Acquisition Context Validation等。
+    `ACQUISITION_RESEARCH_WINDOW_MISSING` / `ACQUISITION_RESEARCH_WINDOW_INVALID` /
+    `ACQUISITION_TARGET_DATE_MISMATCH` / `ACQUISITION_TRADING_DATE_MISMATCH` /
+    `ACQUISITION_RESEARCH_CUTOFF_MISMATCH` / `ACQUISITION_RESEARCH_WINDOW_PATH_MISMATCH`）:
+    Canonical Acquisition Context ValidationはSource Matrix load / Ledger load /
+    candidate resolution / Physical Request reservation / transportより**前**に実行されるため、
+    これらのArtifactはまだ存在しない場合がある。Artifactの存在を前提としない。
+    後続Stageへ進まない。
 - **Discovery未完了は`NO_TRADE`ではない。** 候補が無かったのではなく、候補Universeを
   生成できなかった状態であり、`Pipeline: 未完了` / `停止Stage: DISCOVERY`として報告する。
 - `candidate_count == 0` だけを理由に`NO_TRADE`へ変換しない。Discovery成功時の
   `candidate_count`は`len(discovery_candidates)`であり、Discovery自身の入力ticker数ではない。
-- Discovery未完了でSTOPした場合、正式な`recommendation.json` / `risk_result.json`を
-  agentが手書きして日次結果を補完してはいけない。Discovery Fail-Closedの証跡を
-  そのまま保持し、後続Stageへ進まない。
+- Discovery未完了でSTOPした場合、A / Bどちらであっても、後続のRecommendation /
+  Risk Builderを実行して日次結果を新規生成・補完しない。正式な`recommendation.json` /
+  `risk_result.json`をagentが手書きして日次結果を補完してはいけない。
+  Aで生成済みのFail-Closed Evidenceはそのまま保持し、後続Stageへ進まない。
 
 - Discovery unionを保存したら、次を実行して全Discovery Candidate分の `candidate_research[]` を初期化する。
 
