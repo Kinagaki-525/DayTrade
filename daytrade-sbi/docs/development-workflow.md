@@ -39,9 +39,14 @@ scripts/claude-safe-sync-main
 origin refs/heads/main -> refs/remotes/origin/main
 ```
 
+fetch は `--no-tags --no-recurse-submodules` を固定し、tag取得とsubmodule再帰fetchを行わない。
+
 次の場合は Fail-Closed で停止し、自動修復しない。
 
 - canonical origin を確認できない
+- fetch URL / push URL がcanonical URL 1件だけではない
+- `remote.origin.mirror` が有効
+- `remote.origin.vcs` が設定され、custom remote helper経路になり得る
 - Working Tree が dirty
 - merge / rebase / cherry-pick / revert / bisect 中
 - detached HEAD
@@ -98,10 +103,15 @@ Safe Start が保証するのは次だけである。
 scripts/claude-safe-push
 ```
 
-既存契約を維持する。
+既存の単一ref push契約を維持する。
 
 - `claude/*` の現在branchだけ
 - canonical originだけ
+- fetch URL / push URLはcanonical URL 1件だけ
+- `remote.origin.mirror` を拒否
+- `remote.origin.vcs` を拒否し、custom remote helper経路を許可しない
+- noncanonical URLを診断に出す場合もuserinfo credentialは除去する
+- Git stderrのauthentication/helper詳細をwrapper errorへ転記しない
 - clean treeだけ
 - force / delete / tag / main pushなし
 - callerはremote / refspecを指定できない
