@@ -90,8 +90,18 @@ scripts/verify-production-archive --target-date <YYYY-MM-DD>
 `archive_manifest.json`は`files[]`に`run/` `inputs/` `verification/`配下の全fileを
 path順で列挙し、それぞれの`size_bytes`と`sha256`を持ちます。manifest自身と
 `archive_manifest.sha256`は意図的に自己列挙しません。
-`archive_manifest.sha256`はmanifestの生byteのSHA256（64桁小文字hex + LF、計65 byte）で、
-manifestを書き換えて辻褄を合わせる改竄に対する第2の証人です。
+`archive_manifest.sha256`はmanifestの生byteのSHA256（64桁小文字hex + LF、計65 byte）です。
+これは`archive_manifest.json`の**raw byte整合性の確認用**であり、manifestとdigestが
+食い違っている状態を検出します。
+
+**保証範囲を取り違えないでください。** `archive_manifest.sha256`は、
+manifestとdigestの**両方**を書き換えられる主体に対するcryptographic immutabilityを
+保証しません。両方を書き換えられるなら、両者は再び整合してしまいます。
+この digest が実際に守るのは、file `0444` / directory `0555`のsealed permissionと
+合わせて、**誤操作・偶発的改変・部分的破損の検出**です。
+
+Local Archiveは外部署名でもWORM storageでもoff-site witnessでもありません。
+それらが必要なら、この契約の外に別途用意する運用であり、この契約は代替しません。
 
 ### `archive_status`
 
@@ -161,8 +171,12 @@ Archiveは、その夜に有効だったSource Matrixの生byteを
 ## Sealed permission
 
 完成したper-run Archiveはfile `0444`・directory `0555`にします。これは
-**誤操作防止**であって暗号学的なimmutability保証ではありません。改竄の
-*検出*はmanifestとその digest が担います。
+**誤操作防止**であって暗号学的なimmutability保証ではありません。
+
+manifestとその digest も同様で、担うのは**誤操作・偶発的改変・部分的破損の検出**です
+（[Manifest](#manifest)節）。sealed permissionもmanifestも、Archive全体を書き換えられる
+主体に対する耐改ざん性は与えません。Local Archiveは外部署名・WORM storage・
+off-site witnessのいずれでもなく、同一マシン上のcopyであるという位置付けは変わりません。
 
 ## Error code
 
