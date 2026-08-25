@@ -4,3 +4,21 @@ __pycache__/
 .pytest-tmp/
 .venv/
 venv/
+
+# Production Run Archive Contract v1
+#
+# A dated Operational Run (runs/YYYY-MM-DD/) is evidence, not source. It holds
+# raw fetched source pages, network request records and the Runtime Security
+# Attestation of one nightly run; committing it would push that evidence
+# through GitHub and make `git status` dirty for the next Production Preflight
+# (which requires a clean work tree).
+#
+# The durable copy is the sealed, SHA256-manifested archive outside the
+# repository -- see docs/production-run-archive.md. Ignoring the run directory
+# here is what makes that archive the single retention path, not a second one.
+#
+# Anchored to daytrade-sbi/runs/ only: the pinned regression fixtures under
+# regression/*/runs/ stay tracked.
+/runs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+
+# runs/README.md documents the layout and is tracked.

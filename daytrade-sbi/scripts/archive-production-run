@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""HUMAN-ONLY: seal one Production Nightly Run into the Production Run Archive.
+
+    scripts/archive-production-run --target-date 2026-08-25
+
+``--target-date`` is the only input. The Archive Root, the Operational Run
+directory, the Source Matrix and the Issuer Domain Registry are all fixed by
+``src/production_archive.py`` and cannot be redirected from the command line.
+
+The Operational Run is read-only source: nothing under ``runs/<target-date>/``
+is written, renamed, re-serialised or deleted. There is no ``--force``, no
+retention, no deletion and no network access anywhere in this path.
+
+Not a Managed-Policy-approved command: Production Claude cannot run this. A
+coding agent must not run it either -- a human archives a run.
+
+Exit codes: 0 = ARCHIVED / ALREADY_ARCHIVED, 2 = contract violation.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.production_archive import archive_main  # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(archive_main())

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "production_archive_manifest.schema.json",
+  "title": "Production Run Archive Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "archive_version",
+    "target_date",
+    "archived_at",
+    "archive_status",
+    "source",
+    "business_verification",
+    "runtime_security",
+    "inputs",
+    "files",
+    "total_file_count",
+    "total_size_bytes"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "archive_version": {"type": "string", "const": "production-run-archive-v1"},
+    "target_date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "archived_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "archive_status": {
+      "type": "string",
+      "enum": ["COMPLETE_VERIFIED", "INCOMPLETE"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_relative_path", "runtime_security_git_head_sha"],
+      "properties": {
+        "run_relative_path": {
+          "type": "string",
+          "pattern": "^runs/\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "runtime_security_git_head_sha": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "business_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "report_path"],
+      "properties": {
+        "status": {"type": "string", "minLength": 1},
+        "report_path": {
+          "type": "string",
+          "const": "verification/production_verify.json"
+        }
+      }
+    },
+    "runtime_security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256"],
+      "properties": {
+        "status": {"type": "string", "enum": ["VALID", "MISSING", "INVALID"]},
+        "path": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "const": "run/working/runtime_security.json"}
+          ]
+        },
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_matrix", "issuer_domain_registry"],
+      "properties": {
+        "source_matrix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"type": "string", "const": "inputs/source_matrix.yaml"},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        "issuer_domain_registry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "const": "inputs/issuer_domain_registry.yaml"
+            },
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "size_bytes", "sha256"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^(run|inputs|verification)/[^/].*$"
+          },
+          "size_bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "total_file_count": {"type": "integer", "minimum": 0},
+    "total_size_bytes": {"type": "integer", "minimum": 0}
+  }
+}
