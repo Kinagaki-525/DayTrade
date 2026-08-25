@@ -45,6 +45,34 @@ RUN_ARTIFACT_ALLOWLIST = {
     "selection.json",
 }
 
+#: ``runs/<date>/working/`` is the **Non-Business Sidecar**.
+#:
+#: Things legitimately land in a run directory without being Business
+#: Artifacts: the Production Launcher's Runtime Security Attestation, the
+#: Event AI Classification's local scratch output, and whatever further
+#: runtime evidence a later contract adds. None is produced by a canonical
+#: ``src.cli`` stage, none carries ``config_sha256`` / ``strategy_version``,
+#: and none is part of any Trust Chain -- so none may be admitted to
+#: :data:`RUN_ARTIFACT_ALLOWLIST`, where every entry is a Business Artifact
+#: the Production Verifier hash-links.
+#:
+#: Treating the sidecar as an unexpected artifact was equally wrong: it made
+#: every real Production Nightly Run ``INVALID_RUN`` for carrying the very
+#: attestation that proves it ran under the Managed Policy.
+#:
+#: So ``working/`` is recognised as a directory and **skipped**, and the
+#: Business Verifier does not look inside it at all. It deliberately does not
+#: enumerate the sidecar's filenames: adding a new piece of runtime security
+#: evidence must never, by itself, turn a good business run into
+#: ``INVALID_RUN``. Validating that evidence is the Production Run Archive's
+#: responsibility (``src/production_archive.py``), which classifies
+#: ``runtime_security.json`` separately from the Business Artifact chain.
+#:
+#: Only the sidecar's *identity* is checked here, and strictly: a regular file
+#: named ``working``, a symlink named ``working`` (never followed), and any
+#: other directory name such as ``working2`` are all unexpected artifacts.
+WORKING_SIDECAR_DIR = "working"
+
 
 def load_json_document(path: str | Path, schema_name: str) -> dict[str, Any]:
     document_path = Path(path)
@@ -744,6 +772,15 @@ def validate_run_artifact_allowlist(run_dir: str | Path) -> tuple[str, ...]:
     unexpected: list[str] = []
     for item in path.iterdir():
         if item.name in RUN_ARTIFACT_ALLOWLIST:
+            continue
+        if (
+            item.name == WORKING_SIDECAR_DIR
+            and item.is_dir()
+            and not item.is_symlink()
+        ):
+            # The Non-Business Sidecar: a real directory, never a symlink.
+            # Skipped whole -- its contents are not Business Artifacts and are
+            # deliberately not enumerated here. See WORKING_SIDECAR_DIR.
             continue
         unexpected.append(item.name)
     return tuple(sorted(unexpected))

@@ -554,6 +554,10 @@ def verify_production_run(
         not unexpected,
         "unexpected artifact(s): " + ", ".join(unexpected) if unexpected else "",
     )
+    # ``working/`` is the Non-Business Sidecar and is skipped whole by the
+    # allowlist above. Nothing here inspects its contents: new runtime
+    # security evidence must not be able to make a good business run
+    # INVALID_RUN. That evidence is the Production Run Archive's business.
 
     # ---- 4. network audit / Request Budget --------------------------------
     report.network_audit = network_audit(run_dir, source_payload)

@@ -21,6 +21,7 @@ runs/YYYY-MM-DD/
   report.md
   official_ohlcv_audit.json
   execution_result.json  # 完全決済済み取引がある場合だけ
+  working/               # Non-Business Sidecar（下記）
 ```
 
 ディレクトリ名は翌営業日です。各市場数値には出典URL、取得日時、データの取引日を残します。`execution_result.json`は人間が確認した実績をCSV追記前に検証する入力記録で、実取引ログの正本は`trades/trades.csv`です。
@@ -28,3 +29,33 @@ runs/YYYY-MM-DD/
 `strategy_snapshot.yaml`はその日の計算に使った設定の保存版です。`candidates.json`、`recommendation.json`、`risk_result.json`の`config_sha256`が一致しない成果物は組み合わせません。
 
 `research_window.json`はPythonが確定したTDnet調査対象期間です。初回実行は`FIRST_RUN`として設定済みの24時間初回補完期間を使い、成功後の次回以降は直近の有効な`market_research.json`の`research_cutoff`から通常の調査期間へ移行します。
+
+## `working/` は Non-Business Sidecar
+
+現在`working/`に入るのは`runtime_security.json`（Production LauncherのRuntime
+Security Attestation）と`event_source_extraction.json`（Event AI Classificationの
+local作業出力）ですが、この2つに固定された契約ではありません。
+
+どちらもcanonical `src.cli` stageの成果物ではなく、`config_sha256`も
+`strategy_version`も持たず、どのTrust Chainにも属しません。Business Artifactとしては
+扱わないため、`src/contracts.py`の`validate_run_artifact_allowlist`は`working/`を
+**丸ごとskipし、内部を列挙しません**。将来ここへ新しいRuntime Security Evidenceが
+追加されても、それだけを理由にBusiness Runを`INVALID_RUN`にしてはならないためです。
+中身の検証はProduction Archive側の責務です。
+
+identityだけはfail-closedで、`working`という名のregular file、`working`という名の
+symlink（辿りません）、`working2`のような別directoryはいずれも予期しないartifactです。
+
+## 日付Runはgit管理しません
+
+`runs/YYYY-MM-DD/`は`.gitignore`されています。次回のRuntime Security Preflightが
+`git_clean`を要求するためであり、また生のSource PageやNetwork Request記録を
+GitHubへ流さないためです。このREADMEは追跡対象のまま残ります。
+
+証跡の永続化は、リポジトリ外に置かれSHA256 manifestで封をされたArchiveが担います。
+手順と契約は[docs/production-run-archive.md](../docs/production-run-archive.md)が正本です。
+
+```bash
+scripts/archive-production-run --target-date <YYYY-MM-DD>
+scripts/verify-production-archive --target-date <YYYY-MM-DD>
+```

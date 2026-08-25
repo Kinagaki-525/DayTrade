@@ -449,3 +449,37 @@ Production中のClaudeは既定でBash denyです。許可されるのは
 `;` `&&` `||` `|` `&` redirection command substitution process substitution `cd`は
 すべて拒否されます。Claudeが直接Write/Editできる唯一のArtifactは
 `runs/<date>/working/event_source_extraction.json`です。
+
+### Run終了後: Production Run Archive（Human専用）
+
+`runs/<target-date>/`はOperationalなdirectoryです。次回Preflightの`git_clean`を
+通すためにgit ignoreされており、Pipelineが途中で止まれば半端な状態で残り、
+整理すればその夜の唯一の記録が消えます。
+
+そこでProduction Nightly Runが終了したら（`NO_TRADE` / `DATA_UNAVAILABLE` /
+`REJECTED` / Discovery未完了でも同じです）、Production Claude sessionを終了したうえで、
+Humanが通常のshellから証跡を封をします。
+
+```bash
+scripts/archive-production-run --target-date <YYYY-MM-DD>
+scripts/verify-production-archive --target-date <YYYY-MM-DD>
+```
+
+- `--target-date`が唯一の入力です。`--force`はありません
+- Operational Runはread-only sourceで、Archiveはそこへ書き込みません
+- どちらもcanonical `src.cli` subcommandではないため、Production Managed Policyの
+  `APPROVED_SUBCOMMANDS`に載ることが構造的にできません。**Production Claudeは
+  これらを実行できませんし、実行しようとしてはいけません**
+- `archive_status: INCOMPLETE`はArchiveの失敗ではなく、その夜が途中で止まったことを
+  意味します。途中で止まった夜の証跡も保存します
+- Archiveは同一マシン上にあり、off-site backupの代わりにはなりません
+
+`runs/<date>/working/`は**Non-Business Sidecar**です。Business Verifierは
+`working/`を丸ごとskipし、内部のfile名を列挙しません（将来Runtime Security Evidenceが
+増えても、それだけでBusiness Runを`INVALID_RUN`にしないためです）。
+`working`という名のregular file・symlink、`working2`のような別directoryは拒否します。
+Archiveは`working/`配下もraw byteで保存したうえで、`runtime_security.json`を
+Runtime Security証跡として、Business Artifact chainとは独立に
+`VALID` / `MISSING` / `INVALID`で分類します。
+
+契約の全文: [production-run-archive.md](production-run-archive.md)
