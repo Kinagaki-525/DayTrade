@@ -361,3 +361,117 @@ def test_no_cli_command_accepts_a_url():
         }
         for forbidden in ("--url", "--source-url", "--endpoint", "--host"):
             assert forbidden not in options, f"{name} exposes {forbidden}"
+
+
+# --- curl subprocess environment allowlist -------------------------------
+#
+# The transport must stay compatible with a proxy-mediated sandbox (the curl
+# child needs the HTTPS proxy variables) *without* inheriting the parent
+# environment wholesale.
+
+_SENSITIVE_ENV = {
+    "DAYTRADE_HTTP_USER_AGENT": "daytrade/1.0",
+    "HOME": "/home/someone",
+    "AWS_SECRET_ACCESS_KEY": "secret",
+    "AWS_ACCESS_KEY_ID": "akid",
+    "GITHUB_TOKEN": "ghtoken",
+    "GH_TOKEN": "ghtoken2",
+    "SOME_RANDOM_SECRET": "nope",
+}
+
+_PLAIN_HTTP_PROXY_ENV = {
+    "HTTP_PROXY": "http://proxy.example:8080",
+    "http_proxy": "http://proxy-lower.example:8081",
+    "NO_PROXY": "finance.yahoo.co.jp",
+    "no_proxy": "finance.yahoo.co.jp",
+}
+
+
+def test_curl_subprocess_env_keeps_path_and_https_proxy_variables():
+    env = source_fetch._curl_subprocess_env(
+        {
+            "PATH": "/test/path",
+            "HTTPS_PROXY": "http://proxy.example:8080",
+            "https_proxy": "http://proxy-lower.example:8081",
+            "ALL_PROXY": "socks5://proxy.example:1080",
+            "all_proxy": "socks5://proxy-lower.example:1081",
+        }
+    )
+    assert env == {
+        "PATH": "/test/path",
+        "HTTPS_PROXY": "http://proxy.example:8080",
+        "https_proxy": "http://proxy-lower.example:8081",
+        "ALL_PROXY": "socks5://proxy.example:1080",
+        "all_proxy": "socks5://proxy-lower.example:1081",
+    }
+
+
+def test_curl_subprocess_env_drops_credentials_and_unrelated_variables():
+    env = source_fetch._curl_subprocess_env({"PATH": "/test/path", **_SENSITIVE_ENV})
+    for name in _SENSITIVE_ENV:
+        assert name not in env, f"{name} must not reach the curl subprocess"
+    assert env == {"PATH": "/test/path"}
+
+
+def test_curl_subprocess_env_drops_plain_http_proxy_and_no_proxy():
+    env = source_fetch._curl_subprocess_env(
+        {"PATH": "/test/path", **_PLAIN_HTTP_PROXY_ENV}
+    )
+    for name in _PLAIN_HTTP_PROXY_ENV:
+        assert name not in env, f"{name} must not reach the curl subprocess"
+    assert env == {"PATH": "/test/path"}
+
+
+def test_curl_subprocess_env_is_path_only_without_any_proxy_variables():
+    """The pre-existing, non-sandboxed contract is unchanged."""
+    assert source_fetch._curl_subprocess_env({"PATH": "/test/path"}) == {
+        "PATH": "/test/path"
+    }
+    # A missing key stays missing; it is never invented as an empty string.
+    assert source_fetch._curl_subprocess_env({}) == {"PATH": ""}
+    # A present-but-empty value is copied verbatim, not dropped or rewritten.
+    assert source_fetch._curl_subprocess_env({"PATH": "/p", "HTTPS_PROXY": ""}) == {
+        "PATH": "/p",
+        "HTTPS_PROXY": "",
+    }
+
+
+def test_curl_subprocess_env_defaults_to_os_environ(monkeypatch):
+    monkeypatch.setenv("PATH", "/test/path")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    for name in ("https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    assert source_fetch._curl_subprocess_env() == {
+        "PATH": "/test/path",
+        "HTTPS_PROXY": "http://proxy.example:8080",
+    }
+
+
+def test_curl_transport_applies_the_env_allowlist(monkeypatch):
+    """The allowlist is not just a helper: curl_transport actually uses it."""
+    captured = _fake_curl(monkeypatch, b"body")
+    monkeypatch.setenv("PATH", "/test/path")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    monkeypatch.setenv("https_proxy", "http://proxy-lower.example:8081")
+    monkeypatch.setenv("ALL_PROXY", "socks5://proxy.example:1080")
+    monkeypatch.setenv("all_proxy", "socks5://proxy-lower.example:1081")
+    for name, value in {**_SENSITIVE_ENV, **_PLAIN_HTTP_PROXY_ENV}.items():
+        monkeypatch.setenv(name, value)
+
+    result = source_fetch.curl_transport("https://www.jpx.co.jp/x")
+
+    assert result.body == b"body"
+    env = captured["kwargs"]["env"]
+    assert env == {
+        "PATH": "/test/path",
+        "HTTPS_PROXY": "http://proxy.example:8080",
+        "https_proxy": "http://proxy-lower.example:8081",
+        "ALL_PROXY": "socks5://proxy.example:1080",
+        "all_proxy": "socks5://proxy-lower.example:1081",
+    }
+    # The User-Agent travels as argv, never as an inherited environment variable.
+    assert "DAYTRADE_HTTP_USER_AGENT" not in env
+    argv = captured["argv"]
+    assert argv[argv.index("--user-agent") + 1] == "daytrade/1.0"
+    assert captured["kwargs"]["shell"] is False

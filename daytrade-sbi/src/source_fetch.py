@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from src.file_io import atomic_write_bytes
 from src.network_policy import NetworkPolicyError, validate_request_url
@@ -34,6 +34,19 @@ USER_AGENT_ENV_VAR = "DAYTRADE_HTTP_USER_AGENT"
 #: curl's own exit code for "operation timed out" and "file too large".
 CURL_TIMEOUT_EXIT_CODE = 28
 CURL_RESPONSE_TOO_LARGE_EXIT_CODE = 63
+
+#: The *only* proxy variables inherited by the curl subprocess.
+#:
+#: Source Requests are https-only (``src/network_policy.py``), so the plain-HTTP
+#: proxy variables have nothing to configure here. ``NO_PROXY``/``no_proxy`` are
+#: deliberately excluded too: a bypass list inherited from the parent could
+#: silently route a request around the sandbox proxy.
+CURL_PROXY_ENV_VARS: tuple[str, ...] = (
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+)
 
 SOURCE_PAGES_DIRNAME = "source_pages"
 GLOBAL_CANDIDATE_TOKEN = "GLOBAL"
@@ -187,6 +200,39 @@ def curl_argv(url: str, *, user_agent_value: str, body_path: Path) -> list[str]:
     ]
 
 
+def _curl_subprocess_env(
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The environment handed to the curl subprocess: a strict allowlist.
+
+    The parent environment is **never** inherited wholesale (no
+    ``os.environ.copy()``, no ``dict(os.environ)``): credentials and unrelated
+    configuration must not reach an outbound transport. Exactly two things are
+    passed through:
+
+    * ``PATH`` -- so ``curl`` can be located at all.
+    * the four proxy variables in :data:`CURL_PROXY_ENV_VARS` -- so that a run
+      inside a proxy-mediated sandbox (e.g. the Claude Code Linux/WSL2 sandbox,
+      whose egress goes through an out-of-sandbox proxy) keeps working. Outside
+      such a sandbox none of them are set and the environment is ``PATH`` only,
+      exactly as before.
+
+    A listed key is copied **only if it is present** in the parent environment,
+    and its value is copied verbatim -- an empty string stays an empty string,
+    which is how curl is told "no proxy for this scheme". A missing key is left
+    missing rather than being invented as ``""``.
+
+    ``DAYTRADE_HTTP_USER_AGENT`` is *not* forwarded: the User-Agent reaches curl
+    as a fixed ``--user-agent`` argv element via :func:`user_agent`.
+    """
+    source: Mapping[str, str] = os.environ if environ is None else environ
+    env = {"PATH": source.get("PATH", "")}
+    for name in CURL_PROXY_ENV_VARS:
+        if name in source:
+            env[name] = source[name]
+    return env
+
+
 def curl_transport(url: str) -> TransportResult:
     """Default transport: one ``curl`` subprocess, ``shell=False``.
 
@@ -205,7 +251,7 @@ def curl_transport(url: str) -> TransportResult:
                 shell=False,
                 capture_output=True,
                 timeout=TOTAL_TIMEOUT_SECONDS + CONNECT_TIMEOUT_SECONDS,
-                env={"PATH": os.environ.get("PATH", "")},
+                env=_curl_subprocess_env(),
                 check=False,
             )
         except subprocess.TimeoutExpired:
