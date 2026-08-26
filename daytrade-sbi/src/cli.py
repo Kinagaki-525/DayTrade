@@ -803,6 +803,17 @@ def _validate_acquisition_output_path(run_dir: Path, args: argparse.Namespace) -
             "from stdout."
         )
 
+    # Being under working/ is not enough: the summary is written as a regular
+    # file, so a destination that already exists as something else (a
+    # directory, a fifo, a device) can only fail -- and it would fail *after*
+    # the stage had already spent its Physical Requests and written its
+    # Business Artifact. A path that does not exist yet is the normal case.
+    if resolved.exists() and not resolved.is_file():
+        raise ValueError(
+            "ACQUISITION_OUTPUT_PATH_INVALID: --output must be a regular file; "
+            f"{resolved} already exists and is not one."
+        )
+
 
 def _load_and_validate_acquisition_context(
     stage: str,

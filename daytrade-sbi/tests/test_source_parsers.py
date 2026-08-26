@@ -321,6 +321,34 @@ def test_tse_quote_ownership_never_accepts_a_non_tse_page(exchange):
     assert result.status == "PARSE_FAILED"
 
 
+@pytest.mark.parametrize("exchange", ["F", "S"])
+def test_tse_history_ownership_never_accepts_a_non_tse_page(exchange):
+    """The same TSE-only ownership rule, on the History source.
+
+    The page carries a perfectly parseable OHLCV row for the requested date,
+    so only the ownership check can stop it: widening the History matcher to
+    .F / .S would silently accept another exchange's page for a TSE ticker.
+    """
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        f'<a href="https://finance.yahoo.co.jp/quote/1234.{exchange}/history">history</a>'
+        "<table><tbody>"
+        "<tr><td>2026年8月12日</td><td>1,000</td><td>1,100</td><td>990</td>"
+        "<td>1,050</td><td>2,345,600</td></tr>"
+        "</tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+
+    result = yahoo_jp.parse_history(
+        page,
+        DEFINITIONS["YAHOO_JP_HISTORY"],
+        _context("YAHOO_JP_HISTORY", "1234"),
+    )
+
+    assert result.status == "PARSE_FAILED"
+    assert not result.values
+
+
 # ---------------------------------------------------------------- kabutan ----
 
 

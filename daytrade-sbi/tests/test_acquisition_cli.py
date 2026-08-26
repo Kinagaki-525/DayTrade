@@ -1719,3 +1719,59 @@ def test_every_acquisition_command_rejects_an_unsafe_output(
     assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
     assert fake.call_count == 0
     assert not (tmp_path / "network_requests").exists()
+
+
+def test_acquire_output_cannot_be_an_existing_directory_under_working(
+    tmp_path, monkeypatch
+):
+    """Under working/ is necessary, not sufficient: the summary is a file.
+
+    A directory destination could only fail at write time -- after the stage
+    had already spent its Physical Requests and written its Business
+    Artifact -- so it is refused pre-acquisition like any other bad --output.
+    """
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(("7203",)))
+    window = _research_window(tmp_path)
+    research = _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    before = {path: path.read_bytes() for path in (window, research)}
+
+    destination = tmp_path / "working" / "result.json"
+    destination.mkdir(parents=True)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-actual-turnover",
+                *_context_args(tmp_path),
+                "--output", str(destination),
+            ]
+        )
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+    assert fake.urls == []
+    assert not (tmp_path / "network_requests").exists()
+    assert not (tmp_path / "source_pages").exists()
+    assert not (tmp_path / "sources.json").exists()
+    assert destination.is_dir()
+    for path, content in before.items():
+        assert path.read_bytes() == content, f"{path.name} was mutated"
+
+
+def test_acquire_output_may_overwrite_an_existing_working_file(tmp_path, clean_curl):
+    """An existing regular file under working/ stays a valid destination."""
+    _market_research(tmp_path, TICKERS)
+    output = tmp_path / "working" / "result.json"
+    output.parent.mkdir(parents=True)
+    output.write_text("stale\n", encoding="utf-8")
+
+    code = cli.main(
+        [
+            "acquire-stage1-sources",
+            *_acquisition_args(tmp_path),
+            "--output", str(output),
+        ]
+    )
+
+    assert code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["stage"] == "STAGE1"

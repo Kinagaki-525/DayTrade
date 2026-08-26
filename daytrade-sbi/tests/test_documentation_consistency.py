@@ -568,6 +568,9 @@ ACQUIRE_OUTPUT_CONTRACT_DOCS = (
     "docs/nightly-operation.md",
     "docs/source-acquisition.md",
     "prompts/nightly_research.md",
+    # The Skill carries the Production Runtime Profile's own "use the CLI's
+    # own --output" rule, so it has to carry the acquire-* exception too.
+    "SKILL.md",
 )
 
 
@@ -578,7 +581,7 @@ def test_docs_state_the_acquire_output_contract(name):
     assert "working/" in text, name
 
 
-@pytest.mark.parametrize("name", ACQUIRE_OUTPUT_CONTRACT_DOCS + ("SKILL.md",))
+@pytest.mark.parametrize("name", ACQUIRE_OUTPUT_CONTRACT_DOCS)
 def test_no_document_shows_an_acquire_output_into_a_business_artifact(name):
     """The very command shape that broke production is never illustrated."""
     for line in _text(name).splitlines():

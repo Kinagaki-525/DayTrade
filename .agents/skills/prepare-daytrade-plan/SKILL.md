@@ -52,6 +52,15 @@ profile:
   status — the Bash tool already reports a non-zero exit. No `&&`, `||`, pipes, redirection, command
   substitution, process substitution, or `cd`. When a step needs an output file, use the CLI's own
   `--output`.
+- **`acquire-*` is the exception to that `--output` rule.** An acquisition command writes its own
+  Business Artifact (`market_research.json` / `market_data.json` / `sources.json`) to a canonical
+  path and only then emits its CLI result summary to `--output`, so pointing `--output` at a
+  Business Artifact overwrites the artifact the same command just wrote (this is what happened on
+  the 2026-08-27 production nightly). In the standard nightly, pass no `--output` to `acquire-*`
+  and read the CLI result summary from the Bash tool's stdout. Only when the summary really has to
+  be kept as a file, write it to `runs/<target-date>/working/<result-name>.json`. A Business
+  Artifact, the `--sources` path itself, or anything outside the run directory is rejected with
+  `ACQUISITION_OUTPUT_PATH_INVALID` before a single network GET is spent.
 - Only the command rendering changes. The Canonical CLI Pipeline Order, the flags, and the business
   logic are identical in every runtime profile.
 
