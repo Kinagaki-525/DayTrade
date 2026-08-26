@@ -51,11 +51,62 @@ def kabutan_history_page(ticker: str = "7203") -> bytes:
 </body></html>""".encode("utf-8")
 
 
-def yahoo_ranking_page(tickers: tuple[str, ...] = ("7203", "6758", "9984")) -> bytes:
+#: Market label per Yahoo exchange suffix, for the ranking company cell.
+_RANKING_MARKET_LABEL = {"T": "東証STD", "F": "福証", "S": "札証"}
+
+
+def _ranking_name_letters(index: int) -> str:
+    """``A``, ``B``, ... ``Z``, ``AA``, ... -- a digit-free row identity.
+
+    Synthetic company names must not contain digits: a name carrying the
+    ticker code would make the company-cell fixture ambiguous in a way real
+    Yahoo rows are not.
+    """
+    letters = ""
+    number = index + 1
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
+
+
+def yahoo_ranking_row(symbol: str, rank: int) -> str:
+    """One ALL_MARKETS ranking row, shaped like the published page.
+
+    ``symbol`` is a full Yahoo symbol (``7203.T`` / ``278A.T`` / ``4567.F`` /
+    ``8901.S``). The row carries a rank cell, a company cell shaped
+    ``<name><code><market>掲示板`` with both the base quote href and the
+    ``/forum`` href of the same ticker, and the price / change / volume cells.
+    """
+    code, _, exchange = symbol.partition(".")
+    quote = f"https://finance.yahoo.co.jp/quote/{symbol}"
+    name = f"Example{_ranking_name_letters(rank - 1)} Corporation"
+    market = _RANKING_MARKET_LABEL[exchange]
+    return (
+        "<tr>"
+        f"<td>{rank}</td>"
+        f'<td><a href="{quote}">{name}</a>{code}{market}'
+        f'<a href="{quote}/forum">掲示板</a></td>'
+        "<td>1,234</td><td>+56</td><td>6,326,600株</td>"
+        "</tr>"
+    )
+
+
+def yahoo_ranking_page(
+    tickers: tuple[str, ...] = ("7203", "6758", "9984"),
+    *,
+    exchange: str = "T",
+) -> bytes:
+    """A ranking page for bare ticker codes, all on one exchange."""
+    return yahoo_ranking_page_from_symbols(
+        tuple(f"{code}.{exchange}" for code in tickers)
+    )
+
+
+def yahoo_ranking_page_from_symbols(symbols: tuple[str, ...]) -> bytes:
+    """A ranking page from full Yahoo symbols, possibly mixing exchanges."""
     rows = "".join(
-        f'<tr><td><a href="https://finance.yahoo.co.jp/quote/{code}.T">{code}</a></td>'
-        f"<td>Example {code} Corporation</td></tr>"
-        for code in tickers
+        yahoo_ranking_row(symbol, rank) for rank, symbol in enumerate(symbols, start=1)
     )
     return f"""<html><head><meta charset="utf-8"></head><body>
 <table><tbody>{rows}</tbody></table>
@@ -67,8 +118,30 @@ def top50_tickers(start: int = 1000) -> tuple[str, ...]:
     return tuple(str(start + index) for index in range(50))
 
 
+def mixed_top50_symbols(start: int = 1000) -> tuple[str, ...]:
+    """50 Yahoo symbols mixing numeric/alphanumeric codes and .T/.F/.S.
+
+    Modelled on the 2026-08-27 ALL_MARKETS evidence, where the published
+    TOP50 held ``278A.T`` / ``150A.T`` alongside ``7851.F`` and ``9027.S``.
+    """
+    exchanges = ("T", "T", "T", "F", "S")
+    symbols: list[str] = []
+    for index in range(50):
+        code = (
+            f"{start + index}"
+            if index % 4
+            else f"{(start + index) % 1000:03d}A"
+        )
+        symbols.append(f"{code}.{exchanges[index % len(exchanges)]}")
+    return tuple(symbols)
+
+
 def yahoo_top50_ranking_page(start: int = 1000) -> bytes:
     return yahoo_ranking_page(top50_tickers(start))
+
+
+def yahoo_mixed_top50_ranking_page(start: int = 1000) -> bytes:
+    return yahoo_ranking_page_from_symbols(mixed_top50_symbols(start))
 
 
 def jpx_trading_unit_page(unit: str = "100") -> bytes:

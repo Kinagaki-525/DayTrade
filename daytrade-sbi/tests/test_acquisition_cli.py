@@ -136,7 +136,7 @@ def test_no_acquisition_cli_accepts_an_injected_ticker(command, tmp_path):
 
 def test_stage1_cli_derives_tickers_from_discovery(tmp_path, clean_curl):
     _market_research(tmp_path, TICKERS)
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
     cli.main(["acquire-stage1-sources", *_acquisition_args(tmp_path), "--output", str(output)])
 
     ledger = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
@@ -241,7 +241,7 @@ def test_tampered_cached_page_hard_stops_instead_of_refetching(tmp_path, clean_c
 
 def test_acquire_actual_turnover_writes_a_v3_ledger(tmp_path, clean_curl):
     _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
     code = cli.main(
         ["acquire-actual-turnover", *_acquisition_args(tmp_path), "--output", str(output)]
     )
@@ -268,7 +268,7 @@ def test_acquire_stage1_reports_a_closed_listing_gate(tmp_path, monkeypatch):
     )
     _market_research(tmp_path, TICKERS)
 
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
     code = cli.main(
         ["acquire-stage1-sources", *_acquisition_args(tmp_path), "--output", str(output)]
     )
@@ -289,7 +289,7 @@ def test_discovery_cli_builds_market_research(tmp_path, monkeypatch):
         monkeypatch, fake_transport.clean_fake(top50, ranking_tickers=top50)
     )
     window = _research_window(tmp_path)
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
 
     code = cli.main(
         [
@@ -1439,7 +1439,7 @@ def test_discovery_incomplete_closes_the_gate_after_writing_evidence(
     """TEST-008: CLOSED + exit 1, with the failure evidence kept on disk."""
     fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
     window = _research_window(tmp_path)
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
 
     code = cli.main(
         [
@@ -1492,7 +1492,7 @@ def test_discovery_summary_candidate_count_is_the_discovery_union(
         monkeypatch, fake_transport.clean_fake(top50, ranking_tickers=top50)
     )
     window = _research_window(tmp_path)
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
 
     code = cli.main(
         [
@@ -1523,7 +1523,7 @@ def test_successful_discovery_keeps_the_gate_open(tmp_path, monkeypatch):
         monkeypatch, fake_transport.clean_fake(top50, ranking_tickers=top50)
     )
     window = _research_window(tmp_path)
-    output = tmp_path / "result.json"
+    output = tmp_path / "working" / "result.json"
 
     code = cli.main(
         [
@@ -1543,3 +1543,179 @@ def test_successful_discovery_keeps_the_gate_open(tmp_path, monkeypatch):
     assert code == 0
     assert summary["status"] == "OPEN"
     assert summary["reason_codes"] == []
+
+
+# --------------------------------------------------------------- FIX-PR13 ---
+#
+# On the 2026-08-27 production nightly, acquire-discovery was invoked with
+# --output <run-dir>/market_research.json. The command writes its Business
+# Artifact first and *then* emits the CLI result summary to --output, so the
+# summary overwrote the market_research.json the very same command had just
+# produced. The dangerous destination is now unrepresentable: --output may
+# only name a file under <run-dir>/working/, checked before any Physical
+# Request is reserved.
+
+
+BUSINESS_ARTIFACTS = (
+    "market_research.json",
+    "market_data.json",
+    "sources.json",
+    "research_window.json",
+    "strategy_snapshot.yaml",
+)
+
+
+@pytest.mark.parametrize("artifact", BUSINESS_ARTIFACTS)
+def test_acquire_output_cannot_target_a_business_artifact(
+    artifact, tmp_path, monkeypatch
+):
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    _research_window(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                *_context_args(tmp_path),
+                "--output", str(tmp_path / artifact),
+            ]
+        )
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+    assert not (tmp_path / "network_requests").exists()
+    assert not (tmp_path / "source_pages").exists()
+
+
+def test_acquire_output_cannot_escape_the_run_directory(tmp_path, monkeypatch):
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _research_window(run_dir)
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                "--target-date", TARGET_DATE,
+                "--trading-date", TRADING_DATE,
+                "--research-cutoff", CUTOFF,
+                "--run-dir", str(run_dir),
+                "--sources", str(run_dir / "sources.json"),
+                "--output", str(tmp_path / "elsewhere.json"),
+            ]
+        )
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+    assert not (run_dir / "network_requests").exists()
+
+
+def test_acquire_output_cannot_target_the_source_ledger_inside_working(
+    tmp_path, monkeypatch
+):
+    """--sources is off limits wherever it lives, working/ included."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    _research_window(tmp_path)
+    ledger = tmp_path / "working" / "sources.json"
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-stage1-sources",
+                "--target-date", TARGET_DATE,
+                "--trading-date", TRADING_DATE,
+                "--research-cutoff", CUTOFF,
+                "--run-dir", str(tmp_path),
+                "--sources", str(ledger),
+                "--output", str(ledger),
+            ]
+        )
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+
+
+def test_invalid_output_leaves_existing_business_artifacts_byte_identical(
+    tmp_path, monkeypatch
+):
+    """Not one byte of prior evidence changes, and not one GET is spent."""
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(("7203",)))
+    window = _research_window(tmp_path)
+    research = _market_research(tmp_path, ("7203",), stage1_passed=("7203",))
+    before = {path: path.read_bytes() for path in (window, research)}
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(
+            [
+                "acquire-actual-turnover",
+                *_context_args(tmp_path),
+                "--output", str(tmp_path / "market_research.json"),
+            ]
+        )
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+    assert fake.urls == []
+    assert not (tmp_path / "network_requests").exists()
+    assert not (tmp_path / "source_pages").exists()
+    assert not (tmp_path / "sources.json").exists()
+    for path, content in before.items():
+        assert path.read_bytes() == content, f"{path.name} was mutated"
+
+
+def test_acquire_output_under_working_is_allowed(tmp_path, clean_curl):
+    _market_research(tmp_path, TICKERS)
+    output = tmp_path / "working" / "result.json"
+
+    code = cli.main(
+        [
+            "acquire-stage1-sources",
+            *_acquisition_args(tmp_path),
+            "--output", str(output),
+        ]
+    )
+
+    assert code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["stage"] == "STAGE1"
+    assert (tmp_path / "market_data.json").is_file()
+
+
+def test_acquire_without_output_prints_the_summary(tmp_path, clean_curl, capsys):
+    _market_research(tmp_path, TICKERS)
+    code = cli.main(["acquire-stage1-sources", *_acquisition_args(tmp_path)])
+
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["stage"] == "STAGE1"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "acquire-discovery",
+        "acquire-stage1-sources",
+        "acquire-stage2-market-sources",
+        "acquire-actual-turnover",
+        "acquire-event-sources",
+    ],
+)
+def test_every_acquisition_command_rejects_an_unsafe_output(
+    command, tmp_path, monkeypatch
+):
+    fake = fake_transport.install(monkeypatch, fake_transport.clean_fake(TICKERS))
+    window = _research_window(tmp_path)
+
+    argv = [
+        command,
+        *_context_args(tmp_path),
+        "--output", str(tmp_path / "market_research.json"),
+    ]
+    if command == "acquire-discovery":
+        argv += ["--research-window", str(window)]
+
+    with pytest.raises(ValueError) as excinfo:
+        cli.main(argv)
+
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in str(excinfo.value)
+    assert fake.call_count == 0
+    assert not (tmp_path / "network_requests").exists()

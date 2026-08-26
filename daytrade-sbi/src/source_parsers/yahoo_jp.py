@@ -22,8 +22,23 @@ from src.source_parsers.numeric import (
 )
 
 
+#: Discovery ranking pages are ALL_MARKETS: the same TOP50 list mixes Tokyo
+#: (``.T``), Fukuoka (``.F``) and Sapporo (``.S``) Yahoo symbols, and the
+#: 4-character code itself is alphanumeric for post-2024 listings (``278A``).
+#: Only these three exchange suffixes are accepted -- each one was observed in
+#: real Discovery evidence; unknown suffixes are never guessed into the set.
+#: Whether a non-TSE candidate survives is the existing TSE Listing Batch
+#: Gate's decision, not this parser's: dropping ``.F`` / ``.S`` here would
+#: silently shrink the candidate universe instead.
+DISCOVERY_QUOTE_HREF_PATTERN = re.compile(
+    r"^https://finance\.yahoo\.co\.jp/quote/([0-9A-Z]{4})\.[TFS](?:[/?#].*)?$"
+)
+
+#: The Quote / History sources are TSE-only by construction (their URL
+#: templates in the Source Matrix append ``.T``), so their page-ownership
+#: matcher stays TSE-only: a ``.F`` / ``.S`` page must never satisfy it.
 QUOTE_HREF_PATTERN = re.compile(
-    r"^https://finance\.yahoo\.co\.jp/quote/(\d{4})\.T(?:[/?#].*)?$"
+    r"^https://finance\.yahoo\.co\.jp/quote/([0-9A-Z]{4})\.T(?:[/?#].*)?$"
 )
 JP_DATE_PATTERN = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日$")
 
@@ -55,7 +70,7 @@ def parse_ranking(
 
     tickers: list[str] = []
     for href in hrefs(page.text):
-        match = QUOTE_HREF_PATTERN.match(href)
+        match = DISCOVERY_QUOTE_HREF_PATTERN.match(href)
         if match is None:
             continue
         ticker = match.group(1)
@@ -84,30 +99,53 @@ def parse_ranking(
     )
 
 
+def _ranking_company_name(cells: list[str], ticker: str) -> str | None:
+    """The display name carried by the row's company cell, or ``None``.
+
+    Yahoo's ranking rows put the company identity in a single cell shaped
+    ``<company name><canonical ticker><market><掲示板>`` (e.g.
+    ``クボテック(株)7709東証STD掲示板``). The name is therefore the text that
+    precedes the canonical ticker inside that cell -- never "the first
+    non-empty cell", which is the rank number ("1", "2", ...) and was stored
+    as the company name until this was fixed.
+
+    Only cells that actually contain the canonical ticker are eligible, and
+    only when they agree on a single name; anything else returns ``None`` so
+    the caller falls back to the ticker rather than inventing a name.
+    """
+    names = {
+        prefix
+        for cell in cells
+        if ticker in cell and (prefix := cell.split(ticker, 1)[0].strip())
+    }
+    if len(names) != 1:
+        return None
+    return next(iter(names))
+
+
 def _ranking_rows(text: str, ordered_tickers: list[str]) -> list[dict[str, Any]]:
     """``[{ticker, company_name, rank}]`` in published ranking order.
 
     The ticker always comes from the canonical quote anchor, never from cell
-    text. The company name is the row's first non-empty cell that is not the
-    ticker code itself; when the page carries no display name the ticker is
-    used, so Discovery never invents one.
+    text. The company name comes from the row's company cell (see
+    :func:`_ranking_company_name`); when the page carries no usable display
+    name the ticker is used, so Discovery never invents one.
     """
     names: dict[str, str] = {}
     for cells, row_hrefs in rows_with_hrefs(text):
         row_tickers = {
             match.group(1)
             for href in row_hrefs
-            if (match := QUOTE_HREF_PATTERN.match(href)) is not None
+            if (match := DISCOVERY_QUOTE_HREF_PATTERN.match(href)) is not None
         }
         if len(row_tickers) != 1:
             continue
         ticker = next(iter(row_tickers))
         if ticker in names:
             continue
-        for cell in cells:
-            if cell and cell != ticker:
-                names[ticker] = cell
-                break
+        name = _ranking_company_name(cells, ticker)
+        if name is not None:
+            names[ticker] = name
 
     return [
         {

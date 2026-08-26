@@ -193,6 +193,134 @@ def test_ranking_extracts_tickers_and_no_market_numerics():
     assert result.values[0].value == ["7203", "6758", "9984"]
 
 
+# ----------------------------------------------------- FIX-PR13 discovery ----
+#
+# The 2026-08-27 production discovery lost 5 of 50 gainers and 3 of 50 most
+# traded names, because the ranking matcher only accepted 4-DIGIT .T symbols:
+# post-2024 alphanumeric codes (278A) and the Fukuoka / Sapporo symbols an
+# ALL_MARKETS ranking legitimately publishes never matched. Discovery must
+# take them all; whether a non-TSE candidate survives is the TSE Listing
+# Batch Gate's decision downstream, not this parser's.
+
+
+def _ranking(page: bytes):
+    return yahoo_jp.parse_ranking(
+        page,
+        DEFINITIONS["YAHOO_JP_VOLUME_RANKING"],
+        _context("YAHOO_JP_VOLUME_RANKING"),
+    )
+
+
+def _ranking_value(result, field_name: str):
+    return next(value.value for value in result.values if value.field_name == field_name)
+
+
+@pytest.mark.parametrize(
+    ("symbol", "ticker"),
+    [
+        ("7203.T", "7203"),  # numeric TSE
+        ("123A.T", "123A"),  # alphanumeric TSE
+        ("4567.F", "4567"),  # Fukuoka
+        ("8901.S", "8901"),  # Sapporo
+    ],
+)
+def test_discovery_accepts_every_published_exchange_symbol(symbol, ticker):
+    """The canonical ticker is the code with the exchange suffix removed."""
+    result = _ranking(pages.yahoo_ranking_page_from_symbols((symbol,)))
+
+    assert result.status == "FOUND"
+    assert _ranking_value(result, "ranking_tickers") == [ticker]
+    assert _ranking_value(result, "ranking_rows") == [
+        {"ticker": ticker, "company_name": "ExampleA Corporation", "rank": 1}
+    ]
+
+
+def test_discovery_keeps_published_order_across_mixed_symbols():
+    symbols = ("7203.T", "123A.T", "4567.F", "8901.S")
+    result = _ranking(pages.yahoo_ranking_page_from_symbols(symbols))
+
+    assert _ranking_value(result, "ranking_tickers") == ["7203", "123A", "4567", "8901"]
+    assert [row["rank"] for row in _ranking_value(result, "ranking_rows")] == [1, 2, 3, 4]
+
+
+def test_discovery_does_not_double_count_the_forum_link_of_a_row():
+    """Every row publishes both /quote/<symbol> and /quote/<symbol>/forum."""
+    page = pages.yahoo_ranking_page_from_symbols(("278A.T",))
+
+    assert b"/forum" in page
+    assert _ranking_value(_ranking(page), "ranking_tickers") == ["278A"]
+
+
+def test_discovery_mixed_top50_yields_all_fifty_tickers():
+    symbols = pages.mixed_top50_symbols()
+    result = _ranking(pages.yahoo_mixed_top50_ranking_page())
+
+    tickers = _ranking_value(result, "ranking_tickers")
+    assert len(tickers) == 50
+    assert tickers == [symbol.partition(".")[0] for symbol in symbols]
+
+
+def test_ranking_company_name_is_never_the_rank_cell():
+    """The regression itself: rank cells were stored as company names."""
+    rows = _ranking_value(_ranking(pages.yahoo_mixed_top50_ranking_page()), "ranking_rows")
+
+    assert len(rows) == 50
+    for row in rows:
+        assert row["company_name"] != str(row["rank"])
+        assert row["company_name"].startswith("Example")
+        assert row["company_name"].endswith("Corporation")
+
+
+def test_ranking_company_name_falls_back_to_the_ticker_when_absent():
+    """No usable display name is a fallback to the ticker, never a guess."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body><table><tbody>"
+        "<tr><td>1</td>"
+        '<td><a href="https://finance.yahoo.co.jp/quote/278A.T">278A</a></td>'
+        "<td>1,234</td></tr>"
+        "</tbody></table></body></html>"
+    ).encode("utf-8")
+
+    assert _ranking_value(_ranking(page), "ranking_rows") == [
+        {"ticker": "278A", "company_name": "278A", "rank": 1}
+    ]
+
+
+def test_tse_quote_and_history_accept_an_alphanumeric_tse_code():
+    quote = yahoo_jp.parse_quote_turnover(
+        pages.yahoo_quote_page(ticker="123A"),
+        DEFINITIONS["YAHOO_JP_QUOTE"],
+        _context("YAHOO_JP_QUOTE", "123A"),
+    )
+    assert quote.status == "FOUND"
+
+    history = yahoo_jp.parse_history(
+        pages.yahoo_history_page(ticker="123A"),
+        DEFINITIONS["YAHOO_JP_HISTORY"],
+        _context("YAHOO_JP_HISTORY", "123A"),
+    )
+    assert history.status == "FOUND"
+
+
+@pytest.mark.parametrize("exchange", ["F", "S"])
+def test_tse_quote_ownership_never_accepts_a_non_tse_page(exchange):
+    """Quote / History are TSE-only sources: .F / .S is cross-contamination."""
+    page = (
+        "<html><head><meta charset=\"utf-8\"></head><body>"
+        f'<a href="https://finance.yahoo.co.jp/quote/1234.{exchange}">quote</a>'
+        "<dl><dt>売買代金</dt><dd>1,234,567</dd></dl>"
+        "</body></html>"
+    ).encode("utf-8")
+
+    result = yahoo_jp.parse_quote_turnover(
+        page,
+        DEFINITIONS["YAHOO_JP_QUOTE"],
+        _context("YAHOO_JP_QUOTE", "1234"),
+    )
+
+    assert result.status == "PARSE_FAILED"
+
+
 # ---------------------------------------------------------------- kabutan ----
 
 
