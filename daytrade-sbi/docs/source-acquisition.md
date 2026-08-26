@@ -33,6 +33,33 @@ AIエージェントの役割は次の2つだけ:
 | `src/network_policy.py` | Python | https限定・完全一致ホスト・生IP/localhost/userinfo禁止 |
 | `src/source_fetch.py` | Python | GETのみ・リダイレクト追従なし・retry 0・25MiB上限 |
 
+### curl subprocess environment
+
+`src/source_fetch.py` は curl 子プロセスへ親プロセスの環境を丸ごと渡さない
+（`os.environ.copy()` / `dict(os.environ)` は使わない）。`_curl_subprocess_env()` の
+厳密なallowlistだけを渡す。
+
+| 変数 | 継承 | 理由 |
+| --- | --- | --- |
+| `PATH` | する | `curl` を解決するため |
+| `HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` / `all_proxy` | 親に存在する場合のみ、値をそのまま | Claude Code Sandbox等、外向き通信をSandbox外部Proxy経由で制御する実行環境と互換にするため |
+| `HTTP_PROXY` / `http_proxy` | しない | Source Requestは `src/network_policy.py` により https 限定で、平文HTTP Proxyは設定対象を持たない |
+| `NO_PROXY` / `no_proxy` | しない | 親から継承したbypass listがSandbox Proxyを迂回させ得るため |
+| `DAYTRADE_HTTP_USER_AGENT` | しない | User-Agentは `user_agent()` が読み、固定argv `--user-agent` としてcurlへ渡す |
+| 上記以外（`HOME`、`AWS_*`、`GITHUB_TOKEN`、`GH_TOKEN` 等のcredentialを含む） | しない | 外向きtransportへ無関係な設定・機密を継承しない |
+
+allowlist対象キーは**親環境に存在する場合に限り**値を無改変でコピーする。空文字も
+空文字のままコピーし、存在しないキーは空文字として捏造しない。Proxy変数が1つも無い
+通常shell環境では従来どおり `PATH` だけの環境で動作する。
+
+これはアクセス可能ドメインを追加する変更ではない。Source URL自体の許可判断は引き続き
+`src/network_policy.py`（https限定・完全一致ホスト・生IP/localhost/userinfo禁止）が担い、
+Sandbox Managed Domain allowlistは別レイヤとしてそのまま維持される。Request Budget /
+retry 0 / timeout / redirect policy / Fail-Closed semantics も変更しない。
+
+この変更はProduction Sandbox compatibility gapを塞ぐものであり、実ネットワーク動作は
+次回のProduction Runtime Acceptanceで確認する。
+
 Issuer（企業IR）ドメインだけは `config/issuer_domain_registry.yaml` から解決する。
 **人間が承認したエントリのみ**で、自動発見は存在しない。未登録銘柄は
 `ISSUER_DOMAIN_NOT_APPROVED` で失敗し、推測ドメインへは決してアクセスしない。
