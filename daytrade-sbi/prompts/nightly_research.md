@@ -72,6 +72,14 @@ Productionで守ること:
    `; echo "EXIT_CODE=$?"`を付けない（Bash Tool自身がnon-zero exitを返す）。
    `&&` / `||` / pipe / redirect / command substitution / `cd`も使わない。
    出力ファイルはCLIの`--output`で指定する。
+   **ただし`acquire-*`はこの一般ルールの対象外である。** `acquire-*`のBusiness Artifact
+   （`market_research.json` / `market_data.json` / `sources.json`）はCLI自身がcanonical pathへ
+   生成し、`--output`はCLI result summaryの出力先でしかない。標準Nightlyでは`acquire-*`に
+   `--output`を付けず、result summaryはBash Toolのstdoutで確認する。
+   どうしてもresult summaryをfile保存する場合だけ`runs/<target-date>/working/<result-name>.json`
+   を指定できる（標準手順では不要）。それ以外のpath（run directory直下のBusiness Artifact、
+   `--sources`自身、run directory外）は`ACQUISITION_OUTPUT_PATH_INVALID`でpre-acquisition
+   Hard Errorになる。
 4. Canonical CLI Pipeline Orderそのものは変わらない。変わるのはcommandのrendering
    （path materialization）だけであり、stageの順序・引数の意味・業務ロジックは同一。
 
@@ -162,7 +170,8 @@ only then:
   - **B. pre-acquisition Hard Error**（Canonical Acquisition Context Validation等。
     `ACQUISITION_RESEARCH_WINDOW_MISSING` / `ACQUISITION_RESEARCH_WINDOW_INVALID` /
     `ACQUISITION_TARGET_DATE_MISMATCH` / `ACQUISITION_TRADING_DATE_MISMATCH` /
-    `ACQUISITION_RESEARCH_CUTOFF_MISMATCH` / `ACQUISITION_RESEARCH_WINDOW_PATH_MISMATCH`）:
+    `ACQUISITION_RESEARCH_CUTOFF_MISMATCH` / `ACQUISITION_RESEARCH_WINDOW_PATH_MISMATCH` /
+    `ACQUISITION_OUTPUT_PATH_INVALID`）:
     Canonical Acquisition Context ValidationはSource Matrix load / Ledger load /
     candidate resolution / Physical Request reservation / transportより**前**に実行されるため、
     これらのArtifactはまだ存在しない場合がある。Artifactの存在を前提としない。

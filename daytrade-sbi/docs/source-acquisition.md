@@ -77,6 +77,23 @@ Issuer（企業IR）ドメインだけは `config/issuer_domain_registry.yaml` �
 共通引数: `--target-date --trading-date --research-cutoff --run-dir --sources
 [--source-matrix] [--output]`（`acquire-discovery` はさらに `--research-window`）
 
+**`--output`はCLI result summaryの出力先であって、Business Artifactの出力先ではない。**
+`acquire-*`は`market_research.json` / `market_data.json` / `sources.json`をcanonical pathへ
+自分で書いたうえで、最後にresult summaryを`--output`へ出す。したがって`--output`へBusiness
+Artifactを指定すると、同じcommandが直前に書いたArtifactをsummaryで上書きしてしまう
+（2026-08-27 Production Nightlyで実際に発生）。この危険な出力先はCLIから表現できないように
+してある。
+
+- `--output`未指定（**標準Nightly**）: result summaryをstdoutへ出す
+- `--output`指定: resolved pathが`<run-dir>/working/`配下のfileのときだけ許可
+- run directory直下のBusiness Artifact・`--sources`自身・run directory外は
+  `ACQUISITION_OUTPUT_PATH_INVALID`のHard Error
+
+この検証はCanonical Acquisition Context Validationと同じくPhysical Requestを1つも予約する前に
+行われるため、不正な`--output`でネットワークGETが消費されることも、既存Artifactが
+1 byteでも変更されることもない。これはBusiness decisionのreason codeではなく、
+CLI / Acquisition ContextのHard Errorである。
+
 **`--ticker` は存在しない。** どの銘柄がネットワークアクセスを受けるかはディスク上の成果物から導出される: Stage1は`market_research.json`の`discovery_candidates`、Stage2とTurnoverはStage 1 `PASS`、Eventは`status=ELIGIBLE`かつ`screening_status=PASS`の候補。エージェントが候補集合を注入・拡大する経路はない。
 
 ### 重要な失敗セマンティクス

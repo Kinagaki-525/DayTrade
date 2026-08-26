@@ -553,3 +553,39 @@ def test_production_docs_never_equate_a_bash_call_with_a_pipeline_step(name):
     text = _text(name)
     for wrong in ("1 Bash call = 1 stage", "1 Bash call = 1 Stage"):
         assert wrong not in text, name
+
+
+# --------------------------------------------------------------- FIX-PR13 ---
+#
+# The Production Path Materialization Contract tells the agent to use the
+# CLI's own --output instead of a shell redirect. For acquire-* that general
+# rule is what produced the 2026-08-27 incident (the result summary
+# overwrote market_research.json), so every document carrying the rule must
+# also carry the exception.
+
+
+ACQUIRE_OUTPUT_CONTRACT_DOCS = (
+    "docs/nightly-operation.md",
+    "docs/source-acquisition.md",
+    "prompts/nightly_research.md",
+    # The Skill carries the Production Runtime Profile's own "use the CLI's
+    # own --output" rule, so it has to carry the acquire-* exception too.
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", ACQUIRE_OUTPUT_CONTRACT_DOCS)
+def test_docs_state_the_acquire_output_contract(name):
+    text = _text(name)
+    assert "ACQUISITION_OUTPUT_PATH_INVALID" in text, name
+    assert "working/" in text, name
+
+
+@pytest.mark.parametrize("name", ACQUIRE_OUTPUT_CONTRACT_DOCS)
+def test_no_document_shows_an_acquire_output_into_a_business_artifact(name):
+    """The very command shape that broke production is never illustrated."""
+    for line in _text(name).splitlines():
+        # Command lines only: prose about --output is the contract itself.
+        if "src.cli acquire-" not in line or "--output" not in line:
+            continue
+        assert "/working/" in line, f"{name}: unsafe acquire --output example: {line}"

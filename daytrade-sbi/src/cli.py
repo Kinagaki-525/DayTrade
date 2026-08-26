@@ -767,6 +767,54 @@ def _complete_event_research(
     return 0
 
 
+def _validate_acquisition_output_path(run_dir: Path, args: argparse.Namespace) -> None:
+    """``--output`` on an acquire-* command may only name a working file.
+
+    An acquire-* command writes its Business Artifact (market_research.json /
+    market_data.json / sources.json) to a canonical path of its own and then
+    emits a *CLI result summary*. Pointing ``--output`` at a Business Artifact
+    therefore does not "redirect" the artifact: it overwrites the artifact the
+    same command just wrote with the summary. That is what happened on the
+    2026-08-27 production nightly, so the dangerous destination is removed
+    from what the CLI can express rather than left to the caller.
+
+    ``--output`` stays optional (unset = summary on stdout, the standard
+    nightly form). When set, it must resolve inside ``<run-dir>/working/``:
+    never a run-dir Business Artifact, never ``--sources``, never outside the
+    run. Called before any Physical Request is reserved, so an invalid
+    destination cannot consume a single network GET.
+    """
+    output = getattr(args, "output", None)
+    if output is None:
+        return
+
+    resolved = Path(output).resolve()
+    working = run_dir / "working"
+    if resolved == Path(args.sources).resolve():
+        raise ValueError(
+            "ACQUISITION_OUTPUT_PATH_INVALID: --output must not be the Source "
+            f"Ledger --sources path {resolved}."
+        )
+    if resolved == working or working not in resolved.parents:
+        raise ValueError(
+            "ACQUISITION_OUTPUT_PATH_INVALID: --output must be a file under "
+            f"{working}; {resolved} is not. Business Artifacts are written by "
+            "the command itself; omit --output to read the CLI result summary "
+            "from stdout."
+        )
+
+    # Being under working/ is not enough: the summary is written as a regular
+    # file, so a destination that already exists as something else (a
+    # directory, a fifo, a device) can only fail -- and it would fail *after*
+    # the stage had already spent its Physical Requests and written its
+    # Business Artifact. A path that does not exist yet is the normal case.
+    if resolved.exists() and not resolved.is_file():
+        raise ValueError(
+            "ACQUISITION_OUTPUT_PATH_INVALID: --output must be a regular file; "
+            f"{resolved} already exists and is not one."
+        )
+
+
 def _load_and_validate_acquisition_context(
     stage: str,
     args: argparse.Namespace,
@@ -781,6 +829,7 @@ def _load_and_validate_acquisition_context(
     artifact.
     """
     run_dir = Path(args.run_dir).resolve()
+    _validate_acquisition_output_path(run_dir, args)
     canonical_path = run_dir / "research_window.json"
 
     if not canonical_path.is_file():

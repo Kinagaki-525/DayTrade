@@ -430,6 +430,15 @@ canonical `src.cli` commandをちょうど1個だけ実行します。
 - `&&` / `||` / `|` / `&` / redirect（`>` `>>` `<`）/ command substitution（`$(...)`
   / `` `...` ``）/ process substitution / 改行 / `cd`はすべて拒否されます。
 - 出力ファイルが必要な場合はredirectではなくCLI自身の`--output`を使います。
+- **`acquire-*`はこの例外です。** `acquire-*`のBusiness Artifactは
+  CLI自身がcanonical pathへ生成し、`--output`はCLI result summaryの出力先でしかありません。
+  標準Nightlyでは`acquire-*`に`--output`を付けず、result summaryをBash Toolのstdoutで
+  確認します。summaryをfileへ残す必要がある場合だけ
+  `runs/<target-date>/working/<result-name>.json`を指定できます。
+  run directory直下のBusiness Artifact（`market_research.json` / `market_data.json` /
+  `sources.json` / `research_window.json` / `strategy_snapshot.yaml`）、`--sources`自身、
+  run directory外を指定すると、ネットワークGETを1回も消費する前に
+  `ACQUISITION_OUTPUT_PATH_INVALID`で停止します。
 - 複数のcanonical CLI commandを1つのBash callへまとめない。Canonical CLI Pipeline Orderの
   各canonical `src.cli` commandを、それぞれ独立したBash callとして逐次実行します。
   Pipelineの番号とBash callは1:1ではありません（`init/complete event-research`のように
