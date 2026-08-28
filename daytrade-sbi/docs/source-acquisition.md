@@ -117,6 +117,32 @@ Stage 1は4つのJPX Sourceを取得する。**上場確認**と**Strategy eligi
 `PARSE_FAILED`であって「未上場」ではない。2026-08-27 Production失敗はこの取り違えで、
 検索フォームページを取得して全候補が`TICKER_NOT_LISTED_ON_PAGE`になった。
 
+**Trading unit Evidence Contract（JPX_TRADING_UNIT）**: 内国株の売買単位は
+**認識済みの公式assertion**からのみ読む。現在の公式本文は制度をproseで公開しており、
+`src/source_parsers/jpx.py`の`DOMESTIC_TRADING_UNIT_ASSERTIONS`が対象を限定する。
+
+- `内国株では<N>株単位で取引されています`
+- `内国株の売買単位を<N>株へ統一しました`
+
+ページ全体から単なる`100`や`100株`を検索しない（同ページには`2018年`や無関係な
+`100株`のproseが存在するため）。認識できたassertionが0件なら`PARSE_FAILED`、
+複数のassertionが異なる単位を示す場合も`PARSE_FAILED`。**Parserが無条件に100を
+生成することはない** — 値は必ずEvidenceから抽出する。
+
+**Foreign List complete coverage（JPX_FOREIGN_STOCK_LIST）**: 「一覧に無い」ことを
+内国株判定のnegative Evidenceに使う以上、**外国株一覧全体を正常にparseできたことを
+証明してからFOUNDにする**。公式の3 sectionすべてが対象:
+
+- `プライム市場外国株`
+- `スタンダード市場外国株`
+- `グロース市場外国株`
+
+各sectionについて、headingを一意に認識でき、対応tableが一意に定まり、headerに
+`コード`と`売買単位`が各1個存在し、全data rowがcanonical code / valid unitとして
+parseできることを要求する。1 sectionでも欠落・重複・mapping曖昧・header異常・
+row parse失敗があれば**ページ全体を`PARSE_FAILED`**とし、部分的な表を
+「完全な外国株一覧」として扱わない。銘柄数や特定tickerはhardcodeしない。
+
 **Security / product classification**: `security_type`は単一Parserが決めない。
 `market_segment`（JPX_LISTED_COMPANY）と外国株一覧（JPX_FOREIGN_STOCK_LIST）を
 `src/security_type.py`が決定論的に合成する。
@@ -137,6 +163,22 @@ fallbackしない。** 外国株一覧が読めない場合、Prime/Standard/Gro
 `security_type == DOMESTIC_COMMON_STOCK`の候補**だけ**である。
 **ETF・外国株・未分類候補へ100を推定設定しない**（`share_unit`は`null`のまま）。
 外国株の売買単位はEvidenceとして保持するが、現行StrategyのStage1 PASS判定には使わない。
+
+**security_type Trust Chain**: Stage 1は`market_data.security_type`の文字列を
+盲目的に信用しない。eligibility判定の直前に`resolve_security_type_evidence()`が
+`record.sources`の実Source Recordから`classify_security_type()`を再実行し、
+結果が`record.security_type`と完全一致することを要求する。不一致・分類不能・
+分類が参照したSource RecordがSource Ledgerに無い場合は、PASSもREJECTもせず
+Fail-ClosedでStage 1未完了とする。
+
+security_type checkの`source_refs`は、分類が実際に参照したEvidenceと一致させる。
+
+- プライム / スタンダード / グロースから`FOREIGN_STOCK`または
+  `DOMESTIC_COMMON_STOCK`を確定した場合: `JPX_LISTED_COMPANY`と
+  `JPX_FOREIGN_STOCK_LIST`の**両方**のrefを必ず含める
+- ETF / ETN / REIT / インフラファンドの明示`market_segment`の場合:
+  `JPX_LISTED_COMPANY`のrefだけで確定できるため、外国株一覧のrefは必須にしない。
+  外国株一覧が`PARSE_FAILED`でもETF等のREJECTは成立する
 
 **Stage 1 eligibility順序**: `security_type` → `share_unit` → `capital_limit`。
 

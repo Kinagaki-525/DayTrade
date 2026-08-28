@@ -246,15 +246,37 @@ DISPLAYED_CODE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")
 #: cannot label is never treated as a partial foreign-stock list.
 FOREIGN_LIST_CODE_LABEL = "コード"
 
+#: The three market sections the JPX foreign stocks listed-issues page
+#: publishes. All three must be recognized before the page counts as complete
+#: evidence -- see :func:`parse_foreign_stock_list`.
+FOREIGN_STOCK_SECTIONS: tuple[str, ...] = (
+    "プライム市場外国株",
+    "スタンダード市場外国株",
+    "グロース市場外国株",
+)
+
+#: Any section heading on a page, used to bound one section's content. Section
+#: identity comes from the heading's exact cleaned text, never from position.
+HEADING_PATTERN = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.IGNORECASE | re.DOTALL)
+
 #: The label JPX publishes a trading unit under, on both the foreign-stock
 #: listed-issues table and the domestic trading-unit rule page.
 TRADING_UNIT_LABEL = "売買単位"
 
-#: The published domestic trading-unit rule, written as prose rather than as a
-#: labelled cell. Used together with the labelled extractions below: every
-#: extraction that matches must agree on one value, or the parse fails.
-DOMESTIC_TRADING_UNIT_PROSE_PATTERN = re.compile(
-    r"売買単位(?:は|：|:)\s*(?:原則として)?(\d{1,3}(?:,\d{3})*)\s*株"
+#: The official assertions the JPX domestic trading-rule page publishes the
+#: market-wide trading unit through. The page states the rule as prose, not as
+#: a labelled cell, so these are the *recognized assertions*: a number is only
+#: read from a sentence that carries this exact meaning.
+#:
+#: Deliberately narrow. The page also contains years (``2018年``) and bare
+#: ``100株`` mentions in unrelated prose, so scanning the document for a stray
+#: number -- or for any "N株" at all -- would read the wrong value. A page
+#: carrying none of these assertions is PARSE_FAILED, never a defaulted 100.
+DOMESTIC_TRADING_UNIT_ASSERTIONS = (
+    re.compile(r"内国株(?:式)?では、?\s*(\d{1,3}(?:,\d{3})*)\s*株単位で取引されて"),
+    re.compile(
+        r"内国株(?:式)?の売買単位を、?\s*(\d{1,3}(?:,\d{3})*)\s*株[へに]統一"
+    ),
 )
 
 
@@ -351,56 +373,61 @@ def parse_foreign_stock_list(
     A Global Source: one GET, one Global Attempt, one Source Value carrying
     ``ticker=None``, shared by every candidate that consumes it.
 
-    Columns are located from the table's own header labels rather than from
-    assumed offsets, and a table whose header cannot be recognized is
-    ``PARSE_FAILED``. That refusal is what keeps a partially-rendered or
-    restructured page from being read as "a complete foreign-stock list in
-    which this candidate does not appear" -- the distinction the domestic
-    classification depends on.
+    **Complete coverage is proven before anything is published.** The absence
+    of a candidate from this list is what lets a Prime/Standard/Growth issue
+    be classified as a domestic common stock, so a partial read of the page
+    is far more dangerous than no read at all: it would turn "we did not see
+    this section" into "this issue is not foreign". Every one of the three
+    published market sections must therefore be recognized end to end --
+    heading, its single table, its header, and every data row -- before the
+    merged map is emitted. One missing, duplicated, ambiguous or malformed
+    section fails the whole page.
+
+    Nothing about the sections' *contents* is assumed: how many issues a
+    section lists, and which codes they are, come entirely from the page.
     """
     try:
         page = _decode(raw, context)
     except DecodeError as exc:
         return parse_failed(exc.message)
 
-    units: dict[str, str] = {}
-    recognized_tables = 0
-    for table_html in TABLE_BLOCK_PATTERN.findall(page.text):
-        rows = [row for row in table_rows(table_html) if row]
-        header_index = _foreign_list_header_index(rows)
-        if header_index is None:
-            continue
-        recognized_tables += 1
-        header = rows[header_index]
-        code_column = header.index(FOREIGN_LIST_CODE_LABEL)
-        unit_column = header.index(TRADING_UNIT_LABEL)
-        for row in rows[header_index + 1 :]:
-            if len(row) <= max(code_column, unit_column):
-                return parse_failed(
-                    f"foreign stock list row is missing columns: {row!r}"
-                )
-            code = row[code_column]
-            if not CANONICAL_CODE_PATTERN.fullmatch(code):
-                return parse_failed(
-                    f"foreign stock list row has a non-canonical code: {code!r}"
-                )
-            try:
-                unit = str(parse_grouped_integer(row[unit_column]))
-            except ParseFailed as exc:
-                return parse_failed(exc.message)
-            if code in units and units[code] != unit:
-                return parse_failed(
-                    f"foreign stock list publishes conflicting trading units "
-                    f"for {code}"
-                )
-            units[code] = unit
+    headings = [
+        (match.start(), match.end(), clean(match.group(1)))
+        for match in HEADING_PATTERN.finditer(page.text)
+    ]
 
-    if not recognized_tables:
-        return parse_failed(
-            "no JPX foreign stock listed-issues table found on the source page"
-        )
+    units: dict[str, str] = {}
+    for section in FOREIGN_STOCK_SECTIONS:
+        matching = [heading for heading in headings if heading[2] == section]
+        if not matching:
+            return parse_failed(
+                f"the foreign stock listed-issues page has no {section} section; "
+                "coverage is unproven"
+            )
+        if len(matching) > 1:
+            return parse_failed(
+                f"the foreign stock listed-issues page has {len(matching)} "
+                f"{section} sections; the section-to-table mapping is ambiguous"
+            )
+
+        _, section_start, _ = matching[0]
+        following = [start for start, _, _ in headings if start >= section_start]
+        section_end = min(following) if following else len(page.text)
+        tables = TABLE_BLOCK_PATTERN.findall(page.text[section_start:section_end])
+        if len(tables) != 1:
+            return parse_failed(
+                f"the {section} section has {len(tables)} tables; exactly one "
+                "listed-issues table is required"
+            )
+
+        error = _merge_foreign_section(tables[0], section, units)
+        if error is not None:
+            return parse_failed(error)
+
     if not units:
-        return parse_failed("JPX foreign stock listed-issues table has no data rows")
+        return parse_failed(
+            "the foreign stock listed-issues page published no issues at all"
+        )
 
     return ParseResult(
         status="FOUND",
@@ -413,6 +440,46 @@ def parse_foreign_stock_list(
             ),
         ),
     )
+
+
+def _merge_foreign_section(
+    table_html: str,
+    section: str,
+    units: dict[str, str],
+) -> str | None:
+    """Read one section's table into ``units``. Returns an error, or None."""
+    rows = [row for row in table_rows(table_html) if row]
+    header_index = _foreign_list_header_index(rows)
+    if header_index is None:
+        return (
+            f"the {section} section's table has no recognizable "
+            f"{FOREIGN_LIST_CODE_LABEL}/{TRADING_UNIT_LABEL} header"
+        )
+    header = rows[header_index]
+    code_column = header.index(FOREIGN_LIST_CODE_LABEL)
+    unit_column = header.index(TRADING_UNIT_LABEL)
+
+    data_rows = rows[header_index + 1 :]
+    if not data_rows:
+        return f"the {section} section's table has no data rows"
+
+    for row in data_rows:
+        if len(row) <= max(code_column, unit_column):
+            return f"a {section} row is missing columns: {row!r}"
+        code = row[code_column]
+        if not CANONICAL_CODE_PATTERN.fullmatch(code):
+            return f"a {section} row has a non-canonical code: {code!r}"
+        try:
+            unit = str(parse_grouped_integer(row[unit_column]))
+        except ParseFailed as exc:
+            return f"{section}: {exc.message}"
+        if code in units and units[code] != unit:
+            return (
+                "the foreign stock listed-issues page publishes conflicting "
+                f"trading units for {code}"
+            )
+        units[code] = unit
+    return None
 
 
 def _foreign_list_header_index(rows: list[list[str]]) -> int | None:
@@ -441,9 +508,16 @@ def parse_domestic_trading_unit_rule(
     to consume this rule is decided later, from ``security_type``, by
     :mod:`src.stage_wiring` -- an ETF or a foreign stock never receives it.
 
-    Every extraction strategy that matches must agree on one value. This is
-    consensus, not a fallback chain: nothing here picks the first, largest or
-    last candidate value, and a page yielding two different numbers is
+    The unit is read only from a **recognized official assertion**
+    (:data:`DOMESTIC_TRADING_UNIT_ASSERTIONS`) -- a sentence that actually
+    states the domestic trading-unit rule. The page also publishes years and
+    unrelated ``100株`` prose, so no number is taken from anywhere else, and
+    the value is always extracted from the evidence: this parser never emits
+    a hardcoded 100.
+
+    Every recognized assertion must agree on one value. This is consensus,
+    not a fallback chain: nothing here picks the first, largest or last
+    candidate value, and a page whose assertions disagree is
     ``PARSE_FAILED``.
     """
     try:
@@ -451,24 +525,24 @@ def parse_domestic_trading_unit_rule(
     except DecodeError as exc:
         return parse_failed(exc.message)
 
+    # Match against the tag-stripped text: the published sentence is broken up
+    # by inline markup, which a pattern run over raw HTML would not survive.
+    text = clean(page.text)
     tokens = [
-        row[1]
-        for row in table_rows(page.text)
-        if len(row) >= 2 and row[0] == TRADING_UNIT_LABEL
+        token
+        for pattern in DOMESTIC_TRADING_UNIT_ASSERTIONS
+        for token in pattern.findall(text)
     ]
-    tokens.extend(
-        value
-        for term, value in definition_pairs(page.text)
-        if term == TRADING_UNIT_LABEL
-    )
-    tokens.extend(DOMESTIC_TRADING_UNIT_PROSE_PATTERN.findall(page.text))
 
     try:
         units = {str(parse_grouped_integer(token)) for token in tokens}
     except ParseFailed as exc:
         return parse_failed(exc.message)
     if not units:
-        return parse_failed("trading_unit: no value found on the source page")
+        return parse_failed(
+            "the domestic trading-unit page carries no recognized official "
+            "trading-unit assertion"
+        )
     if len(units) > 1:
         return parse_failed(
             "the domestic trading-unit page publishes conflicting units: "

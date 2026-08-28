@@ -203,45 +203,123 @@ def _foreign_context() -> ParseContext:
     )
 
 
-def test_the_foreign_stock_list_yields_one_global_value():
-    result = jpx.parse_foreign_stock_list(
-        pages.jpx_foreign_stock_list_page((("1773", "1,000"), ("9399", "1"))),
-        FOREIGN_STOCK_LIST,
-        _foreign_context(),
-    )
+def _foreign(page: bytes):
+    return jpx.parse_foreign_stock_list(page, FOREIGN_STOCK_LIST, _foreign_context())
+
+
+def test_all_three_sections_yield_one_complete_global_value():
+    """T07: Prime + Standard + Growth all recognized -> FOUND."""
+    result = _foreign(pages.jpx_foreign_stock_list_page())
     assert result.status == "FOUND"
     assert len(result.values) == 1
     value = result.values[0]
     assert value.ticker is None
     assert value.field_name == "foreign_stock_trading_units"
-    assert value.value == {"1773": "1000", "9399": "1"}
+    assert value.value == {"1773": "1000", "9399": "1", "4875": "100"}
 
 
-def test_an_unrecognizable_foreign_table_is_a_parse_failure():
-    """A partial page is never read as a complete foreign-stock list."""
-    page = (
-        '<html><head><meta charset="utf-8"></head><body><table><tbody>'
-        "<tr><td>1773</td><td>1,000</td></tr>"
-        "</tbody></table></body></html>"
-    ).encode("utf-8")
-    result = jpx.parse_foreign_stock_list(page, FOREIGN_STOCK_LIST, _foreign_context())
+@pytest.mark.parametrize(
+    "sections",
+    [
+        ("プライム市場外国株",),
+        ("プライム市場外国株", "スタンダード市場外国株"),
+        ("プライム市場外国株", "グロース市場外国株"),
+        ("スタンダード市場外国株", "グロース市場外国株"),
+        (),
+    ],
+)
+def test_a_partial_foreign_page_is_never_found(sections):
+    """T08/T09/T10: coverage must be proven for every published section.
+
+    A partial page is the dangerous case: reading it as complete would turn
+    "we never saw this section" into "this issue is not foreign".
+    """
+    result = _foreign(pages.jpx_foreign_stock_list_partial_page(sections))
     assert result.status == "PARSE_FAILED"
+
+
+def test_a_malformed_header_in_one_section_fails_the_whole_page():
+    """T11: one bad section is not skipped, it fails the page."""
+    body = (
+        pages._foreign_stock_section("プライム市場外国株", (("1773", "1,000"),))
+        + pages._foreign_stock_section(
+            "スタンダード市場外国株",
+            (("9399", "1"),),
+            header="<tr><th>会社名</th><th>銘柄コード</th><th>単元</th></tr>",
+        )
+        + pages._foreign_stock_section("グロース市場外国株", (("4875", "100"),))
+    )
+    page = f'<html><head><meta charset="utf-8"></head><body>{body}</body></html>'
+    assert _foreign(page.encode("utf-8")).status == "PARSE_FAILED"
+
+
+def test_a_malformed_row_in_one_section_fails_the_whole_page():
+    """T11 (rows): a row we cannot parse is never silently skipped."""
+    body = (
+        pages._foreign_stock_section("プライム市場外国株", (("1773", "1,000"),))
+        + pages._foreign_stock_section("スタンダード市場外国株", (("9399", "n/a"),))
+        + pages._foreign_stock_section("グロース市場外国株", (("4875", "100"),))
+    )
+    page = f'<html><head><meta charset="utf-8"></head><body>{body}</body></html>'
+    assert _foreign(page.encode("utf-8")).status == "PARSE_FAILED"
+
+
+def test_a_duplicated_section_heading_is_ambiguous():
+    """T12: two Prime sections -- the section-to-table mapping is ambiguous."""
+    body = (
+        pages._foreign_stock_section("プライム市場外国株", (("1773", "1,000"),))
+        + pages._foreign_stock_section("プライム市場外国株", (("1234", "100"),))
+        + pages._foreign_stock_section("スタンダード市場外国株", (("9399", "1"),))
+        + pages._foreign_stock_section("グロース市場外国株", (("4875", "100"),))
+    )
+    page = f'<html><head><meta charset="utf-8"></head><body>{body}</body></html>'
+    assert _foreign(page.encode("utf-8")).status == "PARSE_FAILED"
+
+
+def test_two_tables_under_one_section_heading_are_ambiguous():
+    """T12: which table belongs to the section cannot be decided."""
+    body = (
+        pages._foreign_stock_section(
+            "プライム市場外国株", (("1773", "1,000"),), tables=2
+        )
+        + pages._foreign_stock_section("スタンダード市場外国株", (("9399", "1"),))
+        + pages._foreign_stock_section("グロース市場外国株", (("4875", "100"),))
+    )
+    page = f'<html><head><meta charset="utf-8"></head><body>{body}</body></html>'
+    assert _foreign(page.encode("utf-8")).status == "PARSE_FAILED"
 
 
 def test_conflicting_foreign_trading_units_are_a_parse_failure():
-    result = jpx.parse_foreign_stock_list(
-        pages.jpx_foreign_stock_list_page((("1773", "1,000"), ("1773", "100"))),
-        FOREIGN_STOCK_LIST,
-        _foreign_context(),
+    """T13: the same code published with two different units."""
+    result = _foreign(
+        pages.jpx_foreign_stock_list_page(
+            prime=(("1773", "1,000"),), standard=(("1773", "100"),)
+        )
     )
     assert result.status == "PARSE_FAILED"
 
 
-def test_a_header_only_foreign_table_is_a_parse_failure():
-    result = jpx.parse_foreign_stock_list(
-        pages.jpx_foreign_stock_list_page(()), FOREIGN_STOCK_LIST, _foreign_context()
-    )
+def test_a_section_without_data_rows_is_a_parse_failure():
+    result = _foreign(pages.jpx_foreign_stock_list_page(standard=()))
     assert result.status == "PARSE_FAILED"
+
+
+def test_the_section_contents_are_never_hardcoded():
+    """Issue counts and codes come from the page, not from the parser."""
+    result = _foreign(
+        pages.jpx_foreign_stock_list_page(
+            prime=(("1111", "10"), ("2222", "50")),
+            standard=(("3333", "500"),),
+            growth=(("444A", "1"),),
+        )
+    )
+    assert result.status == "FOUND"
+    assert result.values[0].value == {
+        "1111": "10",
+        "2222": "50",
+        "3333": "500",
+        "444A": "1",
+    }
 
 
 # ------------------------------------------------- JPX_TRADING_UNIT ---
@@ -256,11 +334,17 @@ def _unit_context() -> ParseContext:
     )
 
 
-def test_the_domestic_rule_is_a_global_value_with_no_ticker():
-    """T09: the published 100-share domestic rule, as one Global Value."""
-    result = jpx.parse_domestic_trading_unit_rule(
-        pages.jpx_trading_unit_page("100"), TRADING_UNIT, _unit_context()
-    )
+def _unit(page: bytes):
+    return jpx.parse_domestic_trading_unit_rule(page, TRADING_UNIT, _unit_context())
+
+
+@pytest.mark.parametrize(
+    "assertions",
+    [("traded",), ("unified",), ("traded", "unified")],
+)
+def test_each_official_assertion_yields_the_published_unit(assertions):
+    """T01/T02/T03: either published sentence, or both agreeing -> FOUND/100."""
+    result = _unit(pages.jpx_trading_unit_page("100", assertions=assertions))
     assert result.status == "FOUND"
     assert len(result.values) == 1
     assert result.values[0].ticker is None
@@ -268,22 +352,40 @@ def test_the_domestic_rule_is_a_global_value_with_no_ticker():
     assert result.values[0].value == "100"
 
 
-def test_a_page_publishing_two_different_units_is_a_parse_failure():
+def test_the_unit_is_read_from_the_evidence_not_hardcoded():
+    """The parser never emits a constant 100: change the page, change the value."""
+    result = _unit(pages.jpx_trading_unit_page("1,000"))
+    assert result.status == "FOUND"
+    assert result.values[0].value == "1000"
+
+
+def test_disagreeing_official_assertions_are_a_parse_failure():
+    """T04: two recognized assertions publishing different units."""
     page = (
-        '<html><head><meta charset="utf-8"></head><body><table><tbody>'
-        "<tr><td>売買単位</td><td>100</td></tr>"
-        "<tr><td>売買単位</td><td>1,000</td></tr>"
-        "</tbody></table></body></html>"
+        '<html><head><meta charset="utf-8"></head><body>'
+        "<p>内国株では100株単位で取引されています。</p>"
+        "<p>内国株の売買単位を1,000株へ統一しました。</p>"
+        "</body></html>"
     ).encode("utf-8")
-    result = jpx.parse_domestic_trading_unit_rule(page, TRADING_UNIT, _unit_context())
-    assert result.status == "PARSE_FAILED"
+    assert _unit(page).status == "PARSE_FAILED"
+
+
+def test_a_stray_year_or_bare_unit_mention_is_never_read_as_the_rule():
+    """T05: only a recognized assertion counts -- not any number on the page."""
+    page = (
+        '<html><head><meta charset="utf-8"></head><body>'
+        "<p>2018年10月1日に制度が変わりました。</p>"
+        "<p>100株ごとの取扱いについては各社にお問い合わせください。</p>"
+        "<table><tbody><tr><td>売買単位</td><td>100</td></tr></tbody></table>"
+        "</body></html>"
+    ).encode("utf-8")
+    assert _unit(page).status == "PARSE_FAILED"
 
 
 def test_a_page_without_the_rule_is_a_parse_failure_not_a_default():
-    result = jpx.parse_domestic_trading_unit_rule(
-        b'<html><head><meta charset="utf-8"></head><body><p>x</p></body></html>',
-        TRADING_UNIT,
-        _unit_context(),
+    """T06: no recognized assertion -> PARSE_FAILED, never a defaulted 100."""
+    result = _unit(
+        b'<html><head><meta charset="utf-8"></head><body><p>x</p></body></html>'
     )
     assert result.status == "PARSE_FAILED"
 
@@ -518,21 +620,65 @@ def _research(ticker: str = "7203") -> dict:
     )
 
 
-def _record_for(
-    ticker: str,
+def _record_with(
     *,
-    security_type: str | None,
-    share_unit: int | None,
+    market_segment: str = "プライム",
+    foreign_units: dict[str, str] | None = None,
+    drop_foreign_source: bool = False,
+    share_unit: int | None = 100,
+    security_type: str | None = "__derive__",
+    drop_refs: tuple[str, ...] = (),
 ) -> tuple[MarketDataRecord, set[str], dict[str, str]]:
+    """A market_data record whose security_type follows from its own evidence.
+
+    Nothing here injects a classification: the market segment and the foreign
+    listed-issues map are set on the Source Records, and ``security_type`` is
+    derived from them the way the Stage Wiring would. ``security_type`` is only
+    overridden explicitly to model tampering.
+    """
     from tests.factories import make_market_record
 
     base = make_market_record(previous_high="400", tick_size="1").as_dict()
-    base["ticker"] = ticker
-    base["security_type"] = security_type
+    sources = []
+    for source in base["sources"]:
+        if source["field_name"] == "market_segment":
+            source = {**source, "value": market_segment}
+        if source["field_name"] == "foreign_stock_trading_units":
+            if drop_foreign_source:
+                continue
+            source = {
+                **source,
+                "value": (
+                    foreign_units
+                    if foreign_units is not None
+                    else {"1773": "1000", "9399": "1"}
+                ),
+            }
+        sources.append(source)
+    base["sources"] = sources
+    base["market"] = market_segment
     base["share_unit"] = share_unit
+
+    derived = classify_security_type(
+        market_segment=market_segment,
+        candidate_code=str(base["ticker"]),
+        foreign_issue_codes=(
+            None
+            if drop_foreign_source
+            else list(
+                foreign_units
+                if foreign_units is not None
+                else {"1773": "1000", "9399": "1"}
+            )
+        ),
+    )
+    base["security_type"] = derived if security_type == "__derive__" else security_type
+
     record = MarketDataRecord.from_dict(base)
     valid_refs = {
-        str(source.source_ref) for source in record.sources if source.source_ref
+        str(source.source_ref)
+        for source in record.sources
+        if source.source_ref and str(source.source_ref) not in drop_refs
     }
     source_ids_by_ref = {
         str(source.source_ref): str(source.source_id)
@@ -542,12 +688,12 @@ def _record_for(
     return record, valid_refs, source_ids_by_ref
 
 
-def _apply(record, valid_refs, source_ids_by_ref, ticker="7203"):
+def _apply(record, valid_refs, source_ids_by_ref):
     from src.config import load_yaml
 
     config = load_yaml(Path("config/strategy.yaml"))
     return _apply_stage1_to_research(
-        _research(ticker),
+        _research(str(record.ticker)),
         record,
         valid_source_refs=valid_refs,
         source_ids_by_ref=source_ids_by_ref,
@@ -555,58 +701,163 @@ def _apply(record, valid_refs, source_ids_by_ref, ticker="7203"):
     )
 
 
-@pytest.mark.parametrize("security_type", ["ETF", "REIT", "ETN", FOREIGN_STOCK])
-def test_an_unsupported_security_type_is_an_evidence_backed_stage1_reject(
-    security_type,
-):
-    """T29/T30: listing succeeded; eligibility rejects, with source refs."""
-    record, refs, by_ref = _record_for(
-        "1306", security_type=security_type, share_unit=None
+def _security_type_check(research: dict) -> dict:
+    return next(
+        check
+        for check in research["stage1_checks"]
+        if check["check_id"] == "security_type"
     )
-    research = _apply(record, refs, by_ref, ticker="1306")
+
+
+FOREIGN_REF = "JPX_FOREIGN_STOCK_LIST:1234:foreign_stock_trading_units"
+LISTING_REF = "JPX_LISTED_COMPANY:1234:market_segment"
+
+
+def test_a_domestic_common_stock_carries_both_listing_and_foreign_refs():
+    """T14: absence from the complete foreign list is what makes it domestic,
+    so both Source Records must be referenced by the check."""
+    record, refs, by_ref = _record_with(market_segment="プライム")
+    assert record.security_type == DOMESTIC_COMMON_STOCK
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "PASSED"
+    check = _security_type_check(research)
+    assert set(check["source_refs"]) == {LISTING_REF, FOREIGN_REF}
+
+
+def test_a_foreign_stock_is_rejected_with_both_refs():
+    """T15: present in the foreign list -> FOREIGN_STOCK -> unsupported."""
+    record, refs, by_ref = _record_with(
+        market_segment="プライム", foreign_units={"1234": "100"}
+    )
+    assert record.security_type == FOREIGN_STOCK
+    research = _apply(record, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
-    check = research["stage1_checks"][0]
-    assert check["check_id"] == "security_type"
-    assert check["source_refs"]
+    assert set(_security_type_check(research)["source_refs"]) == {
+        LISTING_REF,
+        FOREIGN_REF,
+    }
 
 
-def test_an_unsupported_security_type_reject_is_backed_by_the_listing_source():
+@pytest.mark.parametrize(
+    "segment,expected",
+    [
+        ("ETF", "ETF"),
+        ("ETN", "ETN"),
+        ("REIT", "REIT"),
+        ("インフラファンド", "INFRASTRUCTURE_FUND"),
+    ],
+)
+def test_an_explicit_product_segment_is_rejected_on_listing_evidence_alone(
+    segment, expected
+):
+    """T16: an ETF is decided by the listing alone -- the foreign list is not
+    part of that classification and must not be claimed as evidence."""
+    record, refs, by_ref = _record_with(market_segment=segment, share_unit=None)
+    assert record.security_type == expected
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "REJECTED"
+    assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
+    assert _security_type_check(research)["source_refs"] == [LISTING_REF]
+
+
+def test_an_explicit_product_segment_still_rejects_without_the_foreign_list():
+    """A foreign-list failure must not break an ETF rejection."""
+    record, refs, by_ref = _record_with(
+        market_segment="ETF", share_unit=None, drop_foreign_source=True
+    )
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "REJECTED"
+    assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
+
+
+def test_an_unsupported_security_type_reject_is_source_backed():
     from src.stage1 import source_backed_stage1_reject
 
-    record, refs, by_ref = _record_for("1306", security_type="ETF", share_unit=None)
-    research = _apply(record, refs, by_ref, ticker="1306")
-    assert source_backed_stage1_reject(
-        research,
-        valid_source_refs=refs,
-        valid_source_attempt_ids=set(),
-        source_ids_by_evidence_id=by_ref,
+    for segment in ("ETF", "プライム"):
+        record, refs, by_ref = _record_with(
+            market_segment=segment,
+            foreign_units={"1234": "100"} if segment == "プライム" else None,
+            share_unit=None,
+        )
+        research = _apply(record, refs, by_ref)
+        assert research["stage1_status"] == "REJECTED"
+        assert source_backed_stage1_reject(
+            research,
+            valid_source_refs=refs,
+            valid_source_attempt_ids=set(),
+            source_ids_by_evidence_id=by_ref,
+        ), segment
+
+
+def test_a_missing_foreign_list_blocks_a_common_stock_from_passing():
+    """T17: Prime + no foreign evidence -> unclassified -> Stage 1 stays open."""
+    record, refs, by_ref = _record_with(
+        market_segment="プライム", drop_foreign_source=True
     )
-
-
-def test_an_unclassified_candidate_neither_passes_nor_rejects():
-    """T28 at the eligibility layer: Stage 1 stays open, it does not guess."""
-    record, refs, by_ref = _record_for("7203", security_type=None, share_unit=100)
+    assert record.security_type is None
     research = _apply(record, refs, by_ref)
     assert research["stage1_status"] == "NOT_STARTED"
 
 
-def test_a_domestic_common_stock_passes_security_type_then_share_unit():
-    record, refs, by_ref = _record_for(
-        "7203", security_type=DOMESTIC_COMMON_STOCK, share_unit=100
+def test_an_unknown_market_segment_neither_passes_nor_rejects():
+    """T28 at the eligibility layer: Stage 1 stays open, it does not guess."""
+    record, refs, by_ref = _record_with(market_segment="未知区分")
+    assert record.security_type is None
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+@pytest.mark.parametrize("tampered", [DOMESTIC_COMMON_STOCK, "ETF", None])
+def test_a_security_type_that_contradicts_its_evidence_decides_nothing(tampered):
+    """T18: record.security_type is re-derived, never trusted as a string.
+
+    The evidence here says FOREIGN_STOCK. Any other value written into
+    market_data -- including the one that would let the candidate through --
+    leaves Stage 1 open rather than deciding anything.
+    """
+    record, refs, by_ref = _record_with(
+        market_segment="プライム",
+        foreign_units={"1234": "100"},
+        security_type=tampered,
     )
     research = _apply(record, refs, by_ref)
-    assert research["stage1_status"] == "PASSED"
-    assert [check["check_id"] for check in research["stage1_checks"]][0] == (
-        "security_type"
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_a_domestic_stock_missing_its_foreign_list_ref_cannot_pass():
+    """T19: the classification's evidence must be in the Source Ledger."""
+    record, refs, by_ref = _record_with(
+        market_segment="プライム", drop_refs=(FOREIGN_REF,)
     )
+    assert record.security_type == DOMESTIC_COMMON_STOCK
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_a_foreign_stock_missing_its_foreign_list_ref_is_not_a_valid_reject():
+    """T20: an unbacked FOREIGN_STOCK reject is not emitted at all."""
+    record, refs, by_ref = _record_with(
+        market_segment="プライム",
+        foreign_units={"1234": "100"},
+        drop_refs=(FOREIGN_REF,),
+    )
+    assert record.security_type == FOREIGN_STOCK
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_security_type_is_checked_before_share_unit():
+    """T21: an ETF handed a share_unit of 100 still rejects on security_type."""
+    record, refs, by_ref = _record_with(market_segment="ETF", share_unit=100)
+    research = _apply(record, refs, by_ref)
+    assert research["stage1_status"] == "REJECTED"
+    assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
 
 
 def test_a_non_100_share_unit_still_rejects_with_the_existing_reason_code():
     """T12: SHARE_UNIT_NOT_100 is unchanged and still reachable."""
-    record, refs, by_ref = _record_for(
-        "7203", security_type=DOMESTIC_COMMON_STOCK, share_unit=1000
-    )
+    record, refs, by_ref = _record_with(market_segment="プライム", share_unit=1000)
     research = _apply(record, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SHARE_UNIT_NOT_100"]

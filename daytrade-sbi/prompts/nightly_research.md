@@ -247,6 +247,11 @@ news_context
   から決定論的に合成される。未知の `market_segment`、または外国株一覧が取得・parseできない場合は
   `security_type=null`（未分類）となり、Stage 1はPASSもREJECTもせず未完了のまま止まる。
   **agentが商品区分を推測して埋めない。**
+- 外国株一覧は公式3 section（プライム / スタンダード / グロース市場外国株）すべてを
+  parseできた場合のみ `FOUND` になる。1 sectionでも欠落すれば `PARSE_FAILED` であり、
+  「一覧に無いから内国株」という判定はそこで成立しなくなる（Fail-Closed）。
+- `apply-stage1` は `market_data.security_type` を再計算して照合する。値がSource Evidenceと
+  一致しない場合はPASSもREJECTもしない。`market_data.json` を手で編集して分類を通すことはできない。
 - `share_unit=100` は `security_type == DOMESTIC_COMMON_STOCK` の候補にだけ付与される。
   ETF・外国株・未分類候補の `share_unit` は `null` のままであり、100を推定設定しない。
 - ETF等がTSE上場していれば `JPX_LISTED_COMPANY` は `FOUND` である。サポート外商品だからといって

@@ -28,7 +28,11 @@ from src.contracts import validate_json_document
 from src.file_io import atomic_write_text
 from src.research import merge_discovery_candidates, validate_market_research
 from src.source_acquisition import AcquisitionError, AcquisitionResult
-from src.security_type import classify_security_type, is_supported_security_type
+from src.security_type import (
+    COMMON_STOCK_MARKET_SEGMENTS,
+    classify_security_type,
+    is_supported_security_type,
+)
 from src.source_matrix import GLOBAL_SOURCE_IDS
 from src.tick_size import TickSizeError, select_tick_size
 
@@ -546,8 +550,17 @@ def _apply_security_type(
     if security_type is None:
         return
 
+    # Reference exactly the evidence the classification consumed. An explicit
+    # ETF/REIT segment is decided by the listing alone, so it must not claim
+    # the foreign list; separating a foreign stock from a domestic one used
+    # both, so it must not drop either.
+    consulted_foreign = (
+        str(segment_value.get("value") or "").strip() in COMMON_STOCK_MARKET_SEGMENTS
+    )
     extra_refs = (
-        (str(foreign_value["source_ref"]),) if foreign_value is not None else ()
+        (str(foreign_value["source_ref"]),)
+        if consulted_foreign and foreign_value is not None
+        else ()
     )
     _set_provenance(
         record,
