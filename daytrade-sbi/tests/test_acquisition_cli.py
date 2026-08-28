@@ -260,9 +260,11 @@ def test_acquire_actual_turnover_writes_a_v3_ledger(tmp_path, clean_curl):
 def test_acquire_stage1_reports_a_closed_listing_gate(tmp_path, monkeypatch):
     """A listing page that does not carry the candidate closes the batch gate."""
     routes = fake_transport.clean_run_routes(TICKERS)
-    routes["https://www.jpx.co.jp/listing/co-search/"] = pages.jpx_listed_company_page(
-        "9999"
-    )
+    for code in TICKERS:
+        routes[
+            "https://www2.jpx.co.jp/tseHpFront/StockSearch.do"
+            f"?method=topsearch&topSearchStr={code}"
+        ] = pages.jpx_stock_search_empty_page()
     fake_transport.install(
         monkeypatch, fake_transport.FakeCurl(fake_transport.ordered_routes(routes))
     )

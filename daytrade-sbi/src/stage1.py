@@ -10,6 +10,7 @@ ALLOWED_STAGE1_REJECTS = {
     "capital_limit": {"CAPITAL_LIMIT_EXCEEDED"},
 }
 STAGE1_CHECK_REQUIRED_SOURCE_IDS = {
+    "security_type": {"JPX_LISTED_COMPANY"},
     "share_unit": {"JPX_TRADING_UNIT"},
 }
 

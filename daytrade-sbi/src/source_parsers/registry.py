@@ -25,7 +25,9 @@ class ParserRegistryError(ValueError):
 PARSERS: dict[str, SourceParser] = {
     "jpx.calendar": jpx.parse_calendar,
     "jpx.listed_company": jpx.parse_listed_company,
-    "jpx.trading_unit": jpx.parse_trading_unit,
+    "jpx.stock_search": jpx.parse_stock_search,
+    "jpx.foreign_stock_list": jpx.parse_foreign_stock_list,
+    "jpx.domestic_trading_unit_rule": jpx.parse_domestic_trading_unit_rule,
     "jpx.tick_size": jpx.parse_tick_size,
     "jpx.topix500": jpx.parse_topix500,
     "jpx.disclosure_index": jpx.parse_disclosure_index,
@@ -42,9 +44,11 @@ PARSERS: dict[str, SourceParser] = {
 #: source_id -> parser name. Fixed; never resolved at runtime from the page.
 SOURCE_PARSER_NAMES: dict[str, str] = {
     "JPX_CALENDAR": "jpx.calendar",
-    "JPX_LISTED_COMPANY": "jpx.listed_company",
+    "JPX_LISTED_COMPANY": "jpx.stock_search",
+    # Unchanged: the AUDIT listed-issues page keeps its own parser binding.
     "JPX_LISTED_COMPANY_AUDIT": "jpx.listed_company",
-    "JPX_TRADING_UNIT": "jpx.trading_unit",
+    "JPX_FOREIGN_STOCK_LIST": "jpx.foreign_stock_list",
+    "JPX_TRADING_UNIT": "jpx.domestic_trading_unit_rule",
     "JPX_TICK_SIZE": "jpx.tick_size",
     "JPX_TOPIX500": "jpx.topix500",
     "JPX_TDNET": "jpx.disclosure_index",

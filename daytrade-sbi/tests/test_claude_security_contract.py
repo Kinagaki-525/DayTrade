@@ -19,6 +19,11 @@ HOOK = REPOSITORY_ROOT / ".claude" / "hooks" / "network_guard.py"
 #: Market data hosts. Derived from the Source Matrix, never hand-picked.
 ALLOWED_DOMAINS = {
     "www.jpx.co.jp",
+    # 東証上場会社情報 (candidate-specific TSE listing search) -- its own host.
+    # Exact match, never a wildcard, and cross-checked below against
+    # required_sandbox_domains(load_source_matrix()) so this literal can never
+    # drift away from the Source Matrix it mirrors.
+    "www2.jpx.co.jp",
     "finance.yahoo.co.jp",
     "kabutan.jp",
     "www.release.tdnet.info",

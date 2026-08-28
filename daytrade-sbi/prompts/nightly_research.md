@@ -239,6 +239,18 @@ news_context
 - 未実施は `NOT_STARTED`、上流依存待ちは `DEPENDENCY_NOT_READY`、実行失敗は `EXECUTION_FAILED` とし、外部出典不足とは分ける。
 - Stage 1通過候補は必ず `RESEARCH_COMPLETE`、`DATA_UNAVAILABLE`、`ELIGIBLE`、`REJECTED` の終端状態に到達させる。
 - Stage 1 rejectは `stage1_checks[]` に `check_id`、`status`、`reason_code`、`source_refs`、`source_attempt_ids` を保存する。Source根拠なしのrejectは使わない。
+- Stage 1 eligibilityの順序は `security_type` → `share_unit` → `capital_limit` である。
+  現行Strategyがサポートするのは `DOMESTIC_COMMON_STOCK` だけで、ETF / ETN / REIT /
+  インフラファンド / 外国株は `SECURITY_TYPE_UNSUPPORTED` としてEvidence付きでREJECTされる。
+  外国株を「売買単位が100だから」という理由でPASSさせない。
+- `security_type` は `JPX_LISTED_COMPANY` の `market_segment` と `JPX_FOREIGN_STOCK_LIST`
+  から決定論的に合成される。未知の `market_segment`、または外国株一覧が取得・parseできない場合は
+  `security_type=null`（未分類）となり、Stage 1はPASSもREJECTもせず未完了のまま止まる。
+  **agentが商品区分を推測して埋めない。**
+- `share_unit=100` は `security_type == DOMESTIC_COMMON_STOCK` の候補にだけ付与される。
+  ETF・外国株・未分類候補の `share_unit` は `null` のままであり、100を推定設定しない。
+- ETF等がTSE上場していれば `JPX_LISTED_COMPANY` は `FOUND` である。サポート外商品だからといって
+  Listingを `NOT_FOUND` 扱いにしない。TSE Listing Batch Gateは従来どおり全件all-or-nothing。
 - Stage 1の取得済み事実を保存したら、次を実行して100株条件と100,000円資金条件をSource根拠付きで分類する。
 
 ```powershell
@@ -267,7 +279,7 @@ py -B -m src.cli plan-stage2-batches --market-research runs/YYYY-MM-DD/market_re
 ```
 
 - `plan-stage2-batches` が作成した `subagent_batches[]` の候補を勝手に減らさない。必要な場合だけ `--batch-size` を明示して調整する。
-- 売買単位は `JPX_TRADING_UNIT` を使う。`JPX_LISTED_COMPANY` を売買単位Sourceとして流用しない。
+- 売買単位は `JPX_TRADING_UNIT`（内国株の制度ルール、Global Source）を使う。`JPX_LISTED_COMPANY` を売買単位Sourceとして流用しない。外国株の売買単位は `JPX_FOREIGN_STOCK_LIST` にEvidenceとして残るが、現行StrategyのStage 1 PASS判定には使わない。
 - TOPIX500 membershipは既存の `JPX_TOPIX500` を使う。
 - Tick sizeは `JPX_TICK_SIZE`、価格入力Source、`JPX_TOPIX500` membership Sourceを `field_provenance.source_refs` で追跡する。audit-only根拠だけなら `SINGLE_SOURCE_ONLY` のまま取引不可とする。
 - TDnet 0件は、検索や取得が成功して `result_count=0` の場合だけ `FOUND` として記録する。失敗時は `result_count=null`。

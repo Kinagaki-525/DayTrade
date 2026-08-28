@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any, Iterable
 
 from src.market import MarketDataRecord
+from src.security_type import is_supported_security_type
 from src.source_checks import STANDARD_SOURCE_CHECK_IDS
 from src.stage1 import source_ids_by_evidence_id_from_payload, source_refs_from_payload
 from src.strategy import build_order_plan
@@ -11,6 +12,7 @@ from src.strategy import build_order_plan
 
 STAGE2_BATCH_AGENT = "market_researcher"
 TRADING_UNIT_SOURCE_ID = "JPX_TRADING_UNIT"
+SECURITY_TYPE_SOURCE_ID = "JPX_LISTED_COMPANY"
 
 
 def init_candidate_research_payload(
@@ -168,6 +170,33 @@ def _apply_stage1_to_research(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     updated = deepcopy(research)
+    # Stage 1 eligibility order: security_type -> share_unit -> capital_limit.
+    # security_type comes first because it decides whether the domestic
+    # trading-unit rule governs this candidate at all.
+    security_type_refs = _source_refs_for_fields(
+        record,
+        ("security_type",),
+        valid_source_refs,
+        source_ids_by_ref=source_ids_by_ref,
+        source_ids=(SECURITY_TYPE_SOURCE_ID,),
+    )
+    if record.security_type is None or not security_type_refs:
+        # Unclassified: not a PASS and not a REJECT. Stage 1 stays open
+        # rather than guessing a security type for the candidate.
+        return updated
+    if not is_supported_security_type(record.security_type):
+        return _stage1_rejected(
+            updated,
+            check_id="security_type",
+            reason_code="SECURITY_TYPE_UNSUPPORTED",
+            source_refs=security_type_refs,
+            status_reason=(
+                f"security_type {record.security_type} is not supported by the "
+                "current strategy"
+            ),
+            required_capital_yen=None,
+        )
+
     share_unit_refs = _source_refs_for_fields(
         record,
         ("share_unit",),
@@ -233,6 +262,13 @@ def _apply_stage1_to_research(
     updated["stage1_status"] = "PASSED"
     updated["stage1_reasons"] = []
     updated["stage1_checks"] = [
+        {
+            "check_id": "security_type",
+            "status": "PASSED",
+            "reason_code": None,
+            "source_refs": security_type_refs,
+            "source_attempt_ids": [],
+        },
         {
             "check_id": "share_unit",
             "status": "PASSED",

@@ -145,9 +145,59 @@ def yahoo_mixed_top50_ranking_page(start: int = 1000) -> bytes:
 
 
 def jpx_trading_unit_page(unit: str = "100") -> bytes:
+    """The domestic-stock trading-unit rule page (a market-wide rule)."""
     return f"""<html><head><meta charset="utf-8"></head><body>
 <table><tbody>
 <tr><td>売買単位</td><td>{unit}</td></tr>
+</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_foreign_stock_list_page(
+    issues: tuple[tuple[str, str], ...] = (("1773", "1,000"), ("9399", "1")),
+) -> bytes:
+    """The JPX foreign stocks listed-issues table. ``(code, trading unit)``."""
+    rows = "".join(
+        f"<tr><td>Example {code} Inc.</td><td>{code}</td><td>{unit}</td>"
+        f"<td>アメリカ</td></tr>"
+        for code, unit in issues
+    )
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>
+<tr><th>会社名</th><th>コード</th><th>売買単位</th><th>国籍</th></tr>
+{rows}
+</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_stock_search_page(
+    ticker: str = "7203",
+    company_name: str = "Example Motor Corporation",
+    market_segment: str = "プライム",
+) -> bytes:
+    """A 東証上場会社情報 search result carrying the JPX displayed code.
+
+    The displayed code is the canonical four-character candidate code plus a
+    trailing character, exactly as the published search result renders it.
+    """
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<table><tbody>
+<tr><th>コード</th><th>会社名</th><th>市場区分</th></tr>
+<tr><td>{ticker}0</td><td>{company_name}</td><td>{market_segment}</td></tr>
+</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_stock_search_empty_page() -> bytes:
+    """A recognizable search-result page that carries some other issue.
+
+    Structurally understood (so it is not PARSE_FAILED), but without the
+    searched code -- which is what NOT_FOUND means.
+    """
+    return """<html><head><meta charset="utf-8"></head><body>
+<table><tbody>
+<tr><th>コード</th><th>会社名</th><th>市場区分</th></tr>
+<tr><td>99990</td><td>Example Other Corporation</td><td>スタンダード</td></tr>
 </tbody></table>
 </body></html>""".encode("utf-8")
 

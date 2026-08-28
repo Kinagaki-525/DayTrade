@@ -28,6 +28,7 @@ CURRENT_EXPECTED_DOMAINS = (
     "kabutan.jp",
     "www.jpx.co.jp",
     "www.release.tdnet.info",
+    "www2.jpx.co.jp",
 )
 
 PRODUCTION_PYTHON = str(Path(sys.executable).resolve())
@@ -108,7 +109,7 @@ UID = os.getuid()
 # ---------------------------------------------------- domain derivation ---
 
 
-def test_current_repository_derives_exactly_the_four_template_hosts():
+def test_current_repository_derives_exactly_the_matrix_template_hosts():
     assert crs.derive_expected_domains() == CURRENT_EXPECTED_DOMAINS
 
 

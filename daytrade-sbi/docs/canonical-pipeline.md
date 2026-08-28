@@ -64,6 +64,22 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 | `acquire-actual-turnover` | Stage 2 対象集合（= Stage 1 `PASS`） |
 | `acquire-event-sources` | `candidates.json` / `candidate_pipeline.json` の `status=ELIGIBLE` かつ `screening_status=PASS` |
 
+### Stage 1: 上場確認とStrategy eligibilityの分離
+
+`acquire-stage1-sources`は`JPX_CALENDAR` / `JPX_LISTED_COMPANY` /
+`JPX_FOREIGN_STOCK_LIST` / `JPX_TRADING_UNIT`を取得します。
+
+- TSE Listing Batch Gateは従来どおりall-or-nothing。全candidateの
+  `JPX_LISTED_COMPANY`が`FOUND`でなければ`TSE_LISTING_BATCH_GATE_FAILED`
+- ETF等も東証上場が確認できればListingは`FOUND`。サポート外商品を
+  Listing `NOT_FOUND`にはしない
+- `apply-stage1`のeligibilityは`security_type` → `share_unit` → `capital_limit`の順。
+  `DOMESTIC_COMMON_STOCK`以外は`SECURITY_TYPE_UNSUPPORTED`でREJECT、
+  非100単位は既存の`SHARE_UNIT_NOT_100`でREJECT
+- `security_type`が決定できない候補はPASSさせず、Stage 1未完了のまま停止する
+
+詳細: [source-acquisition.md](source-acquisition.md)
+
 ## Claude Code Executor: Runtime Security Gate（FIX-R2-004）
 
 Business Canonical Pipelineそのものは、どのAgentで実行しても同一であり、Claude依存では

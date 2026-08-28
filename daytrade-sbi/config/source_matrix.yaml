@@ -27,30 +27,65 @@ sources:
     information_type: LISTED_COMPANY
     role: PRIMARY
     criticality: TRADE_CRITICAL
-    source_name: JPX Listed Company Search
-    url_template: "https://www.jpx.co.jp/listing/co-search/"
+    source_name: JPX TSE Listed Company Information Stock Search
+    url_template: "https://www2.jpx.co.jp/tseHpFront/StockSearch.do?method=topsearch&topSearchStr={ticker}"
     update_timing: JPX_PUBLICATION
     zero_results_are_found: false
+    notes: >
+      Candidate-specific TSE listing evidence. The parser matches the JPX
+      displayed code as candidate_code + "0" exactly -- no substring, prefix
+      or numeric conversion -- and publishes the market segment verbatim.
+      Listing confirmation is deliberately separate from Strategy
+      eligibility: an ETF that is listed is FOUND here and is rejected later
+      by the Stage 1 security_type check, never by a listing NOT_FOUND.
     acquisition:
       mode: DETERMINISTIC
       transport: CURL_GET
       network_scope: MATRIX_TEMPLATE_HOST
-      parser_id: jpx.listed_company
+      parser_id: jpx.stock_search
+      stage: STAGE1
+
+  - source_id: JPX_FOREIGN_STOCK_LIST
+    information_type: TRADING_UNIT
+    role: PRIMARY
+    criticality: TRADE_CRITICAL
+    source_name: JPX Foreign Stocks Listed Issues
+    url_template: "https://www.jpx.co.jp/equities/products/foreign/issues/index.html"
+    update_timing: JPX_PUBLICATION
+    zero_results_are_found: false
+    notes: >
+      Global Source: one GET, one Global Attempt, one Source Value with
+      ticker=null. Publishes the foreign listed issues and their per-issue
+      trading units. Used as the evidence that separates foreign stocks from
+      domestic common stocks inside the Prime/Standard/Growth segments; a
+      table whose header cannot be recognized is PARSE_FAILED, so a partial
+      page is never read as a complete foreign-stock list.
+    acquisition:
+      mode: DETERMINISTIC
+      transport: CURL_GET
+      network_scope: MATRIX_TEMPLATE_HOST
+      parser_id: jpx.foreign_stock_list
       stage: STAGE1
 
   - source_id: JPX_TRADING_UNIT
     information_type: TRADING_UNIT
     role: PRIMARY
     criticality: TRADE_CRITICAL
-    source_name: JPX Trading Unit
+    source_name: JPX Domestic Stock Trading Unit Rule
     url_template: "https://www.jpx.co.jp/equities/trading/domestic/03.html"
     update_timing: JPX_PUBLICATION
     zero_results_are_found: false
+    notes: >
+      Global Source: the market-wide trading-unit rule for domestic stocks,
+      not a per-candidate trading-unit page. Its value is applied as
+      share_unit only to candidates whose security_type is
+      DOMESTIC_COMMON_STOCK; ETFs, foreign stocks and unclassified
+      candidates never receive it.
     acquisition:
       mode: DETERMINISTIC
       transport: CURL_GET
       network_scope: MATRIX_TEMPLATE_HOST
-      parser_id: jpx.trading_unit
+      parser_id: jpx.domestic_trading_unit_rule
       stage: STAGE1
 
   - source_id: JPX_LISTED_COMPANY_AUDIT

@@ -97,7 +97,7 @@ def make_market_record(
         company_name="Example Co.",
         market="TSE Prime",
         share_unit=100,
-        security_type="COMMON_STOCK",
+        security_type="DOMESTIC_COMMON_STOCK",
         source_policy_status="FOUND",
         data_status="VERIFIED",
         data_status_reasons=(),
@@ -154,6 +154,15 @@ def make_market_record(
                 "primary_source_ref": None,
                 "secondary_source_ref": None,
                 "source_refs": [share_unit_source.source_ref],
+                "verified_at": "2026-08-09T20:01:00+09:00",
+            },
+            {
+                "field_name": "security_type",
+                "status": "VERIFIED",
+                "verified_value": "DOMESTIC_COMMON_STOCK",
+                "primary_source_ref": market_source.source_ref,
+                "secondary_source_ref": None,
+                "source_refs": [market_source.source_ref],
                 "verified_at": "2026-08-09T20:01:00+09:00",
             },
         ),
@@ -450,8 +459,14 @@ def make_event_research(
 
 def _source_url(source_id: str, field_name: str) -> str:
     urls = {
-        "JPX_LISTED_COMPANY": "https://www.jpx.co.jp/listing/co-search/",
+        "JPX_LISTED_COMPANY": (
+            "https://www2.jpx.co.jp/tseHpFront/StockSearch.do"
+            "?method=topsearch&topSearchStr=1234"
+        ),
         "JPX_TRADING_UNIT": "https://www.jpx.co.jp/equities/trading/domestic/03.html",
+        "JPX_FOREIGN_STOCK_LIST": (
+            "https://www.jpx.co.jp/equities/products/foreign/issues/index.html"
+        ),
         "JPX_LISTED_COMPANY_AUDIT": "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html",
         "YAHOO_JP_HISTORY": "https://finance.yahoo.co.jp/quote/1234.T/history",
         "KABUTAN_HISTORY": "https://kabutan.jp/stock/kabuka?code=1234",

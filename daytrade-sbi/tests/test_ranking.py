@@ -395,7 +395,10 @@ def _full_market_sources(
             source_id="JPX_LISTED_COMPANY",
             source_role="PRIMARY",
             information_type="LISTED_COMPANY",
-            url="https://www.jpx.co.jp/listing/co-search/",
+            url=(
+                "https://www2.jpx.co.jp/tseHpFront/StockSearch.do"
+                f"?method=topsearch&topSearchStr={ticker}"
+            ),
         ),
         _full_source(
             ticker=ticker,
@@ -404,7 +407,10 @@ def _full_market_sources(
             source_id="JPX_LISTED_COMPANY",
             source_role="PRIMARY",
             information_type="LISTED_COMPANY",
-            url="https://www.jpx.co.jp/listing/co-search/",
+            url=(
+                "https://www2.jpx.co.jp/tseHpFront/StockSearch.do"
+                f"?method=topsearch&topSearchStr={ticker}"
+            ),
         ),
         _full_source(
             ticker=ticker,

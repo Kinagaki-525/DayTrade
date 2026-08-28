@@ -69,7 +69,7 @@ Issuer（企業IR）ドメインだけは `config/issuer_domain_registry.yaml` �
 | CLI | 対象 | 主な情報源 |
 | --- | --- | --- |
 | `acquire-discovery` | 全体1回 | Yahoo出来高/値上がりランキング |
-| `acquire-stage1-sources` | 候補全体 | JPXカレンダー・上場銘柄・売買単位 |
+| `acquire-stage1-sources` | 候補全体 | JPXカレンダー・東証上場会社情報検索・外国株一覧・内国株売買単位ルール |
 | `acquire-stage2-market-sources` | 候補ごと | Yahoo/Kabutan OHLCV・呼値・TOPIX500 |
 | `acquire-actual-turnover` | 候補ごと | Yahoo Quote（実売買代金） |
 | `acquire-event-sources` | Hard Screening通過候補のみ | TDnet・決算予定・企業IR（`COMPANY_IR` / `COMPANY_IR_DISCLOSURE`）・Yahoo/Kabutanニュースの6源すべて |
@@ -96,10 +96,64 @@ CLI / Acquisition ContextのHard Errorである。
 
 **`--ticker` は存在しない。** どの銘柄がネットワークアクセスを受けるかはディスク上の成果物から導出される: Stage1は`market_research.json`の`discovery_candidates`、Stage2とTurnoverはStage 1 `PASS`、Eventは`status=ELIGIBLE`かつ`screening_status=PASS`の候補。エージェントが候補集合を注入・拡大する経路はない。
 
+### Stage 1のJPX Source（PR #15）
+
+Stage 1は4つのJPX Sourceを取得する。**上場確認**と**Strategy eligibility**は
+完全に別の概念であり、別のレイヤが判断する。
+
+| Source ID | URL | Scope | 何を出すか |
+| --- | --- | --- | --- |
+| `JPX_CALENDAR` | `/corporate/about-jpx/calendar/` | Global | 非営業日 |
+| `JPX_LISTED_COMPANY` | `www2.jpx.co.jp/tseHpFront/StockSearch.do?method=topsearch&topSearchStr={ticker}` | candidate別 | `listed_company_name` / `market_segment` |
+| `JPX_FOREIGN_STOCK_LIST` | `/equities/products/foreign/issues/index.html` | Global | 外国株のcode → 売買単位 |
+| `JPX_TRADING_UNIT` | `/equities/trading/domestic/03.html` | Global | 内国株の制度上の売買単位ルール |
+
+**Ticker normalization contract**: JPX東証上場会社情報の表示コードは
+`candidate_code + "0"`との**完全一致**でのみ照合する。substring / startswith /
+数値変換は行わない。`285A` → `285A0`のように英字を含むCanonical 4文字コードも
+そのまま扱う。Candidate Contractは`^[0-9A-Z]{4}$`のまま変更しない。
+
+**構造不明ページはNOT_FOUNDにしない**: 検索結果行を1つも認識できないページは
+`PARSE_FAILED`であって「未上場」ではない。2026-08-27 Production失敗はこの取り違えで、
+検索フォームページを取得して全候補が`TICKER_NOT_LISTED_ON_PAGE`になった。
+
+**Security / product classification**: `security_type`は単一Parserが決めない。
+`market_segment`（JPX_LISTED_COMPANY）と外国株一覧（JPX_FOREIGN_STOCK_LIST）を
+`src/security_type.py`が決定論的に合成する。
+
+- `market_segment`が`ETF` / `ETN` / `REIT` / `インフラファンド` → その商品区分
+- `market_segment`が`プライム` / `スタンダード` / `グロース`
+  かつ外国株一覧に存在 → `FOREIGN_STOCK`
+- 同上かつ外国株一覧に存在しない → `DOMESTIC_COMMON_STOCK`
+- 未知の`market_segment`、または外国株一覧が`PARSE_FAILED` / 未取得 → `null`
+
+`null`は「未分類」であってdefaultではない。**未知値を`DOMESTIC_COMMON_STOCK`へ
+fallbackしない。** 外国株一覧が読めない場合、Prime/Standard/Growth候補も内国株と
+断定しない。
+
+**Trading unit Evidence policy**: `JPX_TRADING_UNIT`は内国株の市場全体ルールであって
+銘柄別ページではない。1 GET / 1 Global Attempt / 1 Global Source Value
+（`ticker=null`）として扱い、そこから`share_unit`を書き込むのは
+`security_type == DOMESTIC_COMMON_STOCK`の候補**だけ**である。
+**ETF・外国株・未分類候補へ100を推定設定しない**（`share_unit`は`null`のまま）。
+外国株の売買単位はEvidenceとして保持するが、現行StrategyのStage1 PASS判定には使わない。
+
+**Stage 1 eligibility順序**: `security_type` → `share_unit` → `capital_limit`。
+
+- `security_type != DOMESTIC_COMMON_STOCK` → `SECURITY_TYPE_UNSUPPORTED`でREJECT
+- `share_unit != 100` → 既存の`SHARE_UNIT_NOT_100`でREJECT
+- `security_type`が`null` → PASSもREJECTもせず、Stage 1は未完了のまま（推測しない）
+
+現行Strategyがサポートするのは`DOMESTIC_COMMON_STOCK`だけである。外国株を
+`share_unit=100`だからPASSさせることはしない。
+
 ### 重要な失敗セマンティクス
 
 - **TSE Listing Gate**: バッチ全体でall-or-nothing。1銘柄でも上場確認に失敗したら
   `TSE_LISTING_BATCH_GATE_FAILED`。銘柄単位の黙示的除外も`.T`サフィックスの推測もしない。
+  **ETF等が東証上場していればListingは`FOUND`である。** サポート外商品だからといって
+  Listingを`NOT_FOUND`にしてはいけない。除外はStage 1 eligibilityの
+  `SECURITY_TYPE_UNSUPPORTED`（Evidence付きREJECT）が行う。
 - **Turnover**: 取得失敗時は turnover=null。過去runのFOUNDを再利用しない。
 - **Request Budget（Physical Request）**: 実際のGETの単位は**Physical Request**であり、その識別子は
   `request_id = f(url, target_date, research_cutoff)`（`src/request_budget.py`の`request_id_for`）。

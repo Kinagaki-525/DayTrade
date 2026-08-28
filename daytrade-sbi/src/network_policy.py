@@ -32,6 +32,10 @@ DEFAULT_ISSUER_DOMAIN_REGISTRY_PATH = (
 ALLOWED_HOSTS = frozenset(
     {
         "www.jpx.co.jp",
+        # 東証上場会社情報 (candidate-specific TSE listing search) is served
+        # from its own host. Exact match, like every other entry: adding it
+        # never widens access to any other jpx.co.jp subdomain.
+        "www2.jpx.co.jp",
         "finance.yahoo.co.jp",
         "kabutan.jp",
         "www.release.tdnet.info",
