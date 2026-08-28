@@ -144,6 +144,69 @@ WebSearch禁止）。出力先は一時作業ファイル
 1バイトでも違えば `SOURCE_PAGE_HASH_MISMATCH` のハードエラーであり、
 黙って再取得して「直す」ことは決してしない。
 
+## Parser修正後のProduction Recovery（Human専用）
+
+**Exact Logical Attempt Immutabilityは維持する。** 同じ
+`(source_id, candidate_code, url, target_date, research_cutoff)`のLogical Attemptが
+すでに`sources.json`に存在する場合、通常の`acquire-*`はそれをbyte-for-byteで再利用し、
+保存済み生ページを**現在のParserで再解析しない**。通常のacquire-*再実行でParser reparseは
+起こらない。「Parserが変わっていたら自動reparseする」挙動を通常acquire pathへ追加しない。
+それは昨夜の記録が今日のコードで書き換わることを意味する。
+
+したがってDiscoveryで停止したProduction Runに対してParser fixをmergeしても、
+`acquire-discovery`をもう一度実行するだけでは旧Logical Parse Resultのままになる。
+これを解消できるのはHuman専用のRecovery commandだけである。
+
+```
+daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
+```
+
+- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため、Production Managed Policyの
+  `APPROVED_SUBCOMMANDS`へ載ることが構造的にできない。Production Claudeもagentも実行しない
+- Networkへ出ない。GET 0件、retry 0件、新規Physical Request 0件。`--allow-network`も
+  `--force`も存在しない。入力は`--target-date`だけで、Run Directory・Source Matrix・
+  対象source_id（`YAHOO_JP_VOLUME_RANKING` / `YAHOO_JP_GAIN_RANKING`）はscript内部で固定
+- `network_requests/<request_id>.json`と`source_pages/`はread-only Evidenceで、Recovery前後で
+  生byteが完全一致する。削除・再取得・rename・request_id再発行はしない
+- `attempt_id`と`request_id`は変わらない。物理的に新しい取得は起きていないためである
+- 更新するのは`sources.json`のParser由来fieldだけ（`status` / `values` / `result_count` /
+  `notes` / coverage）。identity / physical fieldは1つも変えない。通常`merge_ledger`の
+  Immutability契約（`status`を含む）は緩めず、Recoveryがそのmergeを迂回する形にしてある
+- Discoveryより後のBusiness Artifactが1件でも存在する場合は
+  `PRODUCTION_DISCOVERY_REPARSE_DOWNSTREAM_ARTIFACT_PRESENT`でFail-Closedに拒否する。
+  削除して続行しないし、Humanへ削除を促しもしない
+- 現在のParserでも両rankingがTOP50にならない場合は
+  `PRODUCTION_DISCOVERY_REPARSE_STILL_INCOMPLETE`で停止し、`sources.json`を1 byteも書き換えない。
+  「とりあえず47件で進める」はしない
+- `market_research.json`はRecoveryが書かない。Recovery成功後に通常の`acquire-discovery`を
+  実行すれば、補正済みLogical Attemptを再利用してNetwork GET 0件のまま再生成される
+- 証跡は`runs/<date>/working/production_discovery_reparse/<git_head_sha>.json`
+  （Non-Business Sidecar）。同一HEADで同じ結果を再実行した場合は`ALREADY_REPARSED`、
+  内容が食い違う場合は`PRODUCTION_DISCOVERY_REPARSE_AUDIT_CONFLICT`で、上書きはしない
+- `sources.json`のcommitとAudit finalizationは**1つのtransaction**である。Audit出力先の
+  妥当性・書込可能性はBusiness Artifact commitの**前**に検証し
+  （`PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID`）、commit後の失敗
+  （read-back失敗・Audit write失敗）では`sources.json`をRecovery開始前の生byteへ戻し、
+  byte一致を再確認する。「`sources.json`だけ変わってAuditが残っていない」状態は作らない。
+  復元自体に失敗した場合だけ`PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED`として、
+  Human inspectionが必要であることを明示する
+- Audit出力先の各path component（`working` / `production_discovery_reparse` /
+  audit file自身）は`lstat`で検査し、symlinkを辿らない。resolved parentが
+  `<run-dir>/working`配下でなければ拒否する。Run外へfileを作らない
+- auxiliary path（writability probeの`.<name>.probe`とatomic writeの`.<name>.tmp`）も
+  同じ契約の対象である。`Path.write_text`はsymlinkを辿るため、これらがRun外を指す
+  symlinkだとRun外のfileを書き換えられてしまう。したがって両pathは事前に`lstat`で拒否し、
+  実際の書き込みもRecovery専用のsymlink-safe atomic writer
+  （`O_CREAT | O_EXCL | O_NOFOLLOW`のexclusive create + `os.replace`）だけが行う。
+  既存fileのtruncate・follow・再利用はしない
+- Physical Request Recordは最初の検証時に**生byte**を保存し、Business Artifact commit直前に
+  再readしてbyte一致を確認する。cross-check対象fieldだけでなくRecord全体の変更を検知する
+
+これはPhysical Request reuse（`cache_status=HIT`）とは別物である。HITは「同じPhysical Requestを
+別のLogical Attemptが再利用した」記録であり、Recoveryは「同じLogical Attemptの
+Parser由来fieldだけを、保存済み生byteの再解析で訂正した」操作である。
+対象はDISCOVERYだけで、Stage1 / Stage2 / Turnover / Eventの汎用Replay機構は存在しない。
+
 ## Selection閾値の有効化
 
 Calibrationが `COMPLETE` になっても、エージェントは閾値を選ばない。

@@ -117,9 +117,17 @@ byte整合性だけで判定します。
 ## `working/` Non-Business Sidecar
 
 `runs/<date>/working/`は**Non-Business Sidecar**です。現在ここに入るのは
-`runtime_security.json`（Production LauncherのRuntime Security Attestation）と
-`event_source_extraction.json`（Event AI Classificationのlocal作業出力）ですが、
-**この2つに固定された契約ではありません**。
+`runtime_security.json`（Production LauncherのRuntime Security Attestation）、
+`event_source_extraction.json`（Event AI Classificationのlocal作業出力）、および
+`production_discovery_reparse/<git_head_sha>.json`（Human専用の
+`scripts/reparse-production-discovery`が残すRecovery Evidence。
+[source-acquisition.md](source-acquisition.md)参照）ですが、
+**この3つに固定された契約ではありません**。
+
+Recovery Evidenceも他のsidecarと同じ扱いです。Business Artifactではないので
+`RUN_ARTIFACT_ALLOWLIST`へは入れませんし、Business Verifierが`working/`の内部を
+Business Artifactとして検査するようにも変更しません。`working/`のfile名は
+固定契約ではない、というここまでの思想はそのまま維持します。
 
 これらはcanonical `src.cli` stageの成果物ではなく、`config_sha256` /
 `strategy_version`を持たず、どのTrust Chainにも属しません。したがって

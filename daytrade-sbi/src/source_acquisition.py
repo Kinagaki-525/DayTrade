@@ -318,14 +318,32 @@ def _ledger_values_from_attempt(
     return ledger_values
 
 
-def _finish_found_attempt(
+def apply_parse_result_to_attempt(
     attempt: dict[str, Any],
     parsed: Any,
     source_id: str,
     definition: dict[str, Any],
-    cache: "RequestBudgetCache | None",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Branch a FOUND transport outcome on parse status and build ledger values."""
+    """Fold a Parse Result into an Attempt whose raw evidence is already stored.
+
+    This is the *only* implementation of "parsed values -> attempt business
+    fields + Source Ledger values" in the codebase. It is deliberately
+    side-effect free apart from mutating the ``attempt`` dict it is handed:
+    it performs no network access, reserves no Physical Request, and writes
+    nothing to disk. Only the parser-derived fields are touched --
+    ``status`` (which the caller has already established as the transport's
+    own FOUND), ``values``, ``result_count``, ``notes`` and
+    ``coverage_status``. Every identity/evidence field is left exactly as the
+    caller set it.
+
+    Two callers share it: normal acquisition (:func:`_finish_found_attempt`,
+    immediately after the transport stored the bytes) and the HUMAN-ONLY
+    offline Discovery reparse recovery
+    (:mod:`src.production_discovery_reparse`), which re-runs the *current*
+    parser over already-stored raw evidence. Copying this logic into the
+    recovery path would have meant two divergent definitions of what a
+    parsed Attempt is.
+    """
     if parsed.status != "FOUND":
         # FIX-012: the raw evidence WAS acquired and stored, so every
         # transport/evidence field stays on the attempt. Only the parsed
@@ -334,9 +352,7 @@ def _finish_found_attempt(
         attempt["status"] = parsed.status
         attempt["values"] = None
         attempt["result_count"] = None
-        attempt["notes"] = list(attempt["notes"]) + list(parsed.reason_codes)
-        if cache is not None:
-            cache.remember(attempt)
+        attempt["notes"] = list(attempt.get("notes") or []) + list(parsed.reason_codes)
         return attempt, []
 
     values: list[dict[str, Any]] = []
@@ -380,8 +396,28 @@ def _finish_found_attempt(
     if coverage_status is not None:
         attempt["coverage_status"] = coverage_status
 
+    # The transport outcome this helper is only ever called for is FOUND, so
+    # this is a no-op for normal acquisition. It is stated explicitly because
+    # the offline reparse recovery may be correcting an Attempt whose stored
+    # status came from an older parser (e.g. PARSE_FAILED) over evidence the
+    # Physical Request Record itself records as FOUND.
+    attempt["status"] = "FOUND"
     attempt["values"] = values
     attempt["result_count"] = len(values)
+    return attempt, ledger_values
+
+
+def _finish_found_attempt(
+    attempt: dict[str, Any],
+    parsed: Any,
+    source_id: str,
+    definition: dict[str, Any],
+    cache: "RequestBudgetCache | None",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Branch a FOUND transport outcome on parse status and build ledger values."""
+    attempt, ledger_values = apply_parse_result_to_attempt(
+        attempt, parsed, source_id, definition
+    )
     if cache is not None:
         cache.remember(attempt)
     return attempt, ledger_values
@@ -1018,6 +1054,7 @@ __all__ = [
     "STAGE_SOURCE_IDS",
     "acquire_source",
     "acquire_stage",
+    "apply_parse_result_to_attempt",
     "attempt_id_for",
     "load_ledger",
     "merge_ledger",

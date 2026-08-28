@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "production_discovery_reparse.schema.json",
+  "title": "Production Discovery Offline Reparse Recovery Audit",
+  "description": "Non-Business Sidecar evidence for one HUMAN-ONLY, zero-network Discovery reparse recovery. Never a Business Artifact and never part of any Trust Chain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "target_date",
+    "stage",
+    "result",
+    "git_head_sha",
+    "research_cutoff",
+    "previous_trading_day",
+    "sources_before_sha256",
+    "sources_after_sha256",
+    "market_research_before_sha256",
+    "network_request_count",
+    "attempts"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "target_date": {"type": "string", "format": "date"},
+    "stage": {"const": "DISCOVERY"},
+    "result": {"const": "REPARSED"},
+    "git_head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "research_cutoff": {"type": "string", "format": "date-time"},
+    "previous_trading_day": {"type": "string", "format": "date"},
+    "sources_before_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sources_after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "market_research_before_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "network_request_count": {"const": 0},
+    "attempts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"$ref": "#/$defs/reparsedAttempt"}
+    }
+  },
+  "$defs": {
+    "reparsedAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "parser_id",
+        "attempt_id",
+        "request_id",
+        "source_page_path",
+        "source_page_sha256",
+        "source_page_size_bytes",
+        "before_status",
+        "after_status",
+        "before_result_count",
+        "after_result_count",
+        "before_ranking_ticker_count",
+        "after_ranking_ticker_count",
+        "before_ranking_row_count",
+        "after_ranking_row_count"
+      ],
+      "properties": {
+        "source_id": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+        "parser_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "request_id": {"type": "string", "pattern": "^req-[0-9a-f]{32}$"},
+        "source_page_path": {"type": "string", "minLength": 1},
+        "source_page_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "source_page_size_bytes": {"type": "integer", "minimum": 0},
+        "before_status": {"type": "string", "minLength": 1},
+        "after_status": {"const": "FOUND"},
+        "before_result_count": {"type": ["integer", "null"], "minimum": 0},
+        "after_result_count": {"type": "integer", "minimum": 0},
+        "before_ranking_ticker_count": {"type": ["integer", "null"], "minimum": 0},
+        "after_ranking_ticker_count": {"type": "integer", "minimum": 0},
+        "before_ranking_row_count": {"type": ["integer", "null"], "minimum": 0},
+        "after_ranking_row_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -459,6 +459,59 @@ Production中のClaudeは既定でBash denyです。許可されるのは
 すべて拒否されます。Claudeが直接Write/Editできる唯一のArtifactは
 `runs/<date>/working/event_source_extraction.json`です。
 
+### Discovery停止後のParser Fix Recovery（Human専用）
+
+Discovery Fail-Closedで停止したRunについて、次の4条件がすべて揃った場合だけ、
+保存済みRaw EvidenceをHumanがofflineで再解析できる。
+
+1. Parser defectが確認された
+2. そのfixがmainへmerge済み
+3. `runs/<target-date>/source_pages/`と`network_requests/`に該当Evidenceが残っている
+4. Discoveryより後のStageを1つも実行していない
+
+通常の`acquire-discovery`を再実行しても解決しないことに注意する。Exact Logical Attemptは
+immutableで、同じAttemptはbyte-for-byteで再利用されるだけであり、**自動reparseは行われない**
+（[source-acquisition.md](source-acquisition.md)）。Production Claudeはここで停止し、
+Humanへ引き継ぐ。
+
+```
+1. Production Claude sessionを終了する
+2. fixをmainへ同期する（Human）
+3. Production preflightを通す
+4. Humanが通常のshellから次を実行する
+```
+
+```bash
+daytrade-sbi/scripts/reparse-production-discovery --target-date <YYYY-MM-DD>
+```
+
+```
+5. result=REPARSED（再実行時はALREADY_REPARSED）を確認する
+6. Production Claudeを再起動する
+7. $prepare-daytrade-plan
+8. acquire-discoveryは既存の補正済みAttemptを再利用し、Network GET 0件で
+   market_research.jsonを再生成する
+9. Canonical CLI Pipeline Orderを続行する
+```
+
+- **HUMAN-ONLY**。`--target-date`が唯一の入力で、`--force` / `--run-dir` / `--parser` /
+  `--allow-network`は存在しない。canonical `src.cli` subcommandではないため
+  `APPROVED_SUBCOMMANDS`に載ることが構造的にできず、**Production Claudeは実行できないし、
+  実行しようとしてもいけない**
+- Networkへ出ない。GET 0件・retry 0件・新規Physical Request 0件
+- `network_requests/*.json`と`source_pages/*`はread-only Evidenceで、実行前後の生byteが
+  完全一致する。削除も再取得もしない
+- `attempt_id` / `request_id`は変わらない。更新されるのは`sources.json`のParser由来fieldだけ
+- Runtime Security Attestation（`runs/<date>/working/runtime_security.json`）の
+  `git_head_sha`とlocal HEADが一致し、保護対象treeがcleanでなければ停止する。
+  修復のためのreset / restore / checkoutは行わない
+- 下流Artifactが1件でもあれば`PRODUCTION_DISCOVERY_REPARSE_DOWNSTREAM_ARTIFACT_PRESENT`、
+  現在のParserでもTOP50を確認できなければ`PRODUCTION_DISCOVERY_REPARSE_STILL_INCOMPLETE`で、
+  どちらも`sources.json`を1 byteも変更しない
+- 証跡は`runs/<date>/working/production_discovery_reparse/<git_head_sha>.json`（Non-Business
+  Sidecar）。Business Artifactではなく、Business Verifierの検査対象にもならない
+- 対象はDISCOVERYだけである。Stage1 / Stage2 / Turnover / Eventの汎用Replayは存在しない
+
 ### Run終了後: Production Run Archive（Human専用）
 
 `runs/<target-date>/`はOperationalなdirectoryです。次回Preflightの`git_clean`を

@@ -581,6 +581,127 @@ def test_docs_state_the_acquire_output_contract(name):
     assert "working/" in text, name
 
 
+# --------------------------------------------------------------- PR #14 ---
+#
+# The offline Discovery reparse recovery only stays safe if every
+# agent-facing document says the same four things: normal acquisition never
+# re-parses stored evidence, the recovery that does is HUMAN-ONLY, it spends
+# no network request and performs no retry, and an agent must never run it.
+# A document that drops one of those is how "just re-run acquire-discovery"
+# or "delete the evidence and retry" gets attempted in production.
+
+REPARSE_RECOVERY_DOCS = (
+    "docs/nightly-operation.md",
+    "docs/source-acquisition.md",
+    "prompts/nightly_research.md",
+    "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("name", REPARSE_RECOVERY_DOCS)
+def test_docs_name_the_human_only_discovery_reparse_recovery(name):
+    text = _text(name)
+    assert "reparse-production-discovery" in text, name
+    assert "HUMAN-ONLY" in text, name
+
+
+#: How each document denies that a normal acquisition re-parses stored
+#: evidence. The wording differs by language, so each is pinned by its own
+#: phrase rather than by one shared string.
+REPARSE_IS_NOT_AUTOMATIC = {
+    "docs/nightly-operation.md": "自動reparseは行われない",
+    "docs/source-acquisition.md": "自動reparse",
+    "prompts/nightly_research.md": "自動reparseは行わない",
+    "SKILL.md": "never re-parses",
+}
+
+
+@pytest.mark.parametrize("name", REPARSE_RECOVERY_DOCS)
+def test_docs_deny_that_normal_acquisition_reparses_stored_evidence(name):
+    text = _text(name)
+    assert REPARSE_IS_NOT_AUTOMATIC[name] in text, name
+    # The Exact Logical Attempt contract is what makes that true.
+    assert "Exact Logical Attempt" in text, name
+
+
+#: How each document states the zero-network / zero-retry property.
+REPARSE_NO_NETWORK = {
+    "docs/nightly-operation.md": "GET 0件・retry 0件",
+    "docs/source-acquisition.md": "GET 0件、retry 0件",
+    "prompts/nightly_research.md": "GET 0件・retry 0件",
+    "SKILL.md": "performs zero network requests",
+}
+
+
+@pytest.mark.parametrize("name", REPARSE_RECOVERY_DOCS)
+def test_docs_state_the_recovery_spends_no_network_request(name):
+    assert REPARSE_NO_NETWORK[name] in _text(name), name
+
+
+#: How each agent-facing document forbids the agent from running it. The
+#: operations doc is written for the human operator, so it carries the
+#: Production Claude prohibition rather than an agent-facing one.
+REPARSE_AGENT_PROHIBITION = {
+    "docs/nightly-operation.md": "Production Claudeは実行できない",
+    "docs/source-acquisition.md": "Production Claudeもagentも実行しない",
+    "prompts/nightly_research.md": (
+        "Production Claude自身がこのscriptを実行してはいけない"
+    ),
+    "SKILL.md": "The agent must never run it",
+}
+
+
+@pytest.mark.parametrize("name", REPARSE_RECOVERY_DOCS)
+def test_docs_forbid_an_agent_from_running_the_recovery(name):
+    assert REPARSE_AGENT_PROHIBITION[name] in _text(name), name
+
+
+@pytest.mark.parametrize("name", ("prompts/nightly_research.md", "SKILL.md"))
+def test_agent_docs_forbid_deleting_the_evidence_to_retry(name):
+    """"Delete the request records and fetch again" is the one recovery that
+    would destroy the Request Budget's truth, so it is denied explicitly."""
+    text = _text(name)
+    assert "network_requests/" in text, name
+    assert "source_pages/" in text, name
+    for denial in ("削除しない", "Never delete"):
+        if denial in text:
+            break
+    else:  # pragma: no cover - the assertion below reports it
+        raise AssertionError(f"{name} does not forbid deleting the evidence")
+
+
+def test_the_recovery_is_documented_as_discovery_only():
+    """No generic stage replay: the contract covers DISCOVERY and nothing
+    else, so the docs must not imply Stage1/Stage2/Turnover/Event replay."""
+    for name in ("docs/nightly-operation.md", "docs/source-acquisition.md"):
+        text = _text(name)
+        assert "Stage1 / Stage2 / Turnover / Event" in text, name
+        assert "汎用Replay" in text, name
+
+
+def test_the_archive_doc_classifies_the_recovery_evidence_as_a_sidecar():
+    text = (PROJECT_ROOT / "docs" / "production-run-archive.md").read_text(
+        encoding="utf-8"
+    )
+    assert "production_discovery_reparse/" in text
+    assert "RUN_ARTIFACT_ALLOWLIST" in text
+    assert "固定契約ではない" in text
+
+
+def test_the_recovery_files_exist_and_are_not_cli_subcommands():
+    from src import cli
+
+    for path in (
+        PROJECT_ROOT / "src" / "production_discovery_reparse.py",
+        PROJECT_ROOT / "scripts" / "reparse-production-discovery",
+        PROJECT_ROOT / "schemas" / "production_discovery_reparse.schema.json",
+        PROJECT_ROOT / "tests" / "test_production_discovery_reparse.py",
+    ):
+        assert path.is_file(), path
+    choices = set(cli.build_parser()._subparsers._group_actions[0].choices)  # noqa: SLF001
+    assert "reparse-production-discovery" not in choices
+
+
 @pytest.mark.parametrize("name", ACQUIRE_OUTPUT_CONTRACT_DOCS)
 def test_no_document_shows_an_acquire_output_into_a_business_artifact(name):
     """The very command shape that broke production is never illustrated."""
