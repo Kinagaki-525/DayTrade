@@ -183,6 +183,18 @@ daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
 - 証跡は`runs/<date>/working/production_discovery_reparse/<git_head_sha>.json`
   （Non-Business Sidecar）。同一HEADで同じ結果を再実行した場合は`ALREADY_REPARSED`、
   内容が食い違う場合は`PRODUCTION_DISCOVERY_REPARSE_AUDIT_CONFLICT`で、上書きはしない
+- `sources.json`のcommitとAudit finalizationは**1つのtransaction**である。Audit出力先の
+  妥当性・書込可能性はBusiness Artifact commitの**前**に検証し
+  （`PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID`）、commit後の失敗
+  （read-back失敗・Audit write失敗）では`sources.json`をRecovery開始前の生byteへ戻し、
+  byte一致を再確認する。「`sources.json`だけ変わってAuditが残っていない」状態は作らない。
+  復元自体に失敗した場合だけ`PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED`として、
+  Human inspectionが必要であることを明示する
+- Audit出力先の各path component（`working` / `production_discovery_reparse` /
+  audit file自身）は`lstat`で検査し、symlinkを辿らない。resolved parentが
+  `<run-dir>/working`配下でなければ拒否する。Run外へfileを作らない
+- Physical Request Recordは最初の検証時に**生byte**を保存し、Business Artifact commit直前に
+  再readしてbyte一致を確認する。cross-check対象fieldだけでなくRecord全体の変更を検知する
 
 これはPhysical Request reuse（`cache_status=HIT`）とは別物である。HITは「同じPhysical Requestを
 別のLogical Attemptが再利用した」記録であり、Recoveryは「同じLogical Attemptの

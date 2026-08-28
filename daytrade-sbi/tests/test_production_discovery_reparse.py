@@ -943,6 +943,322 @@ def test_a_conflicting_audit_for_the_same_head_is_never_overwritten(
     assert (run_dir / "sources.json").read_bytes() == before
 
 
+# ------------------------------- commit transaction: ledger + audit ---
+#
+# A failed recovery must leave the run byte-identical to how it was found.
+# The ledger write and the audit finalisation are therefore one transaction:
+# if the audit cannot be written, the ledger is rolled back to its
+# pre-recovery bytes rather than left silently corrected with no evidence.
+
+
+def test_a_failed_audit_write_rolls_the_ledger_back(tmp_path, monkeypatch, no_subprocess):
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    real_write = recovery.atomic_write_text
+
+    def failing_write(path, content):
+        if recovery.AUDIT_DIRNAME in Path(path).parts:
+            raise OSError("no space left on device")
+        return real_write(path, content)
+
+    monkeypatch.setattr(recovery, "atomic_write_text", failing_write)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert excinfo.value.code == "PRODUCTION_DISCOVERY_REPARSE_AUDIT_WRITE_FAILED"
+    assert (run_dir / "sources.json").read_bytes() == before
+    assert not list((run_dir / "working" / recovery.AUDIT_DIRNAME).glob("*.json"))
+
+
+def test_a_failed_ledger_readback_rolls_the_ledger_back(
+    tmp_path, monkeypatch, no_subprocess
+):
+    """Any post-commit failure, not only the audit write, restores the bytes."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    real_write = recovery.atomic_write_text
+
+    def corrupting_write(path, content):
+        if Path(path).name == "sources.json" and content != before.decode("utf-8"):
+            return real_write(path, content.replace('"schema_version": 3', '"schema_version": 1'))
+        return real_write(path, content)
+
+    monkeypatch.setattr(recovery, "atomic_write_text", corrupting_write)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert excinfo.value.code == "PRODUCTION_DISCOVERY_REPARSE_WRITE_FAILED"
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+def test_an_unusable_audit_destination_is_refused_before_the_ledger_is_touched(
+    tmp_path, monkeypatch, no_subprocess
+):
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    # A regular file where the audit directory must be: unusable, and known
+    # to be unusable before anything is committed.
+    (run_dir / "working" / recovery.AUDIT_DIRNAME).write_text("", encoding="utf-8")
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID"
+    )
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+def test_a_failed_rollback_is_reported_as_such(tmp_path, monkeypatch, no_subprocess):
+    """If the restoration itself cannot be completed, the operator is told the
+    run needs inspection instead of being handed an ordinary failure."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    real_write = recovery.atomic_write_text
+    calls = {"count": 0}
+
+    def failing_write(path, content):
+        if recovery.AUDIT_DIRNAME in Path(path).parts:
+            raise OSError("no space left on device")
+        if Path(path).name == "sources.json":
+            calls["count"] += 1
+            if calls["count"] > 1:  # the rollback write
+                raise OSError("read-only file system")
+        return real_write(path, content)
+
+    monkeypatch.setattr(recovery, "atomic_write_text", failing_write)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert excinfo.value.code == "PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED"
+    assert "AUDIT_WRITE_FAILED" in excinfo.value.message
+
+
+# ------------------------------------------- audit path symlink escape ---
+
+
+def test_a_symlinked_audit_directory_is_never_followed(
+    tmp_path, monkeypatch, no_subprocess
+):
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (run_dir / "working" / recovery.AUDIT_DIRNAME).symlink_to(
+        outside, target_is_directory=True
+    )
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID"
+    )
+    assert list(outside.iterdir()) == [], "the recovery wrote outside the run"
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+def test_a_symlinked_audit_file_is_never_followed(tmp_path, monkeypatch, no_subprocess):
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    audit_dir = run_dir / "working" / recovery.AUDIT_DIRNAME
+    audit_dir.mkdir(parents=True)
+    (audit_dir / f"{HEAD_SHA}.json").symlink_to(outside / "escaped.json")
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID"
+    )
+    assert list(outside.iterdir()) == []
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+def test_a_symlinked_working_sidecar_is_refused_by_the_run_scan(
+    tmp_path, monkeypatch, no_subprocess
+):
+    """``working`` itself is a top-level run entry, so the run directory scan
+    refuses the symlink before the audit destination is ever considered."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    outside = tmp_path / "outside"
+    (outside / "working").mkdir(parents=True)
+    (outside / "working" / "runtime_security.json").write_bytes(
+        (run_dir / "working" / "runtime_security.json").read_bytes()
+    )
+    import shutil
+
+    shutil.rmtree(run_dir / "working")
+    (run_dir / "working").symlink_to(outside / "working", target_is_directory=True)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_DOWNSTREAM_ARTIFACT_PRESENT"
+    )
+    assert not (outside / "working" / recovery.AUDIT_DIRNAME).exists()
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+# --------------------------------------- stale parser-derived leftovers ---
+
+
+def _make_legacy_parse_failed(run_dir: Path) -> bytes:
+    """The pre-fix state where the old parser gave up entirely on one route."""
+    ledger = _load_sources(run_dir)
+    attempt = _attempt(ledger, VOLUME_SOURCE_ID)
+    stale_refs = {
+        value["source_ref"] for value in attempt["values"] if "source_ref" in value
+    }
+    attempt["status"] = "PARSE_FAILED"
+    attempt["values"] = None
+    attempt["result_count"] = None
+    attempt["notes"] = ["RANKING_ROWS_AMBIGUOUS", "LEGACY_PARSER_GAVE_UP"]
+    attempt["coverage_status"] = "PARTIAL"
+    attempt["coverage_start"] = f"{TRADING_DATE}T00:00:00+09:00"
+    attempt["coverage_end"] = f"{TRADING_DATE}T20:00:00+09:00"
+    attempt["covered_dates"] = [TRADING_DATE]
+    ledger["sources"] = [
+        value for value in ledger["sources"] if value["source_ref"] not in stale_refs
+    ]
+    return _rewrite_sources(run_dir, ledger)
+
+
+def test_recovery_clears_stale_parser_derived_fields(
+    tmp_path, monkeypatch, no_subprocess
+):
+    run_dir = build_run(tmp_path, monkeypatch)
+    _make_legacy_parse_failed(run_dir)
+
+    result = run_recovery(tmp_path)
+
+    assert result["result"] == recovery.RESULT_REPARSED
+    attempt = _attempt(_load_sources(run_dir), VOLUME_SOURCE_ID)
+    assert attempt["status"] == "FOUND"
+    assert attempt["notes"] == []
+    assert "LEGACY_PARSER_GAVE_UP" not in json.dumps(attempt)
+    for field_name in recovery.STALE_PARSER_DERIVED_FIELDS:
+        assert field_name not in attempt, field_name
+    assert len(_tickers(attempt)) == 50
+    assert len(_rows(attempt)) == 50
+
+
+@pytest.mark.parametrize("field_name", IDENTITY_FIELDS)
+def test_clearing_stale_fields_never_touches_identity(
+    field_name, tmp_path, monkeypatch, no_subprocess
+):
+    run_dir = build_run(tmp_path, monkeypatch)
+    _make_legacy_parse_failed(run_dir)
+    before = _attempt(_load_sources(run_dir), VOLUME_SOURCE_ID)
+
+    run_recovery(tmp_path)
+
+    after = _attempt(_load_sources(run_dir), VOLUME_SOURCE_ID)
+    assert after.get(field_name) == before.get(field_name)
+
+
+def test_a_legacy_parse_failed_attempt_reappears_in_market_research(
+    tmp_path, monkeypatch
+):
+    """End to end: a route the old parser failed on becomes a real TOP50."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    _make_legacy_parse_failed(run_dir)
+    run_recovery(tmp_path)
+
+    def explode(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("acquire-discovery must not re-fetch after a recovery")
+
+    monkeypatch.setattr(subprocess, "run", explode)
+    cli.main(
+        [
+            "acquire-discovery",
+            "--target-date", TARGET_DATE,
+            "--trading-date", TRADING_DATE,
+            "--research-cutoff", CUTOFF,
+            "--run-dir", str(run_dir),
+            "--sources", str(run_dir / "sources.json"),
+            "--research-window", str(run_dir / "research_window.json"),
+        ]
+    )
+    research = json.loads((run_dir / "market_research.json").read_text(encoding="utf-8"))
+    assert research["overall_status"] == "PIPELINE_INCOMPLETE"
+    assert [route["result_count"] for route in research["discovery"]] == [50, 50]
+
+
+# ------------------------- Physical Request Record immutability in-flight ---
+
+
+@pytest.mark.parametrize(
+    "field_name, value",
+    [
+        ("origin_attempt_id", "att-tampered"),
+        ("origin_source_id", "SOMETHING_ELSE"),
+        ("origin_candidate_code", "7203"),
+    ],
+)
+def test_a_request_record_changed_mid_recovery_is_caught(
+    field_name, value, tmp_path, monkeypatch, no_subprocess
+):
+    """Fields the cross-check never reads are covered too: the whole Request
+    Record file is compared as raw bytes, before and after the reparse."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    real_confirm = recovery.confirm_discovery_top50
+
+    def mutate_then_confirm(routes):
+        _mutate_request_record(run_dir, VOLUME_SOURCE_ID, **{field_name: value})
+        return real_confirm(routes)
+
+    monkeypatch.setattr(recovery, "confirm_discovery_top50", mutate_then_confirm)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_EVIDENCE_CHANGED_DURING_RECOVERY"
+    )
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
+def test_a_reformatted_request_record_is_still_a_change(
+    tmp_path, monkeypatch, no_subprocess
+):
+    """Byte comparison, not semantic comparison: a rewritten Request Record is
+    a rewritten Request Record."""
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    real_confirm = recovery.confirm_discovery_top50
+
+    def reformat_then_confirm(routes):
+        attempt = _attempt(_load_sources(run_dir), VOLUME_SOURCE_ID)
+        path = run_dir / "network_requests" / f"{attempt['request_id']}.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        path.write_text(json.dumps(record, indent=4) + "\n", encoding="utf-8")
+        return real_confirm(routes)
+
+    monkeypatch.setattr(recovery, "confirm_discovery_top50", reformat_then_confirm)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_EVIDENCE_CHANGED_DURING_RECOVERY"
+    )
+    assert (run_dir / "sources.json").read_bytes() == before
+
+
 # -------------------------------------------------------- HUMAN-ONLY CLI ---
 
 

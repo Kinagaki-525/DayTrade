@@ -80,7 +80,11 @@ from src.claude_runtime_security import (
 )
 from src.contracts import load_json_document, validate_json_document
 from src.file_io import atomic_write_text
-from src.request_budget import RequestBudgetError, load_request_record
+from src.request_budget import (
+    RequestBudgetError,
+    load_request_record,
+    network_request_path,
+)
 from src.source_acquisition import (
     AcquisitionResult,
     apply_parse_result_to_attempt,
@@ -221,6 +225,9 @@ ERROR_CODES = (
     "PRODUCTION_DISCOVERY_REPARSE_STILL_INCOMPLETE",
     "PRODUCTION_DISCOVERY_REPARSE_WRITE_FAILED",
     "PRODUCTION_DISCOVERY_REPARSE_AUDIT_CONFLICT",
+    "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+    "PRODUCTION_DISCOVERY_REPARSE_AUDIT_WRITE_FAILED",
+    "PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED",
 )
 
 
@@ -578,6 +585,18 @@ def _verified_request_record(run_dir: Path, attempt: dict[str, Any]) -> dict[str
     return record
 
 
+def _request_record_bytes(run_dir: Path, request_id: str) -> bytes:
+    """The Physical Request Record file's raw bytes, read-only."""
+    path = network_request_path(run_dir, request_id)
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_REQUEST_RECORD_INVALID",
+            f"request record {path} could not be read: {error}",
+        ) from None
+
+
 def _verified_raw_page(run_dir: Path, record: dict[str, Any]) -> bytes:
     """Re-read stored raw bytes and re-verify hash *and* recorded size."""
     page_path = str(record["source_page_path"])
@@ -647,6 +666,41 @@ def _reparse(
             "PRODUCTION_DISCOVERY_REPARSE_PARSER_BINDING_INVALID",
             f"{error.code}: {error.message}",
         ) from None
+
+
+#: Attempt fields that are *derived from a parse* rather than from the wire.
+#: A recovery re-derives the whole set from the current Parse Result, so the
+#: previous parser's leftovers must be cleared first -- a stale
+#: ``PARSE_FAILED`` note or a stale ``coverage_status`` next to freshly
+#: parsed values would describe a parse that no longer exists.
+#:
+#: ``notes`` is safe to clear wholesale here precisely because this recovery
+#: only ever runs against a Physical Request Record whose ``source_status``
+#: is ``FOUND``: :mod:`src.source_fetch` attaches notes only to non-FOUND
+#: transport outcomes, so every note such an Attempt carries came from the
+#: parser.
+STALE_PARSER_DERIVED_FIELDS: tuple[str, ...] = (
+    "coverage_status",
+    "coverage_start",
+    "coverage_end",
+    "covered_dates",
+)
+
+
+def _cleared_for_reparse(attempt: dict[str, Any]) -> dict[str, Any]:
+    """A copy of ``attempt`` with every parser-derived field reset.
+
+    Identity and physical fields are untouched: only what a parser produced
+    is cleared, so the current Parse Result is applied to a clean slate
+    instead of being merged into the previous parser's output.
+    """
+    cleared = copy.deepcopy(attempt)
+    cleared["notes"] = []
+    cleared["values"] = None
+    cleared["result_count"] = None
+    for field_name in STALE_PARSER_DERIVED_FIELDS:
+        cleared.pop(field_name, None)
+    return cleared
 
 
 def _verify_identity_unchanged(
@@ -740,6 +794,92 @@ def _audit_bytes(document: dict[str, Any]) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
+def _prepare_audit_destination(run_dir: Path, git_head_sha: str) -> Path:
+    """Validate -- and make usable -- the audit destination *before* commit.
+
+    Two things are settled here, while the Business Artifact is still
+    untouched:
+
+    1. **Containment.** Every path component from the run directory down to
+       the audit directory is inspected with ``lstat`` and a symbolic link is
+       refused, never followed. A ``working`` or
+       ``working/production_discovery_reparse`` symlink pointing outside the
+       run would otherwise let this recovery drop a file anywhere on the
+       machine. The resolved parent must still be inside
+       ``<run-dir>/working``.
+    2. **Writability.** The directory is created and probed now, so a
+       destination that cannot be written is a failure *before* sources.json
+       changes rather than after it.
+    """
+    run_dir = Path(run_dir)
+    working_dir = run_dir / WORKING_DIRNAME
+    audit_dir = working_dir / AUDIT_DIRNAME
+
+    for path in (working_dir, audit_dir):
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+                f"{path} could not be inspected: {error}",
+            ) from None
+        if stat.S_ISLNK(mode):
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+                f"{path} is a symbolic link, which is never followed",
+            )
+        if not stat.S_ISDIR(mode):
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+                f"{path} exists but is not a directory",
+            )
+
+    audit_path = audit_dir / f"{git_head_sha}.json"
+    if audit_path.is_symlink():
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+            f"{audit_path} is a symbolic link, which is never followed",
+        )
+
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+            f"{audit_dir} could not be created: {error}",
+        ) from None
+
+    # Containment is re-checked against the *resolved* directory, after
+    # creation: a component that resolves outside <run-dir>/working must
+    # never receive a file, however it got there.
+    resolved_working = working_dir.resolve()
+    try:
+        audit_dir.resolve().relative_to(resolved_working)
+        resolved_working.relative_to(run_dir.resolve())
+    except ValueError:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+            f"{audit_dir} resolves outside {working_dir}",
+        ) from None
+
+    probe = audit_dir / f".{git_head_sha}.json.probe"
+    try:
+        probe.write_text("", encoding="utf-8")
+    except OSError as error:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+            f"{audit_dir} is not writable: {error}",
+        ) from None
+    finally:
+        try:
+            probe.unlink()
+        except OSError:  # pragma: no cover - defensive
+            pass
+    return audit_path
+
+
 #: Fields whose value legitimately differs between the recovery that changed
 #: the ledger and a later idempotent re-verification of the same corrected
 #: ledger. Everything else must match exactly.
@@ -796,6 +936,40 @@ def _is_idempotent_replay(existing: dict[str, Any], candidate: dict[str, Any]) -
     return True
 
 
+def _rollback_sources(
+    run_dir: Path,
+    original_raw: bytes,
+    original_sha256: str,
+    cause: ProductionDiscoveryReparseError,
+) -> None:
+    """Put ``sources.json`` back to the exact bytes the recovery started from.
+
+    Called only when the commit failed after the ledger was already written.
+    The restoration is verified by re-reading and re-hashing; if *that* fails
+    the run is in a state no automatic action can fix, so it is reported as
+    such rather than left to look like an ordinary failure.
+    """
+    path = run_dir / "sources.json"
+    try:
+        atomic_write_text(path, original_raw.decode("utf-8"))
+        restored = path.read_bytes()
+    except (OSError, UnicodeDecodeError) as error:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED",
+            f"{cause.code}: {cause.message}; and sources.json could NOT be "
+            f"restored to its pre-recovery bytes ({error}). The run directory "
+            "needs human inspection: expected SHA256 "
+            f"{original_sha256}",
+        ) from None
+    if sha256_hex(restored) != original_sha256:
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_ROLLBACK_FAILED",
+            f"{cause.code}: {cause.message}; and the restored sources.json does "
+            f"not match its pre-recovery SHA256 {original_sha256}. The run "
+            "directory needs human inspection.",
+        )
+
+
 # ------------------------------------------------------------- operation ---
 
 
@@ -847,17 +1021,21 @@ def reparse_production_discovery(
     corrected: dict[str, dict[str, Any]] = {}
     ledger_values: dict[str, list[dict[str, Any]]] = {}
     audit_attempts: list[dict[str, Any]] = []
-    verified_pages: dict[str, tuple[str, str, bytes]] = {}
+    verified_pages: dict[str, bytes] = {}
+    verified_records: dict[str, bytes] = {}
 
     for source_id in DISCOVERY_SOURCE_IDS:
         original = ledger["source_attempts"][indexes[source_id]]
         record = _verified_request_record(run_dir, original)
         raw = _verified_raw_page(run_dir, record)
-        verified_pages[source_id] = (
-            str(record["request_id"]),
-            str(record["source_page_path"]),
-            raw,
+        # The *whole* Request Record, as raw bytes -- not just the fields the
+        # cross-check reads. Anything at all changing in that file while the
+        # recovery runs must be caught, including fields this module never
+        # looks at (origin_*, reserved_at, ...).
+        verified_records[source_id] = _request_record_bytes(
+            run_dir, str(record["request_id"])
         )
+        verified_pages[source_id] = raw
         definition, parser_id = _source_definition(source_matrix, source_id)
         parsed = _reparse(
             raw,
@@ -867,7 +1045,7 @@ def reparse_production_discovery(
             content_type=record.get("content_type"),
         )
 
-        attempt = copy.deepcopy(original)
+        attempt = _cleared_for_reparse(original)
         attempt, values = apply_parse_result_to_attempt(
             attempt, parsed, source_id, definition
         )
@@ -972,17 +1150,17 @@ def reparse_production_discovery(
             corrected[source_id],
             source_id,
         )
-        request_id, page_path, raw = verified_pages[source_id]
         recheck = _verified_request_record(run_dir, corrected[source_id])
-        if str(recheck["request_id"]) != request_id or (
-            str(recheck["source_page_path"]) != page_path
+        if (
+            _request_record_bytes(run_dir, str(recheck["request_id"]))
+            != verified_records[source_id]
         ):
             raise _fail(
                 "PRODUCTION_DISCOVERY_REPARSE_EVIDENCE_CHANGED_DURING_RECOVERY",
-                f"{source_id}: the Physical Request Record changed while the "
-                "recovery was running; nothing was written",
+                f"{source_id}: the Physical Request Record's raw bytes changed "
+                "while the recovery was running; nothing was written",
             )
-        if _verified_raw_page(run_dir, recheck) != raw:
+        if _verified_raw_page(run_dir, recheck) != verified_pages[source_id]:
             raise _fail(
                 "PRODUCTION_DISCOVERY_REPARSE_EVIDENCE_CHANGED_DURING_RECOVERY",
                 f"{source_id}: the stored Raw Page changed while the recovery "
@@ -996,8 +1174,14 @@ def reparse_production_discovery(
             "written",
         )
 
-    # ---- audit idempotency, decided before anything is written -----------
-    audit_path = audit_path_for(run_dir, git_head_sha)
+    # ---- audit destination + idempotency, before anything is written -----
+    #
+    # The audit is part of the commit, not an afterthought: a recovery that
+    # changed sources.json but left no evidence of having done so is exactly
+    # the state this contract must never produce. So the destination is
+    # validated, created and probed here, while the Business Artifact is
+    # still untouched.
+    audit_path = _prepare_audit_destination(run_dir, git_head_sha)
     if _is_regular_file(audit_path):
         try:
             existing_audit = json.loads(audit_path.read_text(encoding="utf-8"))
@@ -1022,7 +1206,13 @@ def reparse_production_discovery(
             "HEAD; it is never overwritten and there is no --force",
         )
 
-    # ---- 11-13. the single write, then re-verification -------------------
+    # ---- 11-13. the commit: ledger + audit, all-or-nothing ---------------
+    #
+    # Committing the ledger and finalising the audit is one transaction. If
+    # any step after the ledger write fails -- the read-back, the audit write
+    # -- sources.json is restored to the exact bytes the recovery started
+    # from and that restoration is itself verified. A failed recovery
+    # (exit 2) must leave the run byte-identical to how it was found.
     try:
         atomic_write_text(run_dir / "sources.json", serialized)
     except OSError as error:
@@ -1031,14 +1221,24 @@ def reparse_production_discovery(
             f"could not write the corrected source ledger: {error}",
         ) from None
 
-    written_raw, written = _load_sources(run_dir, target_date)
-    if sha256_hex(written_raw) != sources_after_sha256 or written != payload:
-        raise _fail(
-            "PRODUCTION_DISCOVERY_REPARSE_WRITE_FAILED",
-            "the corrected source ledger on disk does not match what was built",
-        )
-
-    atomic_write_text(audit_path, _audit_bytes(audit))
+    try:
+        written_raw, written = _load_sources(run_dir, target_date)
+        if sha256_hex(written_raw) != sources_after_sha256 or written != payload:
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_WRITE_FAILED",
+                "the corrected source ledger on disk does not match what was built",
+            )
+        try:
+            atomic_write_text(audit_path, _audit_bytes(audit))
+        except OSError as error:
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_AUDIT_WRITE_FAILED",
+                f"the corrected ledger could not be evidenced at {audit_path}: "
+                f"{error}",
+            ) from None
+    except ProductionDiscoveryReparseError as error:
+        _rollback_sources(run_dir, sources_raw_before, sources_before_sha256, error)
+        raise
 
     return {
         "result": RESULT_REPARSED,
