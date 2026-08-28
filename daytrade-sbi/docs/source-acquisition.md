@@ -193,6 +193,12 @@ daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
 - Audit出力先の各path component（`working` / `production_discovery_reparse` /
   audit file自身）は`lstat`で検査し、symlinkを辿らない。resolved parentが
   `<run-dir>/working`配下でなければ拒否する。Run外へfileを作らない
+- auxiliary path（writability probeの`.<name>.probe`とatomic writeの`.<name>.tmp`）も
+  同じ契約の対象である。`Path.write_text`はsymlinkを辿るため、これらがRun外を指す
+  symlinkだとRun外のfileを書き換えられてしまう。したがって両pathは事前に`lstat`で拒否し、
+  実際の書き込みもRecovery専用のsymlink-safe atomic writer
+  （`O_CREAT | O_EXCL | O_NOFOLLOW`のexclusive create + `os.replace`）だけが行う。
+  既存fileのtruncate・follow・再利用はしない
 - Physical Request Recordは最初の検証時に**生byte**を保存し、Business Artifact commit直前に
   再readしてbyte一致を確認する。cross-check対象fieldだけでなくRecord全体の変更を検知する
 

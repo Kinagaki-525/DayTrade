@@ -954,14 +954,11 @@ def test_a_conflicting_audit_for_the_same_head_is_never_overwritten(
 def test_a_failed_audit_write_rolls_the_ledger_back(tmp_path, monkeypatch, no_subprocess):
     run_dir = build_run(tmp_path, monkeypatch)
     before = (run_dir / "sources.json").read_bytes()
-    real_write = recovery.atomic_write_text
 
     def failing_write(path, content):
-        if recovery.AUDIT_DIRNAME in Path(path).parts:
-            raise OSError("no space left on device")
-        return real_write(path, content)
+        raise OSError("no space left on device")
 
-    monkeypatch.setattr(recovery, "atomic_write_text", failing_write)
+    monkeypatch.setattr(recovery, "_symlink_safe_atomic_write", failing_write)
 
     with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
         run_recovery(tmp_path)
@@ -1019,15 +1016,17 @@ def test_a_failed_rollback_is_reported_as_such(tmp_path, monkeypatch, no_subproc
     real_write = recovery.atomic_write_text
     calls = {"count": 0}
 
+    def failing_audit_write(path, content):
+        raise OSError("no space left on device")
+
     def failing_write(path, content):
-        if recovery.AUDIT_DIRNAME in Path(path).parts:
-            raise OSError("no space left on device")
         if Path(path).name == "sources.json":
             calls["count"] += 1
             if calls["count"] > 1:  # the rollback write
                 raise OSError("read-only file system")
         return real_write(path, content)
 
+    monkeypatch.setattr(recovery, "_symlink_safe_atomic_write", failing_audit_write)
     monkeypatch.setattr(recovery, "atomic_write_text", failing_write)
 
     with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
@@ -1108,6 +1107,118 @@ def test_a_symlinked_working_sidecar_is_refused_by_the_run_scan(
     )
     assert not (outside / "working" / recovery.AUDIT_DIRNAME).exists()
     assert (run_dir / "sources.json").read_bytes() == before
+
+
+def _outside_target(tmp_path: Path) -> tuple[Path, bytes]:
+    """A file outside the run directory that must never be touched."""
+    outside = tmp_path / "outside"
+    outside.mkdir(exist_ok=True)
+    target = outside / "precious.json"
+    target.write_text('{"do":"not touch"}\n', encoding="utf-8")
+    return target, target.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "auxiliary",
+    ["probe", "tmp"],
+    ids=["writability-probe", "atomic-write-temporary"],
+)
+def test_a_symlinked_auxiliary_audit_path_never_writes_outside_the_run(
+    auxiliary, tmp_path, monkeypatch, no_subprocess
+):
+    """The probe and the atomic write's temporary file are writes too.
+
+    ``Path.write_text`` follows a symlink planted at either path, so a
+    symlink pointing outside the run directory would turn an in-run write
+    into an arbitrary one. Both paths are refused outright.
+    """
+    run_dir = build_run(tmp_path, monkeypatch)
+    before = (run_dir / "sources.json").read_bytes()
+    target, target_bytes = _outside_target(tmp_path)
+
+    audit_path = recovery.audit_path_for(run_dir, HEAD_SHA)
+    audit_path.parent.mkdir(parents=True)
+    link = (
+        recovery.audit_probe_path_for(audit_path)
+        if auxiliary == "probe"
+        else recovery.audit_temp_path_for(audit_path)
+    )
+    link.symlink_to(target)
+
+    with pytest.raises(recovery.ProductionDiscoveryReparseError) as excinfo:
+        run_recovery(tmp_path)
+
+    assert (
+        excinfo.value.code
+        == "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID"
+    )
+    assert target.read_bytes() == target_bytes, "the recovery wrote outside the run"
+    assert (run_dir / "sources.json").read_bytes() == before
+    assert not audit_path.exists()
+    assert link.is_symlink(), "the symlink itself must be left untouched"
+
+
+def test_the_audit_writer_never_follows_a_symlinked_temporary_file(tmp_path):
+    """The writer itself, exercised directly: even if something planted the
+    symlink after the destination check, the exclusive create refuses it."""
+    target, target_bytes = _outside_target(tmp_path)
+    audit_dir = tmp_path / "working" / recovery.AUDIT_DIRNAME
+    audit_dir.mkdir(parents=True)
+    audit_path = audit_dir / f"{HEAD_SHA}.json"
+    recovery.audit_temp_path_for(audit_path).symlink_to(target)
+
+    with pytest.raises(OSError):
+        recovery._symlink_safe_atomic_write(audit_path, '{"written": true}\n')
+
+    assert target.read_bytes() == target_bytes
+    assert not audit_path.exists()
+
+
+def test_the_audit_writer_does_not_truncate_an_existing_temporary_file(tmp_path):
+    target = tmp_path / "working" / recovery.AUDIT_DIRNAME
+    target.mkdir(parents=True)
+    audit_path = target / f"{HEAD_SHA}.json"
+    leftover = recovery.audit_temp_path_for(audit_path)
+    leftover.write_text("leftover\n", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        recovery._symlink_safe_atomic_write(audit_path, '{"written": true}\n')
+
+    assert leftover.read_text(encoding="utf-8") == "leftover\n"
+    assert not audit_path.exists()
+
+
+def test_the_audit_writer_replaces_the_destination_entry_itself(tmp_path):
+    """``os.replace`` renames the entry, so even a symlinked destination is
+    replaced rather than written through."""
+    target, target_bytes = _outside_target(tmp_path)
+    audit_dir = tmp_path / "working" / recovery.AUDIT_DIRNAME
+    audit_dir.mkdir(parents=True)
+    audit_path = audit_dir / f"{HEAD_SHA}.json"
+    audit_path.symlink_to(target)
+
+    recovery._symlink_safe_atomic_write(audit_path, '{"written": true}\n')
+
+    assert target.read_bytes() == target_bytes
+    assert not audit_path.is_symlink()
+    assert audit_path.read_text(encoding="utf-8") == '{"written": true}\n'
+
+
+def test_a_normal_recovery_still_produces_its_audit(tmp_path, monkeypatch, no_subprocess):
+    """The symlink hardening must not have broken the ordinary path."""
+    run_dir = build_run(tmp_path, monkeypatch)
+
+    result = run_recovery(tmp_path)
+
+    assert result["result"] == recovery.RESULT_REPARSED
+    audit_path = recovery.audit_path_for(run_dir, HEAD_SHA)
+    assert audit_path.is_file()
+    assert not audit_path.is_symlink()
+    assert json.loads(audit_path.read_text(encoding="utf-8"))["git_head_sha"] == HEAD_SHA
+    # No auxiliary file survives a successful recovery.
+    assert not recovery.audit_probe_path_for(audit_path).exists()
+    assert not recovery.audit_temp_path_for(audit_path).exists()
+    assert len(_tickers(_attempt(_load_sources(run_dir), VOLUME_SOURCE_ID))) == 50
 
 
 # --------------------------------------- stale parser-derived leftovers ---

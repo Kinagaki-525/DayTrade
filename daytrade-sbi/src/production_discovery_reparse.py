@@ -794,6 +794,64 @@ def _audit_bytes(document: dict[str, Any]) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
+def audit_probe_path_for(audit_path: Path) -> Path:
+    """The writability probe's path -- an auxiliary file, inside the run."""
+    return Path(audit_path).with_name(f".{Path(audit_path).name}.probe")
+
+
+def audit_temp_path_for(audit_path: Path) -> Path:
+    """The atomic write's temporary path -- an auxiliary file, inside the run."""
+    return Path(audit_path).with_name(f".{Path(audit_path).name}.tmp")
+
+
+#: ``O_NOFOLLOW`` is not portable; ``O_CREAT | O_EXCL`` alone already refuses
+#: to follow (or create through) an existing symlink, so the flag is defence
+#: in depth rather than the mechanism.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def _exclusive_create(path: Path) -> int:
+    """Create ``path`` for writing, or fail. Never follows an existing entry.
+
+    A symlink sitting at the auxiliary path -- the probe or the temporary
+    file of the atomic write -- is exactly how a write inside the run
+    directory turns into a write anywhere on the machine, because
+    ``Path.write_text`` happily follows it. ``O_CREAT | O_EXCL`` cannot: the
+    path must not exist at all, symlink included (a dangling symlink still
+    fails with ``EEXIST``), and nothing is ever truncated.
+    """
+    return os.open(
+        str(path),
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY | _NOFOLLOW,
+        0o644,
+    )
+
+
+def _symlink_safe_atomic_write(destination: Path, content: str) -> None:
+    """Write ``destination`` atomically without ever following a symlink.
+
+    Deliberately not :func:`src.file_io.atomic_write_text`: that generic
+    helper writes its temporary file with ``Path.write_text``, which follows
+    a symlink planted at the temporary path. Here the temporary file is
+    created with :func:`_exclusive_create` and moved into place with
+    ``os.replace``, which renames the destination *entry* itself and so can
+    never write through a symlink either.
+    """
+    destination = Path(destination)
+    temporary = audit_temp_path_for(destination)
+    fd = _exclusive_create(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(temporary, destination)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:  # pragma: no cover - defensive
+            pass
+        raise
+
+
 def _prepare_audit_destination(run_dir: Path, git_head_sha: str) -> Path:
     """Validate -- and make usable -- the audit destination *before* commit.
 
@@ -864,9 +922,31 @@ def _prepare_audit_destination(run_dir: Path, git_head_sha: str) -> Path:
             f"{audit_dir} resolves outside {working_dir}",
         ) from None
 
-    probe = audit_dir / f".{git_head_sha}.json.probe"
+    # The auxiliary paths this recovery will use are part of the destination
+    # contract: a symlink (or any leftover) sitting at the probe or the
+    # temporary-file path would otherwise be followed by an ordinary write
+    # and let the recovery modify a file outside the run directory. Neither
+    # is ever followed, truncated or reused -- both must simply not exist.
+    for auxiliary in (audit_probe_path_for(audit_path), audit_temp_path_for(audit_path)):
+        try:
+            mode = os.lstat(auxiliary).st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise _fail(
+                "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+                f"{auxiliary} could not be inspected: {error}",
+            ) from None
+        kind = "a symbolic link" if stat.S_ISLNK(mode) else "an existing file"
+        raise _fail(
+            "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
+            f"{auxiliary} is {kind}; the recovery's auxiliary paths are never "
+            "followed, truncated or reused",
+        )
+
+    probe = audit_probe_path_for(audit_path)
     try:
-        probe.write_text("", encoding="utf-8")
+        os.close(_exclusive_create(probe))
     except OSError as error:
         raise _fail(
             "PRODUCTION_DISCOVERY_REPARSE_AUDIT_DESTINATION_INVALID",
@@ -874,7 +954,7 @@ def _prepare_audit_destination(run_dir: Path, git_head_sha: str) -> Path:
         ) from None
     finally:
         try:
-            probe.unlink()
+            os.unlink(probe)
         except OSError:  # pragma: no cover - defensive
             pass
     return audit_path
@@ -1229,7 +1309,7 @@ def reparse_production_discovery(
                 "the corrected source ledger on disk does not match what was built",
             )
         try:
-            atomic_write_text(audit_path, _audit_bytes(audit))
+            _symlink_safe_atomic_write(audit_path, _audit_bytes(audit))
         except OSError as error:
             raise _fail(
                 "PRODUCTION_DISCOVERY_REPARSE_AUDIT_WRITE_FAILED",
@@ -1306,6 +1386,8 @@ __all__ = [
     "RESULT_REPARSED",
     "STAGE",
     "audit_path_for",
+    "audit_probe_path_for",
+    "audit_temp_path_for",
     "default_run_command",
     "reparse_main",
     "reparse_production_discovery",
