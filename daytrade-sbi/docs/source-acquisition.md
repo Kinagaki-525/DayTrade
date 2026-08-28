@@ -144,6 +144,51 @@ WebSearch禁止）。出力先は一時作業ファイル
 1バイトでも違えば `SOURCE_PAGE_HASH_MISMATCH` のハードエラーであり、
 黙って再取得して「直す」ことは決してしない。
 
+## Parser修正後のProduction Recovery（Human専用）
+
+**Exact Logical Attempt Immutabilityは維持する。** 同じ
+`(source_id, candidate_code, url, target_date, research_cutoff)`のLogical Attemptが
+すでに`sources.json`に存在する場合、通常の`acquire-*`はそれをbyte-for-byteで再利用し、
+保存済み生ページを**現在のParserで再解析しない**。通常のacquire-*再実行でParser reparseは
+起こらない。「Parserが変わっていたら自動reparseする」挙動を通常acquire pathへ追加しない。
+それは昨夜の記録が今日のコードで書き換わることを意味する。
+
+したがってDiscoveryで停止したProduction Runに対してParser fixをmergeしても、
+`acquire-discovery`をもう一度実行するだけでは旧Logical Parse Resultのままになる。
+これを解消できるのはHuman専用のRecovery commandだけである。
+
+```
+daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
+```
+
+- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため、Production Managed Policyの
+  `APPROVED_SUBCOMMANDS`へ載ることが構造的にできない。Production Claudeもagentも実行しない
+- Networkへ出ない。GET 0件、retry 0件、新規Physical Request 0件。`--allow-network`も
+  `--force`も存在しない。入力は`--target-date`だけで、Run Directory・Source Matrix・
+  対象source_id（`YAHOO_JP_VOLUME_RANKING` / `YAHOO_JP_GAIN_RANKING`）はscript内部で固定
+- `network_requests/<request_id>.json`と`source_pages/`はread-only Evidenceで、Recovery前後で
+  生byteが完全一致する。削除・再取得・rename・request_id再発行はしない
+- `attempt_id`と`request_id`は変わらない。物理的に新しい取得は起きていないためである
+- 更新するのは`sources.json`のParser由来fieldだけ（`status` / `values` / `result_count` /
+  `notes` / coverage）。identity / physical fieldは1つも変えない。通常`merge_ledger`の
+  Immutability契約（`status`を含む）は緩めず、Recoveryがそのmergeを迂回する形にしてある
+- Discoveryより後のBusiness Artifactが1件でも存在する場合は
+  `PRODUCTION_DISCOVERY_REPARSE_DOWNSTREAM_ARTIFACT_PRESENT`でFail-Closedに拒否する。
+  削除して続行しないし、Humanへ削除を促しもしない
+- 現在のParserでも両rankingがTOP50にならない場合は
+  `PRODUCTION_DISCOVERY_REPARSE_STILL_INCOMPLETE`で停止し、`sources.json`を1 byteも書き換えない。
+  「とりあえず47件で進める」はしない
+- `market_research.json`はRecoveryが書かない。Recovery成功後に通常の`acquire-discovery`を
+  実行すれば、補正済みLogical Attemptを再利用してNetwork GET 0件のまま再生成される
+- 証跡は`runs/<date>/working/production_discovery_reparse/<git_head_sha>.json`
+  （Non-Business Sidecar）。同一HEADで同じ結果を再実行した場合は`ALREADY_REPARSED`、
+  内容が食い違う場合は`PRODUCTION_DISCOVERY_REPARSE_AUDIT_CONFLICT`で、上書きはしない
+
+これはPhysical Request reuse（`cache_status=HIT`）とは別物である。HITは「同じPhysical Requestを
+別のLogical Attemptが再利用した」記録であり、Recoveryは「同じLogical Attemptの
+Parser由来fieldだけを、保存済み生byteの再解析で訂正した」操作である。
+対象はDISCOVERYだけで、Stage1 / Stage2 / Turnover / Eventの汎用Replay機構は存在しない。
+
 ## Selection閾値の有効化
 
 Calibrationが `COMPLETE` になっても、エージェントは閾値を選ばない。

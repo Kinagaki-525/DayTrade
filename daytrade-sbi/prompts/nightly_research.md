@@ -185,6 +185,32 @@ only then:
   `risk_result.json`をagentが手書きして日次結果を補完してはいけない。
   Aで生成済みのFail-Closed Evidenceはそのまま保持し、後続Stageへ進まない。
 
+### Parser Fix後のRecoveryはHuman専用（agentは実行しない）
+
+Discoveryで停止したあとにParser修正がmergeされても、**同じ`acquire-discovery`を再実行すれば
+保存済みRawを再parseする、という理解は誤りである。** 通常の`acquire-*`はExact Logical Attemptを
+byte-for-byteで再利用するだけで、**自動reparseは行わない**。したがって旧Parser由来の
+Logical Parse Resultはそのまま残る。
+
+この状態を解消できるのはHuman専用のRecovery commandだけである。
+
+```
+daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
+```
+
+- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため`APPROVED_SUBCOMMANDS`に載らない。
+  **Production Claude自身がこのscriptを実行してはいけない**
+- agentがやることは1つだけ: そこで停止し、Parser fix後のRecoveryが必要であることをHumanへ報告する
+- agentは`network_requests/`・`source_pages/`・`sources.json`・`market_research.json`を
+  削除しない。retryしない。`--force`相当の回避策を探さない
+- Recoveryはnetworkへ出ず（GET 0件・retry 0件）、Physical Request RecordとSource Pageの
+  生byteを1つも変更せず、`attempt_id` / `request_id`も変えない
+- Recovery完了後にHumanがProduction Claudeを再起動する。以降は通常の
+  Canonical CLI Pipeline Orderで、`acquire-discovery`は補正済みAttemptを再利用して
+  Network GET 0件のまま`market_research.json`を再生成する
+- 手順の正本: [docs/nightly-operation.md](../docs/nightly-operation.md)の
+  「Discovery停止後のParser Fix Recovery（Human専用）」
+
 - Discovery unionを保存したら、次を実行して全Discovery Candidate分の `candidate_research[]` を初期化する。
 
 ```powershell
