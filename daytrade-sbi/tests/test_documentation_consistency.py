@@ -389,7 +389,7 @@ def test_production_bootstrap_uses_a_fixed_copy_based_root_owned_venv():
     section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
     assert PRODUCTION_VENV_ROOT in section
     assert PRODUCTION_VENV_PYTHON in section
-    venv_command = re.search(r"python3(?:\.[0-9.]+)? -m venv[^\n]*", _commands(section))
+    venv_command = re.search(r"[^\n]*-m venv[^\n]*", _commands(section))
     assert venv_command is not None, "the venv creation command is not documented"
     assert "--copies" in venv_command.group(0), (
         "the Production venv must be created with --copies: "
@@ -496,6 +496,151 @@ def test_policy_scripts_run_under_the_production_python(script, prefix):
     assert f"{prefix}{script}" in section, (
         f"{script} must be launched as {prefix}{script}"
     )
+
+
+#: Every Production start goes through this section, so it -- not only the
+#: one-off Policy deployment -- has to materialize the Production Python.
+PRODUCTION_ENTRY_HEADING = "### Production Entry Contract"
+
+#: The exact-path assertion an operator runs, rather than eyeballing a printed
+#: path against a documented one.
+PRODUCTION_PYTHON_FIXED_PATH_TEST = (
+    'test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"'
+)
+
+
+def test_production_entry_materializes_the_production_python_every_time():
+    """A fresh shell must not rediscover the system Python.
+
+    claude-production resolves its candidate with which("python3") when
+    DAYTRADE_PRODUCTION_PYTHON is unset, so a session started without the venv
+    on PATH would run under /usr/bin/python3 -- an identity the Managed Policy
+    was never rendered for. Putting the venv first on PATH is what makes the
+    launcher's own lookup resolve to the same interpreter.
+    """
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
+    commands = _commands(section)
+    assert PRODUCTION_PATH_EXPORT in commands
+    assert PRODUCTION_PYTHON_DISCOVERY in commands
+    assert PRODUCTION_PYTHON_FIXED_PATH_TEST in commands
+    assert 'test ! -L "$PRODUCTION_PYTHON"' in commands
+
+
+@pytest.mark.parametrize("flags", ["--preflight-only", "--target-date"])
+def test_production_entry_launches_the_launcher_under_the_production_python(flags):
+    """Both the preflight and the real Nightly start run the launcher with the
+    Production interpreter itself, not through its shebang."""
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
+    commands = _commands(section)
+    launches = [
+        block
+        for block in re.findall(
+            r'"\$PRODUCTION_PYTHON" scripts/claude-production[^\n]*(?:\\\n[^\n]*)*',
+            commands,
+        )
+        if flags in block
+    ]
+    assert launches, (
+        f"the Production entry command carrying {flags} is not launched as "
+        '"$PRODUCTION_PYTHON" scripts/claude-production'
+    )
+
+
+def test_production_entry_never_documents_a_bare_launcher_command():
+    """A bare `scripts/claude-production ...` would rely on the shebang."""
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
+    for line in _commands(section).splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("scripts/claude-production"):
+            continue
+        raise AssertionError(
+            f"the Production entry documents a bare launcher command: {stripped!r}"
+        )
+
+
+def test_production_entry_never_hardcodes_the_system_interpreter():
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
+    hardcoded = re.search(r"/usr(?:/local)?/bin/python[0-9.]*", _commands(section))
+    assert hardcoded is None, (
+        "the Production entry hardcodes the system interpreter: "
+        f"{hardcoded.group(0) if hardcoded else ''!r}"
+    )
+
+
+@pytest.mark.parametrize("forbidden", FORBIDDEN_PYTHON_WORKAROUNDS)
+def test_production_entry_never_requires_a_bare_python_workaround(forbidden):
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
+    assert forbidden not in _commands(section)
+
+
+# --------------------------- exact, runnable bootstrap commands (PR #17) ---
+
+
+def test_production_bootstrap_commands_carry_no_placeholders():
+    """An operator must be able to paste the commands and run them."""
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    commands = _commands(section)
+    placeholder = re.search(r"<[a-z][a-z0-9 _-]*>", commands)
+    assert placeholder is None, (
+        f"the bootstrap commands carry the placeholder {placeholder.group(0)!r}"
+        if placeholder
+        else ""
+    )
+    assert '"$PWD/requirements-dev.txt"' in commands, (
+        "the dependency manifest must be resolved from the documented CWD"
+    )
+
+
+def test_production_bootstrap_uses_one_base_python_for_check_and_venv():
+    """The interpreter whose version was checked is the one that builds the
+    venv -- a second bare `python3` could resolve elsewhere."""
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    commands = _commands(section)
+    assert 'BASE_PYTHON="$(command -v python3)"' in commands
+    assert 'sudo "$BASE_PYTHON" -m venv' in commands
+    assert not re.search(r"sudo python3(?:\.[0-9.]+)? -m venv", commands), (
+        "the venv is created by a rediscovered python3 rather than $BASE_PYTHON"
+    )
+
+
+def test_production_bootstrap_compares_versions_by_shell_test():
+    """Version agreement is asserted by the shell, not by the operator's eye."""
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    commands = _commands(section)
+    assert 'EXPECTED_PYTHON_VERSION="$(cat .python-version)"' in commands
+    compared = {
+        variable
+        for body in re.findall(
+            r'test "\$\((.*?)\)" = "\$EXPECTED_PYTHON_VERSION"', commands, re.DOTALL
+        )
+        for variable in ("$BASE_PYTHON", "$PRODUCTION_PYTHON")
+        if variable in body
+    }
+    assert compared == {"$BASE_PYTHON", "$PRODUCTION_PYTHON"}, (
+        "both the base interpreter and the Production venv interpreter must be "
+        f"compared against .python-version; compared: {sorted(compared)}"
+    )
+
+
+def test_production_bootstrap_asserts_the_canonical_identity_by_shell_test():
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    commands = _commands(section)
+    assert PRODUCTION_PYTHON_FIXED_PATH_TEST in commands
+    assert 'CANONICAL_PRODUCTION_PYTHON="$(' in commands
+    assert (
+        'test "$CANONICAL_PRODUCTION_PYTHON" = "$PRODUCTION_PYTHON"' in commands
+    ), "the canonical resolver result must be compared, not printed for review"
+
+
+def test_production_bootstrap_runs_pytest_under_the_production_python():
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    assert '"$PRODUCTION_PYTHON" -B -m pytest' in _commands(section)
+
+
+def test_production_bootstrap_states_its_checkout_and_cwd_prerequisite():
+    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
+    assert "Reviewed HEAD" in section
+    assert "daytrade-sbi" in section
 
 
 def test_nightly_operation_documents_the_human_seccomp_attestation_marker():

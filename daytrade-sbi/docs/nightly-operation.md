@@ -294,11 +294,24 @@ Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**で�
 代替もしない（例: Ubuntu 26.04の`python3-jsonschema` 4.19.2は
 `jsonschema>=4.23`を満たさない）。
 
-1. base OS Pythonのversionがrepositoryのcanonical版（`daytrade-sbi/.python-version`）と
-   一致することを確認する。一致しなければSTOPする。
+**前提**: Repositoryを**Reviewed HEAD**へcheckout済みであり、以降のcommandはすべて
+その作業treeの`daytrade-sbi`をcurrent working directoryとして実行する。bootstrapは
+Reviewed HEADのdependency manifestに対して行うため、この2つが揃っていなければ
+開始しない。
+
+以下のcommandは目視確認ではなく`test`によるshell assertionで判定する。失敗した
+commandがあればその場でSTOPする（`&&`で繋いで途中失敗を握り潰さない）。
+
+1. base OS Python candidateを1回だけ決め、versionがrepositoryのcanonical版と
+   完全一致することをshellで確認する。
 
    ```bash
-   python3 --version
+   BASE_PYTHON="$(command -v python3)"
+   test -n "$BASE_PYTHON"
+   EXPECTED_PYTHON_VERSION="$(cat .python-version)"
+   test "$(
+       "$BASE_PYTHON" -c 'import platform; print(platform.python_version())'
+   )" = "$EXPECTED_PYTHON_VERSION"
    ```
 
 2. venv作成能力をHumanがaptで導入する。これはPython project dependenciesのinstallでは
@@ -312,10 +325,15 @@ Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**で�
    独自の削除・上書き・`--clear`による再作成を行わない。既存環境の扱いはHumanが
    別途判断する。
 
-4. base Pythonからroot-owned venvを作る。**`--copies`が必須**である。
+   ```bash
+   test ! -e /opt/daytrade-production-python
+   ```
+
+4. 手順1で確定した同じcandidateからroot-owned venvを作る。**`--copies`が必須**である。
+   ここで`python3`を再discoveryさせない。
 
    ```bash
-   sudo python3 -m venv --copies /opt/daytrade-production-python
+   sudo "$BASE_PYTHON" -m venv --copies /opt/daytrade-production-python
    ```
 
    通常のsymlink-based venvを使ってはいけない。`canonical_production_python()`は
@@ -325,11 +343,13 @@ Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**で�
    regular fileにするので、canonicalize後も同じpathのままになる。
 
 5. venv内のpipからdependency manifestをinstallする。`requirements-dev.txt`は
-   `-r requirements.txt`を含むため、2つを別々にinstallしない。
+   `-r requirements.txt`を含むため、2つを別々にinstallしない。CWDが`daytrade-sbi`で
+   あるため、manifestはそのCWDから解決する。
 
    ```bash
-   sudo /opt/daytrade-production-python/bin/python3 -m pip install \
-       --disable-pip-version-check -r <repository-root>/daytrade-sbi/requirements-dev.txt
+   sudo /opt/daytrade-production-python/bin/python3 \
+       -m pip install --disable-pip-version-check \
+       -r "$PWD/requirements-dev.txt"
    ```
 
 6. root所有かつgroup/other非writableにする。Production ClaudeがDependency環境を
@@ -340,35 +360,44 @@ Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**で�
    sudo chmod -R go-w /opt/daytrade-production-python
    ```
 
-7. Production Human shellでvenvのbinをPATH先頭へ置き、候補を1回だけ決める。
+7. Production Human shellでvenvのbinをPATH先頭へ置き、候補を1回だけ決めて、
+   fixed pathと完全一致することをshellで確認する。
 
    ```bash
    export PATH="/opt/daytrade-production-python/bin:$PATH"
    PRODUCTION_PYTHON="$(command -v python3)"
+   test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"
+   test -f "$PRODUCTION_PYTHON"
+   test ! -L "$PRODUCTION_PYTHON"
    ```
 
-   期待値は`/opt/daytrade-production-python/bin/python3`である。異なる場合はSTOPする。
+   `test ! -L`は`--copies`で作られたregular fileであることの確認である。
 
-8. 候補を検証する。1つでも満たさなければSTOPする。
+8. Production venvのversionとdependency整合をshellで確認する。
 
    ```bash
-   test -f "$PRODUCTION_PYTHON" && test ! -L "$PRODUCTION_PYTHON"
-   "$PRODUCTION_PYTHON" --version
+   test "$(
+       "$PRODUCTION_PYTHON" -c 'import platform; print(platform.python_version())'
+   )" = "$EXPECTED_PYTHON_VERSION"
    "$PRODUCTION_PYTHON" -m pip check
    ```
 
-   - regular fileであり**symlinkでない**こと（`--copies`の確認）
-   - versionが`.python-version`と一致すること
-   - `pip check`が成功すること
-
-9. repository自身のresolverが同じpathを返すことを確認する（`daytrade-sbi`をCWDとして
-   実行する）。異なる場合はSTOPする。
+9. repository自身のresolverが同じpathを返すことをshellで確認する。出力を目視で
+   見比べるのではなく`test`で比較する。
 
    ```bash
-   "$PRODUCTION_PYTHON" -c 'import sys; from src.claude_runtime_security import canonical_production_python; print(canonical_production_python(sys.executable))'
+   CANONICAL_PRODUCTION_PYTHON="$(
+       "$PRODUCTION_PYTHON" -c \
+       'import sys; from src.claude_runtime_security import canonical_production_python; print(canonical_production_python(sys.executable))'
+   )"
+   test "$CANONICAL_PRODUCTION_PYTHON" = "$PRODUCTION_PYTHON"
    ```
 
-   出力が`/opt/daytrade-production-python/bin/python3`と完全一致することを確認する。
+10. 同じProduction Pythonでtestが0 failedであることを確認する。
+
+    ```bash
+    "$PRODUCTION_PYTHON" -B -m pytest
+    ```
 
 **禁止事項**（いずれもFail-Closedを回避する手段であり採用しない）:
 
@@ -406,9 +435,10 @@ current working directoryとして実行する。冒頭「開始方法」のPowe
 Windows Python Launcher向けの別contextであり、ここでは使わない。
 
 1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
-   Python依存関係は「Production Python dependency bootstrap（Human専用）」を完了して
-   いること。未完了ならここから先へ進まない。
-2. RepositoryをReviewed HEADへcheckoutする。
+2. RepositoryをReviewed HEADへcheckoutし、`daytrade-sbi`をcurrent working directoryに
+   する。**その状態で**「Production Python dependency bootstrap（Human専用）」を
+   完了させる（bootstrapはReviewed HEADのdependency manifestに対して行う）。
+   未完了ならここから先へ進まない。
 3. **Production Python candidateを1回だけ決める。** 以降のpytest / render / deployは
    すべてこの同じ値を使う。PATHを先にmaterializeしてから`command -v python3`を
    1回だけ実行する（同一手順中に再discoveryしない）。
@@ -466,8 +496,14 @@ Windows Python Launcher向けの別contextであり、ここでは使わない�
    行わず、`--force`も存在しません。既存の組織Policyを壊さないためです。
    `managed-settings.d`へのdrop-in配置も行いません。
 8. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
-9. `scripts/claude-production --target-date <YYYY-MM-DD> --preflight-only`で
-   Runtime Security Preflightを通す。
+9. Runtime Security Preflightを通す。launcher自身も同じProduction Pythonで起動する
+   （「Production Entry Contract」と同じ契約）。
+
+   ```bash
+   "$PRODUCTION_PYTHON" scripts/claude-production \
+       --target-date <YYYY-MM-DD> \
+       --preflight-only
+   ```
 10. Claude Codeの`/status`でSetting sourcesを確認し、file-based
     *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
     sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
@@ -516,6 +552,44 @@ Production Nightly Runは、`scripts/claude-production`のRuntime Security Prefl
 PASSしたProduction Claudeからのみ開始します。単に`claude`を起動しただけのsessionは、
 同じマシン上であってもProduction Runtimeとして扱いません。Preflightを通っていない
 sessionからSource Acquisition CLIを実行しないでください。
+
+**起動のたびに、Production Python identityをHuman shellでmaterializeします。**
+Policy deploymentを行ったshellとは別の新しいshellから起動する場合も同じです。
+
+```bash
+export PATH="/opt/daytrade-production-python/bin:$PATH"
+PRODUCTION_PYTHON="$(command -v python3)"
+test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"
+test -f "$PRODUCTION_PYTHON"
+test ! -L "$PRODUCTION_PYTHON"
+```
+
+PATHを先にmaterializeするのは、**launcher内部の`which("python3")`にも同じvenv
+interpreterを解決させる**ためです。`scripts/claude-production`は
+`DAYTRADE_PRODUCTION_PYTHON`が未設定のとき`which("python3")`から候補を決めるので、
+venvがPATHの先頭に無いshellから起動すると、system `python3`が再発見され、
+`/opt/daytrade-production-python/bin/python3`向けにrenderされたManaged Policyと
+identityが一致しなくなります。`DAYTRADE_PRODUCTION_PYTHON`をHumanが独自に
+hardcode/exportする運用へは変更しません。launcher側やRuntime Guardを緩めることも
+しません。
+
+Preflightもshebang任せにせず、launcher自身を同じProduction Pythonで起動します。
+
+```bash
+"$PRODUCTION_PYTHON" scripts/claude-production \
+    --target-date <YYYY-MM-DD> \
+    --preflight-only
+```
+
+実Nightly startも同様です。
+
+```bash
+"$PRODUCTION_PYTHON" scripts/claude-production \
+    --target-date <YYYY-MM-DD>
+```
+
+上のmaterializationと検証を行わずに`scripts/claude-production`を直接起動する形は、
+正式なProduction Entry commandではありません。
 
 `DAYTRADE_HTTP_USER_AGENT`は必須です。未設定または空白のみの場合、Preflightは
 `CLAUDE_HTTP_USER_AGENT_MISSING`でfail closedになり、`src/source_fetch.py`側も
