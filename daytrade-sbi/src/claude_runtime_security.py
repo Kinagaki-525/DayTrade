@@ -137,6 +137,19 @@ ERROR_CODES = (
     "CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL",
     "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN",
     "EXISTING_MANAGED_POLICY_PRESENT",
+    # Managed Policy replacement. Deliberately one code per condition: a single
+    # generic "replacement failed" would tell the operator nothing about which
+    # guarantee stopped the write, and every one of these stops it for a
+    # different reason.
+    "CLAUDE_MANAGED_POLICY_ATTESTATION_INVALID",
+    "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+    "CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+    "CLAUDE_MANAGED_POLICY_INSTALLED_SHA_MISMATCH",
+    "CLAUDE_MANAGED_POLICY_CANDIDATE_SHA_MISMATCH",
+    "CLAUDE_MANAGED_POLICY_GUARD_MISMATCH",
+    "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
+    "CLAUDE_MANAGED_POLICY_REPLACE_FAILED",
+    "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
 )
 
 
@@ -476,8 +489,20 @@ def render_managed_settings(
     return payload
 
 
+def serialize_managed_settings(payload: Mapping[str, Any]) -> bytes:
+    """The one canonical byte form of a Managed Policy.
+
+    Every place that writes a policy, and every place that hashes one, goes
+    through here. Duplicating the ``json.dumps`` arguments would let the
+    installer and the replacement path drift into producing different bytes
+    for the same policy -- and the whole replacement contract is built on the
+    operator comparing hashes of those bytes.
+    """
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def render_managed_settings_json(**kwargs: Any) -> str:
-    return json.dumps(render_managed_settings(**kwargs), indent=2, sort_keys=True) + "\n"
+    return serialize_managed_settings(render_managed_settings(**kwargs)).decode("utf-8")
 
 
 # ------------------------------------------------------------ preflight ---
@@ -958,6 +983,471 @@ def build_runtime_security_document(
     }
 
 
+# --------------------------------------------------- managed policy replace ---
+#
+# Replacing an already-installed Managed Policy is a different operation from
+# installing one, and it is deliberately harder. The installer refuses to touch
+# an existing policy at all, because the policy on a host may be an
+# organisation's rather than ours. Replacement makes that decision a human's:
+# the operator names, by exact SHA256, both the policy they reviewed on the
+# host and the candidate they reviewed from the repository. Nothing here infers
+# either value, and there is no force switch.
+
+#: Human review attestations are canonical lowercase SHA256 and nothing else.
+#: No trimming, no case folding, no prefix stripping, no shortened digests: a
+#: value that needs repairing before it matches is a value the operator did not
+#: actually copy from the artefact they reviewed.
+SHA256_ATTESTATION_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+#: Owner every Managed Policy file and its directory must have in Production.
+PRODUCTION_MANAGED_UID = 0
+
+#: Mode the installed policy carries; also the mode staged files are given
+#: before they are moved into place.
+MANAGED_SETTINGS_MODE = 0o644
+
+
+def verify_sha256_attestation(value: Any, *, label: str) -> str:
+    """A human-supplied SHA256, accepted only in canonical form."""
+    if not isinstance(value, str) or not SHA256_ATTESTATION_PATTERN.fullmatch(value):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_ATTESTATION_INVALID",
+            f"{label} must be a canonical lowercase 64-character SHA256; "
+            f"got {value!r} (it is never trimmed, lowercased or completed)",
+        )
+    return value
+
+
+def _open_managed_directory(root: Path, *, expected_uid: int) -> int:
+    """A file descriptor for the Managed Policy directory, once verified.
+
+    Every later operation is anchored to this descriptor rather than to the
+    path, so a directory swapped underneath us -- or a symlink planted where
+    the directory was -- cannot redirect the write somewhere else.
+    """
+    try:
+        info = os.lstat(root)
+    except OSError as error:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+            f"{root} cannot be inspected: {error}",
+        ) from error
+    if stat.S_ISLNK(info.st_mode):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID", f"{root} is a symlink"
+        )
+    if not stat.S_ISDIR(info.st_mode):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID", f"{root} is not a directory"
+        )
+    if info.st_uid != expected_uid:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+            f"{root} is owned by uid {info.st_uid}, expected {expected_uid}",
+        )
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+            f"{root} is group- or world-writable (mode {info.st_mode & 0o777:04o})",
+        )
+    try:
+        return os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+            f"{root} cannot be opened as a directory: {error}",
+        ) from error
+
+
+def _verify_managed_file(
+    dir_fd: int,
+    filename: str,
+    *,
+    expected_uid: int,
+    code: str,
+) -> os.stat_result:
+    try:
+        info = os.lstat(filename, dir_fd=dir_fd)
+    except OSError as error:
+        raise _fail(code, f"{filename} cannot be inspected: {error}") from error
+    if stat.S_ISLNK(info.st_mode):
+        raise _fail(code, f"{filename} is a symlink")
+    if not stat.S_ISREG(info.st_mode):
+        raise _fail(code, f"{filename} is not a regular file")
+    if info.st_uid != expected_uid:
+        raise _fail(
+            code, f"{filename} is owned by uid {info.st_uid}, expected {expected_uid}"
+        )
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise _fail(
+            code,
+            f"{filename} is group- or world-writable (mode {info.st_mode & 0o777:04o})",
+        )
+    return info
+
+
+def _read_managed_file(dir_fd: int, filename: str, *, code: str) -> bytes:
+    try:
+        handle = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as error:
+        raise _fail(code, f"{filename} cannot be read: {error}") from error
+    try:
+        with os.fdopen(handle, "rb") as stream:
+            return stream.read()
+    except OSError as error:
+        raise _fail(code, f"{filename} cannot be read: {error}") from error
+
+
+def _verified_installed_policy(
+    dir_fd: int, *, expected_uid: int
+) -> tuple[bytes, str, dict]:
+    """The installed policy's bytes, hash and parsed document.
+
+    A target we cannot safely read, or that is not valid JSON, is an error in
+    its own right -- never something to be folded into "stale".
+    """
+    _verify_managed_file(
+        dir_fd,
+        MANAGED_SETTINGS_FILENAME,
+        expected_uid=expected_uid,
+        code="CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+    )
+    payload = _read_managed_file(
+        dir_fd, MANAGED_SETTINGS_FILENAME, code="CLAUDE_MANAGED_POLICY_TARGET_INVALID"
+    )
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+            f"{MANAGED_SETTINGS_FILENAME} is not valid JSON: {error}",
+        ) from error
+    if not isinstance(document, dict):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+            f"{MANAGED_SETTINGS_FILENAME} is not a JSON object",
+        )
+    return payload, sha256_bytes(payload), document
+
+
+def _verify_installed_guard(
+    dir_fd: int,
+    *,
+    guard_source_path: str | Path,
+    expected_uid: int,
+) -> str:
+    """The installed guard must already equal the repository's canonical one.
+
+    Replacing the policy while the guard is a different program would install a
+    policy whose hook points at code nobody reviewed together with it. This
+    Work Order does not update the guard as a side effect: it stops instead.
+    """
+    guard_sha = sha256_bytes(Path(guard_source_path).read_bytes())
+    _verify_managed_file(
+        dir_fd,
+        MANAGED_GUARD_FILENAME,
+        expected_uid=expected_uid,
+        code="CLAUDE_MANAGED_POLICY_GUARD_MISMATCH",
+    )
+    installed = _read_managed_file(
+        dir_fd, MANAGED_GUARD_FILENAME, code="CLAUDE_MANAGED_POLICY_GUARD_MISMATCH"
+    )
+    installed_sha = sha256_bytes(installed)
+    if installed_sha != guard_sha:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_GUARD_MISMATCH",
+            f"installed {MANAGED_GUARD_FILENAME} is {installed_sha}, repository "
+            f"canonical guard is {guard_sha}; replace the guard under human "
+            "review before replacing the policy",
+        )
+    return installed_sha
+
+
+def inspect_managed_policy_replacement(
+    *,
+    target_root: str | Path,
+    rendered_settings: Mapping[str, Any],
+    guard_source_path: str | Path = RUNTIME_GUARD_SOURCE_PATH,
+    expected_uid: int = PRODUCTION_MANAGED_UID,
+) -> dict[str, str]:
+    """Read-only readiness report. Writes nothing, anywhere.
+
+    Discovering whether a replacement is needed must not require attempting
+    one, so this renders the candidate, hashes both sides and reports. Anything
+    it cannot verify raises rather than being reported as merely "stale".
+    """
+    root = Path(target_root)
+    dir_fd = _open_managed_directory(root, expected_uid=expected_uid)
+    try:
+        _, installed_sha, installed_document = _verified_installed_policy(
+            dir_fd, expected_uid=expected_uid
+        )
+        guard_sha = _verify_installed_guard(
+            dir_fd, guard_source_path=guard_source_path, expected_uid=expected_uid
+        )
+    finally:
+        os.close(dir_fd)
+
+    candidate_bytes = serialize_managed_settings(rendered_settings)
+    candidate_sha = sha256_bytes(candidate_bytes)
+    current = installed_document == json.loads(candidate_bytes.decode("utf-8"))
+
+    return {
+        "installed_policy_sha256": installed_sha,
+        "rendered_policy_sha256": candidate_sha,
+        "installed_policy_status": "CURRENT" if current else "STALE",
+        "runtime_guard_status": "CURRENT",
+        "runtime_guard_sha256": guard_sha,
+        "replacement_ready": "false" if current else "true",
+    }
+
+
+def replace_managed_policy(
+    *,
+    target_root: str | Path,
+    rendered_settings: Mapping[str, Any],
+    expected_installed_sha256: str,
+    expected_rendered_sha256: str,
+    guard_source_path: str | Path = RUNTIME_GUARD_SOURCE_PATH,
+    expected_uid: int = PRODUCTION_MANAGED_UID,
+) -> dict[str, str]:
+    """Replace a reviewed Managed Policy with a reviewed candidate.
+
+    Compare-and-swap, twice over. The installed hash is checked when the
+    operation starts *and* again immediately before the rename, so a policy
+    that changed while the candidate was being staged is never silently
+    adopted as the new baseline. The candidate is always rendered here from
+    the repository -- there is no interface for installing a JSON file someone
+    edited by hand.
+
+    The old file is never truncated or edited: the candidate is staged beside
+    it in the same directory and moved over it in one atomic rename. Any
+    failure before that rename leaves the installed bytes exactly as they were.
+    """
+    expected_installed_sha256 = verify_sha256_attestation(
+        expected_installed_sha256, label="expected installed policy SHA256"
+    )
+    expected_rendered_sha256 = verify_sha256_attestation(
+        expected_rendered_sha256, label="expected rendered policy SHA256"
+    )
+
+    expected_domains = (
+        ((rendered_settings.get("sandbox") or {}).get("network") or {}).get(
+            "allowedDomains"
+        )
+        or []
+    )
+    verify_managed_settings_contract(rendered_settings, expected_domains=expected_domains)
+
+    candidate_bytes = serialize_managed_settings(rendered_settings)
+    candidate_sha = sha256_bytes(candidate_bytes)
+    if candidate_sha != expected_rendered_sha256:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_CANDIDATE_SHA_MISMATCH",
+            f"the candidate rendered from this repository is {candidate_sha}, "
+            f"but {expected_rendered_sha256} was reviewed; nothing was written",
+        )
+
+    root = Path(target_root)
+    dir_fd = _open_managed_directory(root, expected_uid=expected_uid)
+    staged_name: str | None = None
+    try:
+        installed_info = _verify_managed_file(
+            dir_fd,
+            MANAGED_SETTINGS_FILENAME,
+            expected_uid=expected_uid,
+            code="CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+        )
+        _, installed_sha, _ = _verified_installed_policy(
+            dir_fd, expected_uid=expected_uid
+        )
+        if installed_sha != expected_installed_sha256:
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_INSTALLED_SHA_MISMATCH",
+                f"the installed policy is {installed_sha}, but "
+                f"{expected_installed_sha256} was reviewed; nothing was written",
+            )
+        _verify_installed_guard(
+            dir_fd, guard_source_path=guard_source_path, expected_uid=expected_uid
+        )
+
+        staged_name = _stage_candidate(
+            dir_fd,
+            candidate_bytes,
+            candidate_sha=candidate_sha,
+            owner=(installed_info.st_uid, installed_info.st_gid),
+        )
+
+        # Commit point. Re-verify the target one last time: everything above
+        # took time, and the policy we are about to overwrite must still be
+        # the exact one the operator reviewed.
+        _verify_managed_file(
+            dir_fd,
+            MANAGED_SETTINGS_FILENAME,
+            expected_uid=expected_uid,
+            code="CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+        )
+        _, commit_sha, _ = _verified_installed_policy(dir_fd, expected_uid=expected_uid)
+        if commit_sha != expected_installed_sha256:
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_INSTALLED_SHA_MISMATCH",
+                f"the installed policy changed to {commit_sha} while the "
+                f"candidate was staged; {expected_installed_sha256} was "
+                "reviewed and the change is not adopted as a new baseline",
+            )
+
+        try:
+            os.replace(
+                staged_name,
+                MANAGED_SETTINGS_FILENAME,
+                src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd,
+            )
+        except OSError as error:
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_REPLACE_FAILED",
+                f"the atomic replacement failed: {error}",
+            ) from error
+        staged_name = None
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            # Not every filesystem supports fsync on a directory; the rename
+            # itself was atomic, and the verification below still runs.
+            pass
+
+        _verify_replacement(
+            dir_fd,
+            expected_uid=expected_uid,
+            candidate_sha=candidate_sha,
+            rendered_settings=rendered_settings,
+        )
+    finally:
+        if staged_name is not None:
+            # Never left behind as a candidate, and never kept as a backup.
+            try:
+                os.unlink(staged_name, dir_fd=dir_fd)
+            except OSError:
+                pass
+        os.close(dir_fd)
+
+    return {
+        "managed_settings_path": str(root / MANAGED_SETTINGS_FILENAME),
+        "replaced_policy_sha256": expected_installed_sha256,
+        "managed_settings_sha256": candidate_sha,
+    }
+
+
+def _stage_candidate(
+    dir_fd: int,
+    candidate_bytes: bytes,
+    *,
+    candidate_sha: str,
+    owner: tuple[int, int],
+) -> str:
+    """Write the candidate beside the target, fully, before anything moves.
+
+    Exclusive creation in the target's own directory: same filesystem, so the
+    rename that follows is atomic, and no pre-existing file can be adopted as
+    the staged candidate.
+    """
+    staged_name = f".{MANAGED_SETTINGS_FILENAME}.replace.{os.getpid()}.{os.urandom(8).hex()}"
+    try:
+        handle = os.open(
+            staged_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            MANAGED_SETTINGS_MODE,
+            dir_fd=dir_fd,
+        )
+    except OSError as error:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
+            f"the staging file could not be created: {error}",
+        ) from error
+
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(candidate_bytes)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), MANAGED_SETTINGS_MODE)
+            os.fchown(stream.fileno(), owner[0], owner[1])
+        staged = _read_managed_file(
+            dir_fd, staged_name, code="CLAUDE_MANAGED_POLICY_STAGING_FAILED"
+        )
+        if sha256_bytes(staged) != candidate_sha:
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
+                "the staged candidate does not hash to the reviewed candidate",
+            )
+    except RuntimeSecurityError:
+        _discard_staged(dir_fd, staged_name)
+        raise
+    except OSError as error:
+        _discard_staged(dir_fd, staged_name)
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
+            f"the candidate could not be staged: {error}",
+        ) from error
+    return staged_name
+
+
+def _discard_staged(dir_fd: int, staged_name: str) -> None:
+    try:
+        os.unlink(staged_name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def _verify_replacement(
+    dir_fd: int,
+    *,
+    expected_uid: int,
+    candidate_sha: str,
+    rendered_settings: Mapping[str, Any],
+) -> None:
+    """Confirm what actually landed. A failure here is not recoverable here.
+
+    The replacement already happened, and this Work Order keeps no backup to
+    roll back to, so the honest outcome is a failure that a human inspects --
+    never a success reported by relaxing the check that just failed.
+    """
+    try:
+        _verify_managed_file(
+            dir_fd,
+            MANAGED_SETTINGS_FILENAME,
+            expected_uid=expected_uid,
+            code="CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
+        )
+        final = _read_managed_file(
+            dir_fd,
+            MANAGED_SETTINGS_FILENAME,
+            code="CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
+        )
+    except RuntimeSecurityError as error:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
+            f"{error.message}; the replacement already happened and no backup "
+            "is kept: human inspection required",
+        ) from error
+
+    final_sha = sha256_bytes(final)
+    if final_sha != candidate_sha:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
+            f"the installed policy is {final_sha} after replacement, expected "
+            f"{candidate_sha}; human inspection required",
+        )
+    if json.loads(final.decode("utf-8")) != json.loads(
+        serialize_managed_settings(rendered_settings).decode("utf-8")
+    ):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
+            "the installed policy is not semantically the rendered policy; "
+            "human inspection required",
+        )
+
+
 # --------------------------------------------------------------- deploy ---
 
 
@@ -1003,9 +1493,7 @@ def deploy_managed_policy(
     )
     verify_managed_settings_contract(rendered_settings, expected_domains=expected_domains)
 
-    settings_bytes = (
-        json.dumps(rendered_settings, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    settings_bytes = serialize_managed_settings(rendered_settings)
 
     if not dry_run:
         root.mkdir(parents=True, exist_ok=True)

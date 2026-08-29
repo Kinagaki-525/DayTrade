@@ -274,9 +274,36 @@ sudo apt-get install bubblewrap socat
 - `/etc/daytrade-production-runtime`も同様に regular file / uid 0 /
   group・other非writable / 内容一致 を要求します（content-only verificationでは
   ありません）。
-- Ubuntu 24.04+では`sysctl kernel.apparmor_restrict_unprivileged_userns`を確認し、
-  `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
-  Repository Scriptからは変更しません。
+- **AppArmor prerequisite は Native Linux と WSL2 で扱いが異なります。**
+  Repository Script はどちらの環境でも `sysctl` を変更しません。
+
+  **Native Ubuntu / Linux**
+
+  `sysctl kernel.apparmor_restrict_unprivileged_userns`を確認します。
+
+  - 値が`1`: Claude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定する
+  - 値が`0`: repository側の対応は不要
+  - 値を確認できない場合: Fail-Closedのまま停止する（推測して進めない）
+
+  **Ubuntu on WSL2**
+
+  WSLではAppArmorがinstallされていてもWSL kernelの制約により既定で有効化されず、
+  この`sysctl`自体が存在しないことがあります。存在しない場合は、
+  **このAppArmor固有のsysctl checkはそのWSL環境にはNOT APPLICABLE**として扱います。
+
+  その場合も次を行いません。
+
+  - `sysctl`を新規作成しない
+  - kernel security設定を無効化しない
+  - AppArmor profileを捏造しない
+
+  そして次は**WSLでも一切緩みません**。
+
+  - Seccomp Human Runtime Acceptance V2は必須のまま（`DAYTRADE_SECCOMP_VERIFIED_V2`）
+  - `bwrap` / `socat`の要件は必須のまま
+  - Runtime Security Preflightの契約は不変
+
+  WSLで`sysctl`が存在する場合は、Native Linuxと同じ値ベースの判断を使います。
 
 #### Production Python dependency bootstrap（Human専用）
 
@@ -418,10 +445,12 @@ Production allowed domainsは`config/source_matrix.yaml`の`url_template` host�
 `config/issuer_domain_registry.yaml`から`derive_expected_domains()`が導出する。
 したがって**Source MatrixのhostがPRで変わると、Expected Managed Policyも変わる**。
 
-- 変更をmergeしたら、Humanが下記「Policy deployment」の手順で
-  `scripts/render-claude-production-policy`と`scripts/deploy-claude-managed-policy`を
-  **再実行する**。再deployしないとRuntime Guardが
+- 変更をmergeしたら、Humanが**Managed Policyを更新する**。更新しないとPreflightが
   `CLAUDE_NETWORK_DOMAIN_SET_MISMATCH`で起動を拒否する（Fail-Closed）
+  - Policyが**未installのhost**: 下記「Policy deployment（Human）」で初回installする
+  - Policyが**既にinstall済みのhost**: 下記「Policy replacement（Human専用）」で
+    reviewed replacementを行う。`deploy-claude-managed-policy`は既存Policyを
+    `EXISTING_MANAGED_POLICY_PRESENT`で拒否したままであり、その拒否は緩めない
 - Development側の`.claude/settings.json`の`allowedDomains`もHumanが更新する。
   **Agentはこのファイルを変更しない。** 必要hostが欠けている場合の唯一の正しい挙動は
   `SECURITY_POLICY_CHANGE_REQUIRED`で停止し、Humanの変更を待つことである
@@ -521,6 +550,72 @@ Windows Python Launcher向けの別contextであり、ここでは使わない�
     `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`で拒否される。
 12. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
 
+### Policy replacement（Human専用）
+
+**初回installとは別の操作**である。`deploy-claude-managed-policy`は既存Policyを
+必ず`EXISTING_MANAGED_POLICY_PRESENT`で拒否し、その挙動は変更していない。
+`--force`は存在せず、追加もしない。既にPolicyがinstallされたhostでSource Matrixや
+Production Python identityの変更を反映するには、こちらを使う。
+
+**Managed Policy JSONを手で編集しない。** 編集はProduction Security Contract違反であり、
+復旧手段にもしない。
+
+Humanは**2つのSHA256をreviewして明示する**。どちらもcommandが推測しない。
+
+| attestation | 意味 |
+| --- | --- |
+| `--expected-installed-sha256` | いまhostにinstallされているPolicyをreviewし、置換を承認したこと |
+| `--expected-rendered-sha256` | Reviewed repository stateからrenderされたcandidateをreviewしたこと |
+
+SHAはcanonical lowercase 64桁のみ受理する。大文字の自動変換・whitespace除去・
+prefix除去・短縮hashは行わず、malformedは決定論的に失敗する。
+
+1. まずread-onlyのcheck modeで状態を確認する。`/etc`へ一切書かない。
+
+   ```bash
+   "$PRODUCTION_PYTHON" scripts/replace-claude-managed-policy \
+       --production-python "$PRODUCTION_PYTHON" --check
+   ```
+
+   出力の`installed_policy_sha256` / `rendered_policy_sha256` /
+   `installed_policy_status` / `runtime_guard_status` / `replacement_ready`を確認する。
+   `installed_policy_status=CURRENT`なら置換不要。
+
+2. candidateをrenderしてHumanがreviewする。
+
+   ```bash
+   "$PRODUCTION_PYTHON" scripts/render-claude-production-policy \
+       --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
+   ```
+
+3. reviewした2つのSHAを明示して置換する。root権限が必要。
+
+   ```bash
+   sudo "$PRODUCTION_PYTHON" scripts/replace-claude-managed-policy \
+       --production-python "$PRODUCTION_PYTHON" \
+       --expected-installed-sha256 <reviewed installed sha256> \
+       --expected-rendered-sha256 <reviewed rendered sha256>
+   ```
+
+置換は次の条件をすべて満たしたときだけ行われ、1つでも欠ければ**何も書かない**。
+
+- target directoryとPolicy fileがroot所有・group/other非writable・symlinkでない
+- installed PolicyのSHA256がreviewed installed SHAと完全一致（renameの直前に再確認する
+  compare-and-swap。staging中にbytesが変わった場合、その変更を新しいbaselineとして
+  自動受理せず停止する）
+- candidateのSHA256がreviewed rendered SHAと完全一致
+- installed Runtime Guardがrepositoryのcanonical guardとbyte一致
+  （**このcommandはGuardを更新しない**。不一致なら停止する）
+
+書き込みは同一directory内へexclusive createしたtemporary fileへ行い、`os.replace`で
+atomicに差し替える。既存fileをin-placeで切り詰めたり編集したりしない。rename前に
+失敗した場合、installed bytesは1 byteも変わらず、staged temporary fileは残さない。
+persistent backupは作成しない。
+
+rename成功後の検証（再読込・SHA・ownership・semantic一致）が失敗した場合は、
+**successとして報告しない**。backupを持たないため自動rollbackも行わず、
+Human inspection requiredとして停止する。
+
 ### Runtime Security Preflight
 
 `scripts/claude-production`は次の順序でfail closedに検査し、すべてPASSしたときだけ
@@ -596,6 +691,19 @@ Preflightもshebang任せにせず、launcher自身を同じProduction Pythonで
 `HTTP_USER_AGENT_NOT_CONFIGURED`で停止します。コード側のdefault User-Agentも
 fallbackも存在せず、追加してはいけません。診断のためにHumanが一時的に使った値を
 Repositoryのcanonical defaultへ昇格させることもしません。
+
+**Runtime Security Preflightの前に、Humanがpresence checkpointを行います。**
+Fail-Closedの挙動は正しいものですが、Policy deployment作業を終えてから不足に気づく
+のを避けるため、この確認を先に置きます。
+
+```bash
+test -n "$DAYTRADE_HTTP_USER_AGENT"
+```
+
+空ならここで停止し、Human承認済みの値をProduction shellへmaterializeしてから
+Preflightへ進みます。**値そのものをこのdocumentやrepository artifactへ書かない**
+（`runtime_security.json`にも保存しません）。checkpointが確認するのは
+非空であることだけです。
 
 ### Production Path Materialization Contract
 

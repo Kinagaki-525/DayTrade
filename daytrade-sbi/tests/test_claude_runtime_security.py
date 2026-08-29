@@ -7,9 +7,11 @@ a tmp directory stands in for "the OS".
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1492,3 +1494,680 @@ def test_the_deploy_script_relies_on_internal_canonicalization():
     assert "readlink -f" not in doc
     assert 'PRODUCTION_PYTHON="$(command -v python3)"' in doc
     assert '--production-python "$PRODUCTION_PYTHON"' in doc
+
+
+# ------------------------------------------- managed policy replacement ---
+#
+# DTWO-2026-021. Installing a policy and replacing one are different
+# operations with different risks: the installer must never touch an existing
+# policy, and the replacement must never touch one the operator did not name by
+# hash. Everything below runs entirely under a temporary root, with the
+# expected owner injected, so no test needs /etc or root.
+
+
+REPLACEMENT_UID = os.getuid()
+
+
+def _managed_root(tmp_path):
+    root = tmp_path / "claude-code"
+    root.mkdir(parents=True)
+    os.chmod(root, 0o755)
+    return root
+
+
+def _install_guard(root):
+    guard = root / crs.MANAGED_GUARD_FILENAME
+    guard.write_bytes(crs.RUNTIME_GUARD_SOURCE_PATH.read_bytes())
+    os.chmod(guard, 0o755)
+    return guard
+
+
+def _install_policy(root, payload):
+    target = root / crs.MANAGED_SETTINGS_FILENAME
+    target.write_bytes(crs.serialize_managed_settings(payload))
+    os.chmod(target, 0o644)
+    return target
+
+
+def _stale_policy(rendered):
+    """The rendered policy, aged the two ways the real host was stale.
+
+    Modelled on the Production evidence in the Work Order: a domain set from
+    before www2.jpx.co.jp was added, and hook/Bash rules still naming a
+    Production Python that no longer exists.
+    """
+    stale = json.loads(json.dumps(rendered))
+    stale["sandbox"]["network"]["allowedDomains"] = [
+        "finance.yahoo.co.jp",
+        "kabutan.jp",
+        "www.jpx.co.jp",
+        "www.release.tdnet.info",
+    ]
+    old_python = "/home/daytrade/.venvs/daytrade-production/bin/python3.14"
+    serialized = json.dumps(stale).replace(PRODUCTION_PYTHON, old_python)
+    return json.loads(serialized), old_python
+
+
+def _replacement_world(tmp_path):
+    """A host with a stale policy installed and the canonical guard in place."""
+    root = _managed_root(tmp_path)
+    rendered = crs.render_managed_settings(
+        project_root=str(REPOSITORY_ROOT),
+        daytrade_root=str(PROJECT_ROOT),
+        production_python=PRODUCTION_PYTHON,
+        guard_path=crs.MANAGED_GUARD_PATH,
+    )
+    stale, old_python = _stale_policy(rendered)
+    target = _install_policy(root, stale)
+    _install_guard(root)
+    return {
+        "root": root,
+        "target": target,
+        "rendered": rendered,
+        "stale": stale,
+        "old_python": old_python,
+        "installed_sha": crs.sha256_bytes(target.read_bytes()),
+        "rendered_sha": crs.sha256_bytes(crs.serialize_managed_settings(rendered)),
+    }
+
+
+def _replace(world, **overrides):
+    kwargs = {
+        "target_root": world["root"],
+        "rendered_settings": world["rendered"],
+        "expected_installed_sha256": world["installed_sha"],
+        "expected_rendered_sha256": world["rendered_sha"],
+        "expected_uid": REPLACEMENT_UID,
+    }
+    kwargs.update(overrides)
+    return crs.replace_managed_policy(**kwargs)
+
+
+# TC-01 — the installer still refuses an existing policy -------------------
+
+
+def test_tc01_initial_deploy_still_refuses_an_existing_policy(tmp_path):
+    """AC-01/AC-12: adding a replacement path must not soften installation."""
+    world = _replacement_world(tmp_path)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.deploy_managed_policy(
+            target_root=world["root"], rendered_settings=world["rendered"]
+        )
+    assert excinfo.value.code == "EXISTING_MANAGED_POLICY_PRESENT"
+    assert world["target"].read_bytes() == crs.serialize_managed_settings(
+        world["stale"]
+    )
+
+
+def test_tc01_the_installer_exposes_no_force_escape():
+    """AC-12: no flag, anywhere, that overwrites without review."""
+    for name in ("deploy-claude-managed-policy", "replace-claude-managed-policy"):
+        source = (PROJECT_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        # The word appears in both scripts' prose, explaining its absence; what
+        # must not exist is an actual option.
+        assert 'add_argument("--force"' not in source, name
+        assert "--force" not in source.split('"""', 2)[-1], name
+    for function in (crs.deploy_managed_policy, crs.replace_managed_policy):
+        assert "force" not in inspect.signature(function).parameters
+
+
+# TC-02 / TC-03 — both human attestations are load-bearing ------------------
+
+
+def test_tc02_a_wrong_installed_hash_writes_nothing(tmp_path):
+    """AC-02/AC-03."""
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, expected_installed_sha256="0" * 64)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INSTALLED_SHA_MISMATCH"
+    assert world["target"].read_bytes() == before
+    assert sorted(p.name for p in world["root"].iterdir()) == [
+        crs.MANAGED_GUARD_FILENAME,
+        crs.MANAGED_SETTINGS_FILENAME,
+    ]
+
+
+def test_tc03_a_wrong_candidate_hash_writes_nothing(tmp_path):
+    """AC-02/AC-04: rejected before the target is even opened."""
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, expected_rendered_sha256="1" * 64)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_CANDIDATE_SHA_MISMATCH"
+    assert world["target"].read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "attestation",
+    [
+        pytest.param("ABCD" * 16, id="uppercase-is-not-converted"),
+        pytest.param(" " + "a" * 64, id="whitespace-is-not-trimmed"),
+        pytest.param("a" * 64 + " ", id="trailing-whitespace-is-not-trimmed"),
+        pytest.param("sha256:" + "a" * 64, id="prefix-is-not-stripped"),
+        pytest.param("a" * 40, id="shortened-hash-is-refused"),
+        pytest.param("", id="empty-is-refused"),
+        pytest.param(None, id="missing-is-refused"),
+    ],
+)
+def test_a_malformed_attestation_is_refused_deterministically(tmp_path, attestation):
+    """A hash that needs repairing was not copied from the reviewed artefact."""
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, expected_installed_sha256=attestation)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_ATTESTATION_INVALID"
+    assert world["target"].read_bytes() == before
+
+
+# TC-04 — only a repository-rendered candidate can be installed -------------
+
+
+def test_tc04_there_is_no_interface_for_installing_arbitrary_json():
+    """AC-05: the candidate is rendered here, never read from a file path."""
+    parameters = inspect.signature(crs.replace_managed_policy).parameters
+    assert "rendered_settings" in parameters
+    for forbidden in ("candidate_path", "settings_path", "policy_file", "source_file"):
+        assert forbidden not in parameters
+    source = (PROJECT_ROOT / "scripts" / "replace-claude-managed-policy").read_text(
+        encoding="utf-8"
+    )
+    assert "render_managed_settings" in source
+
+
+def test_tc04_a_candidate_failing_the_contract_is_refused(tmp_path):
+    """A rendered policy that violates the security contract never lands."""
+    world = _replacement_world(tmp_path)
+    weakened = json.loads(json.dumps(world["rendered"]))
+    weakened["sandbox"]["network"]["allowedDomains"].append("*.example.com")
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError):
+        _replace(
+            world,
+            rendered_settings=weakened,
+            expected_rendered_sha256=crs.sha256_bytes(
+                crs.serialize_managed_settings(weakened)
+            ),
+        )
+    assert world["target"].read_bytes() == before
+
+
+# TC-05 / TC-06 — the two staleness dimensions the incident had -------------
+
+
+def test_tc05_a_stale_domain_set_becomes_the_current_exact_allowlist(tmp_path):
+    """AC-06: www2.jpx.co.jp arrives, as an exact host, with no wildcard."""
+    world = _replacement_world(tmp_path)
+    installed_before = json.loads(world["target"].read_text(encoding="utf-8"))
+    assert "www2.jpx.co.jp" not in installed_before["sandbox"]["network"][
+        "allowedDomains"
+    ]
+
+    _replace(world)
+
+    after = json.loads(world["target"].read_text(encoding="utf-8"))
+    domains = after["sandbox"]["network"]["allowedDomains"]
+    assert "www2.jpx.co.jp" in domains
+    assert tuple(domains) == crs.derive_expected_domains()
+    assert not any("*" in domain for domain in domains)
+
+
+def test_tc06_a_stale_python_identity_becomes_the_canonical_one(tmp_path):
+    """AC-07: every reference moves together -- hooks and the Bash rule."""
+    world = _replacement_world(tmp_path)
+    assert world["old_python"] in world["target"].read_text(encoding="utf-8")
+
+    _replace(world)
+
+    text = world["target"].read_text(encoding="utf-8")
+    assert world["old_python"] not in text
+    canonical = crs.canonical_production_python(PRODUCTION_PYTHON)
+    after = json.loads(text)
+    assert f"Bash({canonical} -B -m src.cli *)" in after["permissions"]["allow"]
+    for event in ("ConfigChange", "PreToolUse"):
+        commands = json.dumps(after["hooks"][event])
+        assert canonical in commands
+
+
+# TC-07 — the guard is a precondition, never a side effect ------------------
+
+
+def test_tc07_a_divergent_installed_guard_blocks_the_replacement(tmp_path):
+    """AC-08: a policy whose hook points at unreviewed code is not installed."""
+    world = _replacement_world(tmp_path)
+    guard = world["root"] / crs.MANAGED_GUARD_FILENAME
+    guard.write_bytes(b"#!/usr/bin/env python3\n# not the canonical guard\n")
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_GUARD_MISMATCH"
+    assert world["target"].read_bytes() == before
+
+
+def test_tc07_the_replacement_never_writes_the_guard(tmp_path):
+    """This Work Order replaces the policy only."""
+    world = _replacement_world(tmp_path)
+    guard = world["root"] / crs.MANAGED_GUARD_FILENAME
+    before = guard.read_bytes()
+
+    _replace(world)
+
+    assert guard.read_bytes() == before
+
+
+# TC-08 — unsafe targets and directories -----------------------------------
+
+
+def test_tc08_a_symlinked_target_is_refused(tmp_path):
+    """AC-09: the write must not be redirected through a link."""
+    world = _replacement_world(tmp_path)
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_bytes(world["target"].read_bytes())
+    world["target"].unlink()
+    world["target"].symlink_to(elsewhere)
+    before = elsewhere.read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_TARGET_INVALID"
+    assert elsewhere.read_bytes() == before
+
+
+def test_tc08_a_directory_target_is_refused(tmp_path):
+    world = _replacement_world(tmp_path)
+    world["target"].unlink()
+    world["target"].mkdir()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_TARGET_INVALID"
+
+
+def test_tc08_a_foreign_owner_is_refused(tmp_path):
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, expected_uid=REPLACEMENT_UID + 1)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID"
+    assert world["target"].read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mode", [pytest.param(0o664, id="group-writable"), pytest.param(0o666, id="world-writable")]
+)
+def test_tc08_a_writable_target_is_refused(tmp_path, mode):
+    world = _replacement_world(tmp_path)
+    os.chmod(world["target"], mode)
+    before = world["target"].read_bytes()
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_TARGET_INVALID"
+    assert world["target"].read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mode", [pytest.param(0o775, id="group-writable"), pytest.param(0o777, id="world-writable")]
+)
+def test_a_writable_managed_directory_is_refused(tmp_path, mode):
+    """The directory is part of the boundary: a writable one allows swaps."""
+    world = _replacement_world(tmp_path)
+    os.chmod(world["root"], mode)
+    before = world["target"].read_bytes()
+
+    try:
+        with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+            _replace(world)
+        assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID"
+        assert world["target"].read_bytes() == before
+    finally:
+        os.chmod(world["root"], 0o755)
+
+
+def test_a_symlinked_managed_directory_is_refused(tmp_path):
+    world = _replacement_world(tmp_path)
+    linked = tmp_path / "linked-root"
+    linked.symlink_to(world["root"])
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, target_root=linked)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID"
+
+
+def test_an_unparseable_installed_policy_is_not_rounded_to_stale(tmp_path):
+    """A target we cannot read is its own error, never 'merely stale'."""
+    world = _replacement_world(tmp_path)
+    world["target"].write_bytes(b"{ not json")
+    os.chmod(world["target"], 0o644)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world, expected_installed_sha256=crs.sha256_bytes(b"{ not json"))
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_TARGET_INVALID"
+
+
+# TC-09 — every pre-commit failure leaves the old bytes untouched -----------
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [
+        pytest.param("open", id="temp-create"),
+        pytest.param("write", id="write"),
+        pytest.param("fsync", id="flush"),
+        pytest.param("fchmod", id="chmod"),
+        pytest.param("fchown", id="chown"),
+        pytest.param("replace", id="replace-syscall"),
+    ],
+)
+def test_tc09_a_failure_before_commit_preserves_the_installed_bytes(
+    tmp_path, monkeypatch, failing
+):
+    """AC-10: the old policy is never truncated or edited in place."""
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+    real = getattr(os, failing)
+
+    def exploding(*args, **kwargs):
+        # Only the replacement's own staging call is failed; unrelated writes
+        # by pytest or the interpreter must still work.
+        raise OSError(28, "simulated failure")
+
+    if failing == "write":
+        real_open = os.open
+
+        def failing_write_open(*args, **kwargs):
+            handle = real_open(*args, **kwargs)
+            os.close(handle)
+            raise OSError(28, "simulated failure")
+
+        monkeypatch.setattr(os, "open", failing_write_open)
+    else:
+        monkeypatch.setattr(os, failing, exploding)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code in {
+        "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
+        "CLAUDE_MANAGED_POLICY_REPLACE_FAILED",
+        "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
+        "CLAUDE_MANAGED_POLICY_TARGET_INVALID",
+    }
+
+    monkeypatch.undo()
+    assert world["target"].read_bytes() == before
+    leftovers = [
+        path.name
+        for path in world["root"].iterdir()
+        if path.name
+        not in {crs.MANAGED_SETTINGS_FILENAME, crs.MANAGED_GUARD_FILENAME}
+    ]
+    assert leftovers == [], f"staged temporary file left behind: {leftovers}"
+    _ = real
+
+
+def test_tc09_a_target_changed_while_staging_stops_at_the_commit_point(
+    tmp_path, monkeypatch
+):
+    """Addendum A-01: compare-and-swap, checked again just before the rename.
+
+    A policy edited between the first hash check and the rename must not be
+    silently adopted as the new baseline -- the operator reviewed the earlier
+    bytes, not these.
+    """
+    world = _replacement_world(tmp_path)
+    real_replace = os.replace
+    changed = json.loads(json.dumps(world["stale"]))
+    changed["permissions"]["deny"] = list(changed["permissions"]["deny"]) + ["Edit(//x)"]
+    changed_bytes = crs.serialize_managed_settings(changed)
+
+    original_stage = crs._stage_candidate
+
+    def stage_then_tamper(*args, **kwargs):
+        staged = original_stage(*args, **kwargs)
+        world["target"].write_bytes(changed_bytes)
+        os.chmod(world["target"], 0o644)
+        return staged
+
+    monkeypatch.setattr(crs, "_stage_candidate", stage_then_tamper)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INSTALLED_SHA_MISMATCH"
+
+    monkeypatch.undo()
+    # The tampered bytes stay: they are not overwritten by the candidate, and
+    # they are not accepted as a baseline either.
+    assert world["target"].read_bytes() == changed_bytes
+    leftovers = [
+        path.name
+        for path in world["root"].iterdir()
+        if path.name
+        not in {crs.MANAGED_SETTINGS_FILENAME, crs.MANAGED_GUARD_FILENAME}
+    ]
+    assert leftovers == [], f"staged temporary file left behind: {leftovers}"
+    _ = real_replace
+
+
+# TC-10 — a successful replacement -----------------------------------------
+
+
+def test_tc10_a_successful_replacement_is_atomic_and_verified(tmp_path):
+    """AC-10/AC-11 and Addendum A-02: byte-identical to the shared serializer."""
+    world = _replacement_world(tmp_path)
+
+    result = _replace(world)
+
+    target = world["target"]
+    assert target.is_file() and not target.is_symlink()
+    info = os.stat(target)
+    assert stat.S_IMODE(info.st_mode) == 0o644
+    assert info.st_uid == REPLACEMENT_UID
+    assert not info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+
+    expected_bytes = crs.serialize_managed_settings(world["rendered"])
+    assert target.read_bytes() == expected_bytes
+    assert crs.sha256_bytes(target.read_bytes()) == world["rendered_sha"]
+    assert result["managed_settings_sha256"] == world["rendered_sha"]
+    assert result["replaced_policy_sha256"] == world["installed_sha"]
+    assert json.loads(target.read_text(encoding="utf-8")) == world["rendered"]
+    assert [
+        path.name for path in sorted(world["root"].iterdir())
+    ] == [crs.MANAGED_GUARD_FILENAME, crs.MANAGED_SETTINGS_FILENAME]
+
+
+def test_a_post_verification_failure_is_reported_as_failure(tmp_path, monkeypatch):
+    """Addendum A-05: no rollback, no success, human inspection required."""
+    world = _replacement_world(tmp_path)
+
+    def corrupt(*args, **kwargs):
+        raise crs.RuntimeSecurityError(
+            "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED", "simulated"
+        )
+
+    monkeypatch.setattr(crs, "_verify_replacement", corrupt)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED"
+
+    monkeypatch.undo()
+    # The replacement did happen; no automatic rollback is attempted.
+    assert world["target"].read_bytes() == crs.serialize_managed_settings(
+        world["rendered"]
+    )
+
+
+# Addendum A-02 — one serializer for deploy and replacement -----------------
+
+
+def test_deploy_and_replacement_agree_on_the_canonical_bytes(tmp_path):
+    """The whole review contract rests on both sides hashing the same bytes."""
+    rendered = crs.render_managed_settings(
+        project_root=str(REPOSITORY_ROOT),
+        daytrade_root=str(PROJECT_ROOT),
+        production_python=PRODUCTION_PYTHON,
+        guard_path=crs.MANAGED_GUARD_PATH,
+    )
+    canonical = crs.serialize_managed_settings(rendered)
+
+    fresh = tmp_path / "fresh"
+    deployed = crs.deploy_managed_policy(
+        target_root=fresh, rendered_settings=rendered
+    )
+    installed = (fresh / crs.MANAGED_SETTINGS_FILENAME).read_bytes()
+
+    assert installed == canonical
+    assert deployed["managed_settings_sha256"] == crs.sha256_bytes(canonical)
+    assert crs.render_managed_settings_json(
+        project_root=str(REPOSITORY_ROOT),
+        daytrade_root=str(PROJECT_ROOT),
+        production_python=PRODUCTION_PYTHON,
+        guard_path=crs.MANAGED_GUARD_PATH,
+    ) == canonical.decode("utf-8")
+
+    world = _replacement_world(tmp_path / "existing")
+    assert world["rendered_sha"] == crs.sha256_bytes(canonical)
+    _replace(world)
+    assert world["target"].read_bytes() == canonical
+
+
+# TC-11 — check mode -------------------------------------------------------
+
+
+def test_tc11_check_mode_reports_staleness_and_writes_nothing(tmp_path):
+    """AC-13: readiness is discoverable without attempting an overwrite."""
+    world = _replacement_world(tmp_path)
+    before = {
+        path.name: path.read_bytes() for path in sorted(world["root"].iterdir())
+    }
+
+    report = crs.inspect_managed_policy_replacement(
+        target_root=world["root"],
+        rendered_settings=world["rendered"],
+        expected_uid=REPLACEMENT_UID,
+    )
+
+    assert report["installed_policy_sha256"] == world["installed_sha"]
+    assert report["rendered_policy_sha256"] == world["rendered_sha"]
+    assert report["installed_policy_status"] == "STALE"
+    assert report["runtime_guard_status"] == "CURRENT"
+    assert report["replacement_ready"] == "true"
+    assert {
+        path.name: path.read_bytes() for path in sorted(world["root"].iterdir())
+    } == before
+
+
+def test_tc11_check_mode_reports_a_current_policy_as_current(tmp_path):
+    world = _replacement_world(tmp_path)
+    _replace(world)
+
+    report = crs.inspect_managed_policy_replacement(
+        target_root=world["root"],
+        rendered_settings=world["rendered"],
+        expected_uid=REPLACEMENT_UID,
+    )
+    assert report["installed_policy_status"] == "CURRENT"
+    assert report["replacement_ready"] == "false"
+
+
+@pytest.mark.parametrize(
+    "break_it,expected",
+    [
+        pytest.param("json", "CLAUDE_MANAGED_POLICY_TARGET_INVALID", id="invalid-json"),
+        pytest.param("mode", "CLAUDE_MANAGED_POLICY_TARGET_INVALID", id="unsafe-mode"),
+        pytest.param("guard", "CLAUDE_MANAGED_POLICY_GUARD_MISMATCH", id="guard"),
+    ],
+)
+def test_tc11_check_mode_never_rounds_a_defect_into_stale(tmp_path, break_it, expected):
+    """Addendum A-07: STALE means a safe, valid, merely-outdated policy."""
+    world = _replacement_world(tmp_path)
+    if break_it == "json":
+        world["target"].write_bytes(b"{ not json")
+        os.chmod(world["target"], 0o644)
+    elif break_it == "mode":
+        os.chmod(world["target"], 0o666)
+    else:
+        (world["root"] / crs.MANAGED_GUARD_FILENAME).write_bytes(b"# divergent\n")
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.inspect_managed_policy_replacement(
+            target_root=world["root"],
+            rendered_settings=world["rendered"],
+            expected_uid=REPLACEMENT_UID,
+        )
+    assert excinfo.value.code == expected
+
+
+def test_check_mode_prints_no_environment_values():
+    """A readiness report is not a place to leak a User-Agent or a secret."""
+    source = (PROJECT_ROOT / "scripts" / "replace-claude-managed-policy").read_text(
+        encoding="utf-8"
+    )
+    assert "os.environ" not in source
+    assert "DAYTRADE_HTTP_USER_AGENT" not in source
+
+
+# The Human-only wrapper ---------------------------------------------------
+
+
+def test_the_replacement_wrapper_is_human_only_and_requires_both_hashes():
+    script = PROJECT_ROOT / "scripts" / "replace-claude-managed-policy"
+    assert os.access(script, os.X_OK)
+    source = script.read_text(encoding="utf-8")
+    assert "HUMAN-ONLY" in source
+    assert "os.geteuid() != 0" in source
+    assert "--expected-installed-sha256" in source
+    assert "--expected-rendered-sha256" in source
+    assert "coding agent must never run this script" in source
+
+
+def test_the_replacement_wrapper_uses_the_production_owner_and_writes_nothing(tmp_path):
+    """The wrapper is Production-shaped: uid 0, with no way to relax it.
+
+    Addendum A-08 allows the core helper to take an expected uid so the tests
+    above can run under a temporary root, but the wrapper must not expose that
+    seam. Running --check against a test-owned directory therefore fails
+    closed on ownership -- which is exactly the evidence that the wrapper is
+    asking for root-owned Production files -- and still writes nothing.
+    """
+    world = _replacement_world(tmp_path)
+    before = {path.name: path.read_bytes() for path in sorted(world["root"].iterdir())}
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(PROJECT_ROOT / "scripts" / "replace-claude-managed-policy"),
+            "--production-python",
+            PRODUCTION_PYTHON,
+            "--target-root",
+            str(world["root"]),
+            "--check",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID" in completed.stderr
+    assert "expected 0" in completed.stderr
+    assert {
+        path.name: path.read_bytes() for path in sorted(world["root"].iterdir())
+    } == before
+
+
+def test_the_replacement_cli_exposes_no_expected_uid_relaxation():
+    """A-08: the test seam is internal; the CLI must not surface it."""
+    source = (PROJECT_ROOT / "scripts" / "replace-claude-managed-policy").read_text(
+        encoding="utf-8"
+    )
+    for forbidden in ("--expected-uid", "expected_uid", "--allow-any-owner"):
+        assert forbidden not in source
