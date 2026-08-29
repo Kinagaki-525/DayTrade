@@ -1104,6 +1104,104 @@ def test_a_non_100_share_unit_still_rejects_with_the_existing_reason_code():
     assert research["reason_codes"] == ["SHARE_UNIT_NOT_100"]
 
 
+def _valid_foreign_reject():
+    """A genuine FOREIGN_STOCK reject, plus its Canonical Source Ledger."""
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="プライム", foreign_units={"1234": "100"}, share_unit=None
+    )
+    research = _apply(record, ledger, refs, by_ref)
+    assert research["stage1_status"] == "REJECTED"
+    return research, ledger, refs, by_ref
+
+
+def _is_backed(research, ledger, refs, by_ref) -> bool:
+    from src.stage1 import source_backed_stage1_reject
+
+    return source_backed_stage1_reject(
+        research,
+        valid_source_refs=refs,
+        valid_source_attempt_ids={UNRELATED_ATTEMPT_ID},
+        source_ids_by_evidence_id=by_ref,
+        source_values=ledger,
+    )
+
+
+def _evidence_error(research, ledger, refs, by_ref):
+    from src.stage1 import stage1_reject_evidence_error
+
+    return stage1_reject_evidence_error(
+        research,
+        valid_source_refs=refs,
+        valid_source_attempt_ids={UNRELATED_ATTEMPT_ID},
+        source_ids_by_evidence_id=by_ref,
+        source_values=ledger,
+    )
+
+
+UNRELATED_ATTEMPT_ID = "attempt-unrelated"
+UNRELATED_REF = "JPX_TRADING_UNIT:1234:trading_unit"
+
+
+def test_a_fabricated_ref_invalidates_a_security_type_reject():
+    """T26: a ref that exists nowhere is still a claim about evidence."""
+    research, ledger, refs, by_ref = _valid_foreign_reject()
+    _security_type_check(research)["source_refs"].append("FABRICATED:1234:ref")
+
+    assert not _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is not None
+
+
+def test_an_unrelated_but_real_ref_invalidates_a_security_type_reject():
+    """T27: a genuine Source Record the classification never consumed."""
+    research, ledger, refs, by_ref = _valid_foreign_reject()
+    assert UNRELATED_REF in refs  # really is in the Canonical Source Ledger
+    _security_type_check(research)["source_refs"].append(UNRELATED_REF)
+
+    assert not _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is not None
+
+
+def test_a_duplicated_ref_invalidates_a_security_type_reject():
+    """T28: the same evidence listed twice is not the evidence set."""
+    research, ledger, refs, by_ref = _valid_foreign_reject()
+    _security_type_check(research)["source_refs"].append(LISTING_REF)
+
+    assert not _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is not None
+
+
+def test_any_source_attempt_id_invalidates_a_security_type_reject():
+    """T29: classification reads Source Records, never Attempts."""
+    research, ledger, refs, by_ref = _valid_foreign_reject()
+    _security_type_check(research)["source_attempt_ids"].append(UNRELATED_ATTEMPT_ID)
+
+    assert not _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is not None
+
+
+def test_a_foreign_reject_with_exactly_its_two_refs_is_valid():
+    """T30: listing + foreign, exactly, and no attempt ids."""
+    research, ledger, refs, by_ref = _valid_foreign_reject()
+    check = _security_type_check(research)
+    assert sorted(check["source_refs"]) == sorted([LISTING_REF, FOREIGN_REF])
+    assert check["source_attempt_ids"] == []
+
+    assert _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is None
+
+
+def test_an_etf_reject_with_exactly_its_listing_ref_is_valid():
+    """T31: listing ref exactly once, no attempt ids."""
+    record, ledger, refs, by_ref = _evidence(market_segment="ETF", share_unit=None)
+    research = _apply(record, ledger, refs, by_ref)
+    check = _security_type_check(research)
+    assert check["source_refs"] == [LISTING_REF]
+    assert check["source_attempt_ids"] == []
+
+    assert _is_backed(research, ledger, refs, by_ref)
+    assert _evidence_error(research, ledger, refs, by_ref) is None
+
+
 # ------------------------------------------------ Source Matrix / bindings ---
 
 

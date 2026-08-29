@@ -20,8 +20,11 @@ ALLOWED_STAGE1_REJECTS = {
     "share_unit": {"SHARE_UNIT_NOT_100"},
     "capital_limit": {"CAPITAL_LIMIT_EXCEEDED"},
 }
+#: Checks whose required evidence IS expressible as a fixed source-id set.
+#: ``security_type`` deliberately has no entry here: its requirement depends on
+#: the classification path, and :func:`_security_type_reject_is_backed` is the
+#: single source of truth for it.
 STAGE1_CHECK_REQUIRED_SOURCE_IDS = {
-    "security_type": {"JPX_LISTED_COMPANY"},
     "share_unit": {"JPX_TRADING_UNIT"},
 }
 
@@ -259,8 +262,16 @@ def _security_type_reject_is_backed(
     evidence that distinguishes it.
 
     So the classification is recomputed from the Canonical Source Ledger and
-    the check must carry exactly the refs that classification consumed. The
-    check's own free text is never parsed: a reject cannot describe itself
+    the check must carry **exactly** the refs that classification consumed --
+    no fewer, no more, and none repeated. Containment is not enough: a reject
+    that pads its refs with fabricated, unrelated or duplicated entries is
+    claiming evidence the classification never consumed, which is precisely
+    what this check exists to detect. For the same reason the check must carry
+    no ``source_attempt_ids`` at all: security_type classification reads
+    Source Records, never Attempts, so any Attempt id here is an assertion
+    about evidence that took no part in the decision.
+
+    The check's own free text is never parsed: a reject cannot describe itself
     into validity.
     """
     if research is None or source_values is None:
@@ -279,7 +290,13 @@ def _security_type_reject_is_backed(
         # The evidence says this candidate IS supported, so an
         # SECURITY_TYPE_UNSUPPORTED reject contradicts it.
         return False
-    return set(evidence.source_refs) <= set(_text_items(check.get("source_refs")))
+
+    if _text_items(check.get("source_attempt_ids")):
+        return False
+    actual_refs = _text_items(check.get("source_refs"))
+    if len(actual_refs) != len(set(actual_refs)):
+        return False
+    return set(actual_refs) == set(evidence.source_refs)
 
 
 def _has_required_stage1_source(
