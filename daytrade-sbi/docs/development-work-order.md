@@ -45,16 +45,24 @@ GitHub main : daytrade-sbi/docs/development-work-order.md
         ▼
 ChatGPT      案件ごとの実Work Orderを生成
         ▼
-Human        handoff
+Human        Work Order handoff
         ▼
 Claude Development
         ├─ Implementation
         ├─ Tests
-        └─ Draft PR + Completion Evidence
+        ├─ Commit
+        ├─ Safe Push
+        └─ Draft PR
         ▼
-GitHub       HEAD SHA / Diff / CI / PR Body
+Claude       Implementation Completion Report生成（Layer 1）
         ▼
-ChatGPT Review （Work Orderに対して）
+Human        Report受領
+        ▼
+GitHub Actions   CI
+        ▼
+ChatGPT Review   Latest HEAD / Diff / CI / Report / Security / Fail-Closed を独立確認
+        ▼
+Review Evidence（Layer 2）
         ▼
 APPROVE / REQUEST CHANGES
         ▼
@@ -62,7 +70,118 @@ Human Merge
 ```
 
 実Work Orderはrepositoryへ保存しない。Work Order本文の保管場所はChatGPT / Humanの
-handoffであり、repositoryが保持するのは**この形式仕様**とPRのCompletion Evidenceである。
+handoffであり、repositoryが保持するのは**この形式仕様**である。Implementation
+Completion ReportとReview Evidenceもrepository fileとして保存しない。
+
+## Evidence Model
+
+Evidenceは**provenanceの異なる2層**に分離する。両者を同じ概念として扱わない（MUST NOT）。
+Claudeの自己申告と、ReviewerがGitHubから独立確認した事実は別物である。
+
+| | Layer 1 | Layer 2 |
+| --- | --- | --- |
+| 名称 | **Implementation Completion Report** | **Review Evidence** |
+| Producer | Claude Code | ChatGPT / Human |
+| 性質 | 自己申告（Claudeが自ら実行・確認した結果） | 独立検証 |
+| 情報源 | 実装したdiff / 実行したtest / local repository state | GitHub repository state / PR / latest HEAD SHA / diff / GitHub Actions / Layer 1 Report / Security・Fail-Closed評価 |
+| 保存先 | Humanへのhandoff（repository fileにしない） | PRに紐づくdurable record（repository fileにしない） |
+
+ChatGPTはLayer 1を**自己申告Evidenceとして扱い**、GitHub上で確認可能な情報を
+独立に確認する（MUST）。Layer 1の記述をそのままLayer 2の検証結果として採用しない。
+
+### Layer 1: Implementation Completion Report
+
+Claudeが生成するEvidenceの正式名称は **Implementation Completion Report** とする。
+Human-readable Markdownの完成形としてHumanへ返す（MUST）。
+
+最低限次を含む（MUST）。
+
+```text
+Work Order ID
+Work Order Version
+Base SHA
+Branch
+Final HEAD SHA
+PR
+Changed Files
+Implementation Summary
+Acceptance Criteria Results
+Tests actually run
+Security Contract impact
+Fail-Closed Contract impact
+Deviations
+Unresolved Items
+```
+
+Acceptance Criteria Resultの許可値:
+
+```text
+PASS
+FAIL
+BLOCKED
+NOT VERIFIED
+```
+
+`NOT VERIFIED` は、**Claude自身が確認能力を持たない外部状態**に対して使う。
+確認していないGitHub状態・CIを `PASS` や `success` と記載しては
+**ならない（MUST NOT）**。GitHub Actions CIをClaude自身が確認できない場合は、
+
+```text
+GitHub CI: NOT VERIFIED BY CLAUDE
+```
+
+と記載する（MUST）。
+
+**ClaudeがPR bodyへReportを反映できることは要求しない。** Reportの正式なhandoff先は
+Humanである。PR bodyはCompletion情報の標準的な表示場所として維持するが、Claudeによる
+PR body更新はMUSTではない。
+
+### Layer 2: Review Evidence
+
+ChatGPT / HumanがGitHubから独立確認して作るEvidence。最低限次を表現できることを
+Contractとする（MUST）。
+
+```text
+Work Order ID
+PR Number
+Base Branch
+Reviewed HEAD SHA
+Changed Files
+Acceptance Criteria Assessment
+CI Assessment
+Security Contract Assessment
+Fail-Closed Assessment
+Regression Assessment
+Documentation Assessment
+Known Deviations
+Unresolved Items
+Final Verdict
+```
+
+Final Verdictの許可値:
+
+```text
+APPROVE
+REQUEST CHANGES
+```
+
+Review EvidenceのためにJSON / YAML schemaや新しいrepository artifactを作成しては
+**ならない（MUST NOT）**。
+
+### Durable Review Record
+
+Human Merge前に、**reviewの対象となったHEADと最終Verdictを後から追跡できる形**で
+GitHub上へ残す（MUST）。許可される保存先は次のいずれかである。
+
+- PR body
+- PR comment
+- GitHub review record
+
+このrecordの作成はChatGPT / Humanの責務であり、**Claude自身にこれらのGitHub metadata
+writeを要求しては ならない（MUST NOT）**。Claudeへgh CLIやGitHub API write権限を
+付与することでこれを満たそうとしない。
+
+reviewed HEADがreview後に変わった場合、ChatGPTは新HEADを再reviewする（MUST）。
 
 ## Responsibility Contract
 
@@ -78,10 +197,15 @@ MUST:
 - Test CasesとAcceptance Criteriaを定義する
 - Work Orderを発行する
 - PRをWork Orderに対してreviewする
+- reviewにあたり、latest HEAD SHA / diff / CI結果 / repository stateを
+  **GitHubから独立に確認する**
+- Review Evidenceを作り、Durable Review RecordとしてGitHubへ残す
 
 MUST NOT:
 
 - Architecture決定をClaudeへ丸投げする
+- Claudeの自己申告Reportを、独立確認なしに検証済みEvidenceとして扱う
+- 自らmergeする
 
 ### Claude Code / Implementer
 
@@ -91,8 +215,13 @@ MUST:
 - Work OrderのFIXED decisionに従う
 - Scope内で実装する
 - testsを追加・実行する
-- Completion Evidenceを作る
 - commit / Safe Push / Draft PRを行う
+- **Implementation Completion Report（Layer 1）を完成形Markdownとして生成し、
+  Humanへhandoffする**
+- 自ら確認できない外部状態を `NOT VERIFIED` として返す
+
+Claudeの実装完了責務は**Report生成とHumanへのhandoffまで**である。PR bodyへの反映や
+GitHub Actions結果の最終確認はClaudeの完了条件に含まれない。
 
 MUST NOT:
 
@@ -101,6 +230,7 @@ MUST NOT:
 - Fail-Closed Contractを緩和する
 - Scopeを独断で拡張する
 - Production Human-only操作を実行する
+- 確認していないGitHub状態・CI結果を `PASS` / `success` と報告する
 
 ### Human
 
@@ -217,7 +347,7 @@ Canonical Templateは次のsectionを、この順序を基本として含む（M
 16. Acceptance Criteria
 17. 実装順序
 18. Commit / Push / PR条件
-19. Completion Evidence
+19. Implementation Completion Report
 20. 完了報告フォーマット
 ```
 
@@ -265,6 +395,18 @@ PR Completion EvidenceはAcceptance Criteria単位で結果を返す（MUST）�
 上位のrepository policyとWork Orderが衝突する場合、**より厳しい既存policyを維持して
 STOPする**（MUST）。
 
+次をClaudeへ付与しては**ならない（MUST NOT）**。Capability mismatchはEvidence handoffで
+解決し、権限追加では解決しない。
+
+```text
+gh CLI permission
+arbitrary GitHub API write
+GitHub token
+PR auto-edit privilege
+PR comment auto-write privilege
+auto merge privilege
+```
+
 ## Fail-Closed Contract
 
 Development Process Contract自体もFail-Closedとする。次の場合、Claudeは推測して
@@ -279,8 +421,26 @@ Development Process Contract自体もFail-Closedとする。次の場合、Claud
 - Required file / API / symbolがWork OrderのConfirmed Factと実態で重大に異なる
 - Work Orderが要求するBase前提が安全に成立しない
 - Acceptance Criteriaの意味が一意に確定できない
+- Final HEAD SHAを取得できずImplementation Completion Reportを成立させられない
+- required testsを実行できない
 
 この場合、実装を拡張・再設計せずSTOPする。
+
+### Capability Boundary（Fail-Closedではない）
+
+次は**Capability boundary**であり、これ**だけ**を理由にFail-Closedで停止しては
+**ならない（MUST NOT）**。
+
+- Claude自身がPR bodyを編集できない
+- Claude自身がGitHub Actions CIを確認できない
+- Claude自身がGitHub review recordを書けない
+
+これらはSecurityやFail-Closedを守るために必要な停止ではなく、Development Process
+Contractと実際のCapabilityの不一致にすぎない。implementation / tests / commit /
+Safe Push / Draft PR / Report生成が正常完了しているなら、作業は完了である。
+
+確認不能な外部状態は、虚偽の `PASS` にせず `NOT VERIFIED` としてhandoffする（MUST）。
+Capability mismatchの解決のためにSecurity boundaryを弱めては**ならない（MUST NOT）**。
 
 ## Implementation Stop Conditions
 
@@ -322,10 +482,10 @@ Work Orderの導入・改訂は、既存Business Data Contract（Raw Evidence / 
 source artifacts / market data / ranking / selection / recommendation / risk /
 config schema / source matrix schema / strategy schema）を変更しない（MUST NOT）。
 
-## PR Completion Evidence Contract
+## PR Body Contract
 
-Development PRのbodyは `.github/pull_request_template.md` を使い、Completion Evidence
-として機能させる。
+PR bodyはCompletion情報の**標準的な表示場所**として維持する。書式は
+`.github/pull_request_template.md` に従う。
 
 MUST:
 
@@ -333,7 +493,7 @@ MUST:
 - Acceptance CriteriaをID単位で報告する
 - `PASS` を宣言する場合はtest / code / evidenceのいずれかを示す
 - Security / Fail-Closedへの影響を明記する
-- Final HEAD SHAはPR作成時点またはCompletion Report時点のHEADを記録する
+- Final HEAD SHAはPR作成時点またはReport時点のHEADを記録する
 
 MUST NOT:
 
@@ -341,7 +501,10 @@ MUST NOT:
 - Claudeが自己判断でDeviationを正当化する
 - PR templateへWork Order本文を貼り付ける
 
-review後にHEADが変わった場合、ChatGPTは新HEADを再reviewする。
+**PR bodyへ誰が書くかは能力に依存する。** ClaudeがPR bodyを更新できない環境では、
+ClaudeはImplementation Completion ReportをHumanへhandoffし、Human / ChatGPTがPR body・
+PR comment・GitHub review recordのいずれかへ反映する。ClaudeがPR bodyを更新できない
+ことは、それだけでは実装の未完了を意味しない（Capability Boundaryを参照）。
 
 ## Migration / Compatibility
 
@@ -503,10 +666,12 @@ Staging / Push / PR:
 - `daytrade-sbi/scripts/claude-safe-push` だけでpushする
 - Draft Pull Requestとして作成し、Humanが明示するまでmergeしない
 
-## 19. Completion Evidence
+## 19. Implementation Completion Report
 
-`.github/pull_request_template.md` を使用し、AC-01以降の各項目を
-PASS / FAIL / BLOCKED で報告する。PASSには根拠を付ける。
+Claudeは完成形MarkdownのImplementation Completion Report（Layer 1）をHumanへ返す。
+AC-01以降の各項目を PASS / FAIL / BLOCKED / NOT VERIFIED で報告し、PASSには根拠を付ける。
+Claude自身が確認できないGitHub状態・CIは NOT VERIFIED とし、PASS / success と書かない。
+PR bodyへ反映できないことは、それだけでは未完了ではない。
 
 ## 20. 完了報告フォーマット
 
@@ -518,17 +683,18 @@ Final HEAD SHA:
 PR:
 Changed Files:
 Implementation Summary:
-Acceptance Criteria: AC-XX: PASS / FAIL / BLOCKED — evidence
-Tests:
-Full pytest:
-git diff --check:
+Acceptance Criteria: AC-XX: PASS / FAIL / BLOCKED / NOT VERIFIED — evidence
+Tests actually run:
+- related tests:
+- full pytest:
+- git diff --check:
 Security Contract: relaxation NONE / details
 Fail-Closed Contract: relaxation NONE / details
 Production Impact: NONE
 Canonical Pipeline Impact: NONE
 Work Order Deviations: NONE / details
 Unresolved Items: NONE / details
-CI: PASS / FAIL / PENDING
+GitHub CI: VERIFIED / NOT VERIFIED BY CLAUDE
 Merge: NOT PERFORMED — Human Merge required
 ```
 
