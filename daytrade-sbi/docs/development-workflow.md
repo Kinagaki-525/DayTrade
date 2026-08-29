@@ -9,6 +9,8 @@
 Development Claude Code は **Git repository root** を current working directory として起動する。起動は `daytrade-sbi/scripts/claude-development` だけを使う。
 
 ```text
+Approved Development Work Order
+  ↓
 Safe Sync Main / Safe Start
   ↓
 daytrade-sbi/scripts/claude-development
@@ -23,15 +25,16 @@ git commit -m "<message>"
   ↓
 daytrade-sbi/scripts/claude-safe-push
   ↓
-Draft Pull Request
+Draft Pull Request + Completion Evidence
   ↓
 GitHub Actions `CI / pytest`
   ↓
-ChatGPT / Human Review
+ChatGPT / Human Review against Work Order
   ↓
 Human Merge
 ```
 
+0. Approved Development Work Order（ChatGPT / Human が発行）
 1. `daytrade-sbi/scripts/claude-safe-sync-main`
 2. `daytrade-sbi/scripts/claude-safe-start claude/<new-branch>`
 3. `daytrade-sbi/scripts/claude-development`（Claude session の起動）
@@ -41,10 +44,16 @@ Human Merge
 7. 変更 file を明示して `git add -- <explicit-path> [<explicit-path> ...]`
 8. `git commit -m "<message>"`
 9. `daytrade-sbi/scripts/claude-safe-push`
-10. Draft Pull Request
+10. Draft Pull Request（body は `.github/pull_request_template.md` の Completion Evidence）
 11. GitHub Actions `CI / pytest`
-12. ChatGPT / Human Review
+12. ChatGPT / Human Review（Work Order の Acceptance Criteria に対して）
 13. Human Merge
+
+Development Work Order が発行されている作業では、実装を始める前に Work Order を読み、
+その FIXED Design Decision に従う。Work Order の形式仕様と Claude の裁量境界・STOP 契約の
+正本は [development-work-order.md](development-work-order.md) である。Work Order は
+`CLAUDE.md` / `AGENTS.md` / 既存 Security Contract を緩和できない。矛盾を見つけた場合は
+推測して実装を続けず、`IMPLEMENTATION_BLOCKED` として停止する。
 
 Safe Sync / Safe Start / Safe Push wrapper は cwd に依存せず repository を Git 自身から解決するため、repository root からも `daytrade-sbi/` からも同じ契約で動作する。pytest は `daytrade-sbi/pytest.ini` を使うので `cd daytrade-sbi && .venv/bin/python -B -m pytest` として実行する。
 

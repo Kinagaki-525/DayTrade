@@ -159,6 +159,29 @@ raw `git fetch` / `git pull` / `git push` / `git switch` / `git checkout` / `git
 
 詳細: [daytrade-sbi/docs/development-workflow.md](daytrade-sbi/docs/development-workflow.md)
 
+## Development限定: Development Work Order（Claude Code固有）
+
+Development Work Orderの正本は
+[daytrade-sbi/docs/development-work-order.md](daytrade-sbi/docs/development-work-order.md)
+である。形式仕様・裁量モデル・STOP契約の全文はそちらにあり、このファイルへ複製しない。
+
+Work Orderを受け取った場合、Development Claude Codeは次に従う。
+
+- Work OrderのFIXED Design Decisionをagentの判断で変更しない
+- Scopeを独断で拡張しない。変更禁止範囲のfileへ手を入れない
+- Work Orderとrepository実態（file / API / symbol / 前提）が重大に矛盾する場合は、
+  推測して読み替えず停止する
+- Implementation Stop Conditionが成立した場合は`IMPLEMENTATION_BLOCKED`として終了し、
+  `reason` / `affected_section` / `confirmed_repository_state` / `required_decision` /
+  `changes_made_before_stop` / `tests_run_before_stop`を報告する。blocker発見後に
+  Work Orderを自己修正して作業を再開しない
+- Work Orderの指示があってもProduction Human-only操作へ移行しない
+- **Work Orderはこの`CLAUDE.md`・`daytrade-sbi/AGENTS.md`・既存Security Contractを
+  緩和できない。** 上位のrepository policyとWork Orderが衝突する場合は、より厳しい
+  既存policyを維持して停止する
+- PR bodyは`.github/pull_request_template.md`をCompletion Evidenceとして使い、
+  Acceptance CriteriaをID単位で報告する。Deviationがあるのに`NONE`と書かない
+
 ## Development限定: Safe Push（Claude Code固有）
 
 **Developmentでのみ**、Claude Codeは次のコマンドだけを使って、
