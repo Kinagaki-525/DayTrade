@@ -233,6 +233,88 @@ def test_nightly_operation_documents_the_deployment_and_acceptance_steps():
         assert required in text
 
 
+#: The Policy deployment section, from its heading to the next one. Scoped on
+#: purpose: `py -m pytest` (Windows/PowerShell) and the CI `python` are
+#: legitimate elsewhere in this document, and only the Production procedure is
+#: bound by the Production Python identity contract.
+POLICY_DEPLOYMENT_HEADING = "### Policy deployment（Human）"
+
+#: How the Production Python candidate is discovered, and the shell variable
+#: every later step must reuse so that pytest, render and deploy all name the
+#: same interpreter.
+PRODUCTION_PYTHON_DISCOVERY = 'PRODUCTION_PYTHON="$(command -v python3)"'
+PRODUCTION_PYTHON_VAR = '"$PRODUCTION_PYTHON"'
+
+
+def _section(text: str, heading: str) -> str:
+    """The body under ``heading``, up to the next heading of any level."""
+    assert heading in text, f"missing section heading: {heading}"
+    body = text[text.index(heading) + len(heading) :]
+    following = re.search(r"^#{1,6} ", body, re.MULTILINE)
+    return body[: following.start()] if following else body
+
+
+def test_policy_deployment_uses_one_production_python_identity():
+    """The Production procedure must name ONE interpreter, discovered once.
+
+    Production is a Linux/WSL contract that requires ``python3`` only; a bare
+    ``python`` is not part of it, and documenting one would tell the operator
+    to satisfy the prerequisite with an alias, a symlink or python-is-python3
+    -- none of which the Security Contract knows about. pytest, render and
+    deploy must therefore all reuse the same discovered candidate, so the
+    interpreter that validated the tests is the interpreter the Managed Policy
+    is rendered for.
+    """
+    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
+
+    assert PRODUCTION_PYTHON_DISCOVERY in section, (
+        "the Production Python candidate must be discovered via "
+        f"{PRODUCTION_PYTHON_DISCOVERY}"
+    )
+    assert f"{PRODUCTION_PYTHON_VAR} -B -m pytest" in section, (
+        "the prerequisite pytest must run under the discovered candidate"
+    )
+    for command in ("render-claude-production-policy", "deploy-claude-managed-policy"):
+        invocation = re.search(
+            rf"{re.escape(command)}.*?--production-python\s+(\S+)",
+            section,
+            re.DOTALL,
+        )
+        assert invocation is not None, f"{command} is not documented with a candidate"
+        assert invocation.group(1) == PRODUCTION_PYTHON_VAR, (
+            f"{command} must reuse {PRODUCTION_PYTHON_VAR}, "
+            f"got {invocation.group(1)}"
+        )
+    # Discovered exactly once: a second `command -v python3` would be a second
+    # discovery, which can resolve differently from the one pytest validated.
+    assert section.count("$(command -v python3)") == 1
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["python -B -m pytest", "python3 -B -m pytest", "py -B -m pytest"],
+)
+def test_policy_deployment_never_documents_a_bare_python_pytest(drift):
+    """Regression guard for the exact drift this fix removes."""
+    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
+    assert drift not in section, (
+        f"Policy deployment documents {drift!r}; Production has no such command "
+        "and the prerequisite must use the discovered candidate"
+    )
+
+
+def test_policy_deployment_never_hardcodes_a_machine_specific_interpreter():
+    """Canonicalization belongs to canonical_production_python(), not to a path
+    typed into a document that is wrong on the next machine."""
+    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
+    hardcoded = re.search(r"/usr(?:/local)?/bin/python[0-9.]*", section)
+    assert hardcoded is None, (
+        f"Policy deployment hardcodes the interpreter path {hardcoded.group(0)!r}"
+        if hardcoded
+        else ""
+    )
+
+
 def test_nightly_operation_documents_the_human_seccomp_attestation_marker():
     text = _text("docs/nightly-operation.md")
     for required in (

@@ -1477,9 +1477,18 @@ def test_preflight_canonicalizes_an_env_supplied_symlink(production_world, pytho
 
 
 def test_the_deploy_script_relies_on_internal_canonicalization():
-    """Section 8: a human may pass ``$(command -v python3)`` unchanged."""
+    """Section 8: a human may pass what ``command -v python3`` returns, as is.
+
+    The documented procedure discovers the candidate once into
+    ``PRODUCTION_PYTHON`` and hands that same value to render and deploy, so
+    the interpreter that ran the prerequisite tests is the one the policy is
+    rendered for. Either way the human never canonicalizes anything by hand --
+    ``canonical_production_python()`` owns that, which is what the absence of
+    ``readlink`` here asserts.
+    """
     text = (PROJECT_ROOT / "scripts" / "deploy-claude-managed-policy").read_text("utf-8")
     assert "readlink" not in text
     doc = (PROJECT_ROOT / "docs" / "nightly-operation.md").read_text("utf-8")
     assert "readlink -f" not in doc
-    assert '--production-python "$(command -v python3)"' in doc
+    assert 'PRODUCTION_PYTHON="$(command -v python3)"' in doc
+    assert '--production-python "$PRODUCTION_PYTHON"' in doc
