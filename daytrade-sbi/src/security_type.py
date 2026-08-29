@@ -106,51 +106,69 @@ class SecurityTypeEvidence:
     source_refs: tuple[str, ...]
 
 
-def _sole_source(sources, source_id: str, field_name: str):
-    """The one Source Record for this (source_id, field_name), or None.
+def _sole_ledger_value(
+    source_values,
+    *,
+    source_id: str,
+    field_name: str,
+    ticker: str | None,
+):
+    """The one Canonical Source Record for this (source_id, field, ticker).
 
-    Two records disagreeing about the same field is ambiguity, and ambiguity
-    is never resolved by preferring one of them.
+    Returns ``None`` for both "absent" and "more than one": two Canonical
+    Source Records covering the same field for the same candidate is
+    ambiguity, and ambiguity is never resolved by picking one of them -- not
+    even when their values happen to agree.
     """
     matching = [
-        source
-        for source in sources
-        if getattr(source, "source_id", None) == source_id
-        and getattr(source, "field_name", None) == field_name
-        and getattr(source, "source_ref", None)
+        value
+        for value in source_values or ()
+        if isinstance(value, dict)
+        and str(value.get("source_id") or "") == source_id
+        and str(value.get("field_name") or "") == field_name
+        and str(value.get("source_ref") or "")
+        and (
+            value.get("ticker") is None
+            if ticker is None
+            else str(value.get("ticker") or "") == ticker
+        )
     ]
-    if not matching:
-        return None
-    if len({str(source.value) for source in matching}) > 1:
+    if len(matching) != 1:
         return None
     return matching[0]
 
 
 def resolve_security_type_evidence(
-    sources,
+    source_values,
     *,
     candidate_code: str,
 ) -> SecurityTypeEvidence:
-    """Recompute a candidate's security type from its own Source Records.
+    """Recompute a candidate's security type from the Canonical Source Ledger.
 
-    Stage 1 must never trust a ``market_data.security_type`` string on its
-    own: that field is written by the Stage Wiring, and a Stage 1 decision
-    that reads it back without re-deriving it would accept a value that no
-    longer follows from the evidence. This runs the *same*
-    :func:`classify_security_type` over the Source Records themselves, so the
-    caller can require the two to agree before deciding anything.
+    ``source_values`` is ``sources.json``'s ``sources[]`` -- the canonical
+    evidence, not the copy of it that ``market_data.json`` carries. Stage 1
+    must never trust a ``market_data.security_type`` string on its own, and
+    re-deriving it from ``market_data``'s own embedded records would be just
+    as circular: a tampered market_data would simply agree with itself. This
+    runs the *same* :func:`classify_security_type` over the Source Ledger, so
+    the caller can require the two to agree before deciding anything.
+
+    The market segment is read from the candidate-scoped
+    ``JPX_LISTED_COMPANY`` record, and the foreign listed-issues map from the
+    Global ``JPX_FOREIGN_STOCK_LIST`` record (``ticker=null``) -- the latter
+    only when the segment actually needs it.
     """
-    listing = _sole_source(sources, LISTED_COMPANY_SOURCE_ID, MARKET_SEGMENT_FIELD)
+    listing = _sole_ledger_value(
+        source_values,
+        source_id=LISTED_COMPANY_SOURCE_ID,
+        field_name=MARKET_SEGMENT_FIELD,
+        ticker=candidate_code,
+    )
     if listing is None:
         return SecurityTypeEvidence(None, ())
-    listing_ticker = getattr(listing, "ticker", None)
-    if listing_ticker is not None and str(listing_ticker) != candidate_code:
-        # Candidate-scoped evidence attributed to a different candidate is not
-        # this candidate's evidence.
-        return SecurityTypeEvidence(None, ())
 
-    segment = str(listing.value or "").strip()
-    listing_ref = str(listing.source_ref)
+    segment = str(listing.get("value") or "").strip()
+    listing_ref = str(listing["source_ref"])
 
     # An explicit non-common-stock segment is decided by the listing evidence
     # alone: the foreign list is irrelevant to it, and requiring it here would
@@ -163,23 +181,26 @@ def resolve_security_type_evidence(
     if segment not in COMMON_STOCK_MARKET_SEGMENTS:
         return SecurityTypeEvidence(None, ())
 
-    foreign = _sole_source(
-        sources, FOREIGN_STOCK_LIST_SOURCE_ID, FOREIGN_TRADING_UNITS_FIELD
+    foreign = _sole_ledger_value(
+        source_values,
+        source_id=FOREIGN_STOCK_LIST_SOURCE_ID,
+        field_name=FOREIGN_TRADING_UNITS_FIELD,
+        ticker=None,
     )
-    if foreign is None or not isinstance(foreign.value, dict):
+    if foreign is None or not isinstance(foreign.get("value"), dict):
         return SecurityTypeEvidence(None, ())
 
     security_type = classify_security_type(
         market_segment=segment,
         candidate_code=candidate_code,
-        foreign_issue_codes=list(foreign.value),
+        foreign_issue_codes=list(foreign["value"]),
     )
     if security_type is None:
         return SecurityTypeEvidence(None, ())
     # Both refs are mandatory here: separating a foreign stock from a domestic
     # common stock consumed the listing segment AND the complete foreign list.
     return SecurityTypeEvidence(
-        security_type, (listing_ref, str(foreign.source_ref))
+        security_type, (listing_ref, str(foreign["source_ref"]))
     )
 
 

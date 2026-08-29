@@ -75,6 +75,7 @@ def apply_stage1_payload(
                 record,
                 valid_source_refs=valid_source_refs,
                 source_ids_by_ref=source_ids_by_ref,
+                source_values=source_payload.get("sources", []),
                 config=config,
             )
         )
@@ -169,6 +170,7 @@ def _apply_stage1_to_research(
     *,
     valid_source_refs: set[str],
     source_ids_by_ref: dict[str, str],
+    source_values: list[dict[str, Any]],
     config: dict[str, Any],
 ) -> dict[str, Any]:
     updated = deepcopy(research)
@@ -177,11 +179,13 @@ def _apply_stage1_to_research(
     # trading-unit rule governs this candidate at all.
     #
     # record.security_type is never trusted as a bare string: it is recomputed
-    # here from the candidate's own Source Records and must agree exactly. A
-    # market_data value that no longer follows from its evidence decides
-    # nothing -- Stage 1 stays open instead.
+    # from the Canonical Source Ledger (sources.json) and must agree exactly.
+    # The evidence deliberately does NOT come from record.sources -- those are
+    # market_data's own copy, so a tampered market_data would simply agree
+    # with itself. A value that no longer follows from the canonical evidence
+    # decides nothing: Stage 1 stays open instead.
     evidence = resolve_security_type_evidence(
-        record.sources, candidate_code=str(record.ticker or "")
+        source_values, candidate_code=str(record.ticker or "")
     )
     security_type_refs = [
         ref for ref in evidence.source_refs if ref in valid_source_refs

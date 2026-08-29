@@ -166,12 +166,25 @@ fallbackしない。** 外国株一覧が読めない場合、Prime/Standard/Gro
 
 **security_type Trust Chain**: Stage 1は`market_data.security_type`の文字列を
 盲目的に信用しない。eligibility判定の直前に`resolve_security_type_evidence()`が
-`record.sources`の実Source Recordから`classify_security_type()`を再実行し、
-結果が`record.security_type`と完全一致することを要求する。不一致・分類不能・
-分類が参照したSource RecordがSource Ledgerに無い場合は、PASSもREJECTもせず
-Fail-ClosedでStage 1未完了とする。
+**Canonical Source Ledger（`sources.json`の`sources[]`）**から
+`classify_security_type()`を再実行し、結果が`record.security_type`と完全一致する
+ことを要求する。
 
-security_type checkの`source_refs`は、分類が実際に参照したEvidenceと一致させる。
+再計算のEvidenceは`market_data.json`が持つSourceRecordのコピーではなく
+`sources.json`そのものである。`market_data`側の複製から再計算しても、改竄された
+`market_data`が自分自身と一致するだけで検証にならないため。
+
+- `JPX_LISTED_COMPANY.market_segment`（`ticker == candidate`）
+- `JPX_FOREIGN_STOCK_LIST.foreign_stock_trading_units`（`ticker == null`、
+  プライム / スタンダード / グロース分類時のみ必須）
+
+同一 source_id / field / candidate に対しCanonical Source Recordが2件以上見つかった
+場合は、**値が同じでも1件を選ばずFail-Closed**とする。不一致・分類不能・分類が
+参照したSource RecordがSource Ledgerに無い場合も、PASSもREJECTもせずStage 1未完了と
+する。
+
+security_type checkの`source_refs`は、分類が実際に参照したCanonical Evidenceと
+一致させる。
 
 - プライム / スタンダード / グロースから`FOREIGN_STOCK`または
   `DOMESTIC_COMMON_STOCK`を確定した場合: `JPX_LISTED_COMPANY`と
@@ -179,6 +192,20 @@ security_type checkの`source_refs`は、分類が実際に参照したEvidence�
 - ETF / ETN / REIT / インフラファンドの明示`market_segment`の場合:
   `JPX_LISTED_COMPANY`のrefだけで確定できるため、外国株一覧のrefは必須にしない。
   外国株一覧が`PARSE_FAILED`でもETF等のREJECTは成立する
+
+`source_backed_stage1_reject()`の独立validationも同じ再計算を行う。固定の
+required source id集合では表現できない（必要なEvidenceが分類pathごとに変わる）ため、
+Canonical Source Ledgerから分類を再計算し、checkがその分類の参照したrefを
+すべて持つことを要求する。
+
+| Canonical Evidence | 有効なsecurity_type rejectの必須ref |
+| --- | --- |
+| `market_segment` = ETF / ETN / REIT / インフラファンド | `JPX_LISTED_COMPANY`のみ |
+| common segment かつ外国株一覧に存在（FOREIGN_STOCK） | `JPX_LISTED_COMPANY` + `JPX_FOREIGN_STOCK_LIST` |
+| common segment かつ外国株一覧に不在（DOMESTIC_COMMON_STOCK） | security_type reject自体が不正 |
+| 分類不能 | security_type rejectをvalid扱いしない |
+
+checkの`status_reason`等の自由文をparseして分類を判断することはない。
 
 **Stage 1 eligibility順序**: `security_type` → `share_unit` → `capital_limit`。
 

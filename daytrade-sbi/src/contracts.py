@@ -742,6 +742,7 @@ def validate_candidate_pipeline_inputs(
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
             source_ids_by_evidence_id=source_ids_by_evidence_id,
+            source_values=source_payload.get("sources", []),
         )
         if evidence_error is not None:
             raise ValueError(evidence_error)

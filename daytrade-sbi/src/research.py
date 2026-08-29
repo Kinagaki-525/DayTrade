@@ -85,6 +85,9 @@ def validate_market_research(
         if source_payload is not None
         else None
     )
+    source_values = (
+        source_payload.get("sources", []) if source_payload is not None else None
+    )
     target_date = _date(payload["target_date"])
     previous_trading_day = _date(payload["previous_trading_day"])
     if previous_trading_day >= target_date:
@@ -222,6 +225,7 @@ def validate_market_research(
                 valid_source_refs=valid_source_refs,
                 valid_source_attempt_ids=valid_source_attempt_ids,
                 source_ids_by_evidence_id=source_ids_by_evidence_id,
+                source_values=source_values,
             )
         ):
             errors.append(

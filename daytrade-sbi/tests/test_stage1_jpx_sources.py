@@ -711,26 +711,123 @@ def _security_type_check(research: dict) -> dict:
 
 FOREIGN_REF = "JPX_FOREIGN_STOCK_LIST:1234:foreign_stock_trading_units"
 LISTING_REF = "JPX_LISTED_COMPANY:1234:market_segment"
+DEFAULT_FOREIGN_UNITS = {"1773": "1000", "9399": "1"}
+
+
+def _evidence(
+    *,
+    market_segment: str = "プライム",
+    foreign_units: dict[str, str] | None = None,
+    drop_foreign_source: bool = False,
+    share_unit: int | None = 100,
+    security_type: str | None = "__derive__",
+    drop_refs: tuple[str, ...] = (),
+    market_data_market_segment: str | None = None,
+    duplicate_listing_record: bool = False,
+):
+    """A Canonical Source Ledger plus the market_data record built from it.
+
+    Returns (record, ledger_sources, valid_refs, source_ids_by_ref) the way
+    apply_stage1_payload sees them: the refs and the classification come from
+    sources.json, while the record is market_data. The two are built
+    separately on purpose, so a test can make market_data disagree with the
+    canonical evidence -- which is exactly what must not decide anything.
+    """
+    from tests.factories import make_market_record
+
+    units = DEFAULT_FOREIGN_UNITS if foreign_units is None else foreign_units
+    base = make_market_record(previous_high="400", tick_size="1").as_dict()
+
+    ledger_sources: list[dict] = []
+    record_sources: list[dict] = []
+    for source in base["sources"]:
+        canonical = dict(source)
+        embedded = dict(source)
+        if source["field_name"] == "market_segment":
+            canonical["value"] = market_segment
+            embedded["value"] = (
+                market_data_market_segment
+                if market_data_market_segment is not None
+                else market_segment
+            )
+        if source["field_name"] == "foreign_stock_trading_units":
+            if drop_foreign_source:
+                continue
+            canonical["value"] = units
+            embedded["value"] = units
+        ledger_sources.append(canonical)
+        record_sources.append(embedded)
+        if duplicate_listing_record and source["field_name"] == "market_segment":
+            ledger_sources.append({**canonical, "source_ref": LISTING_REF + ":dup"})
+
+    base["sources"] = record_sources
+    base["market"] = market_segment
+    base["share_unit"] = share_unit
+    base["security_type"] = (
+        classify_security_type(
+            market_segment=market_segment,
+            candidate_code=str(base["ticker"]),
+            foreign_issue_codes=None if drop_foreign_source else list(units),
+        )
+        if security_type == "__derive__"
+        else security_type
+    )
+
+    record = MarketDataRecord.from_dict(base)
+    valid_refs = {
+        str(source["source_ref"])
+        for source in ledger_sources
+        if str(source["source_ref"]) not in drop_refs
+    }
+    source_ids_by_ref = {
+        str(source["source_ref"]): str(source["source_id"])
+        for source in ledger_sources
+    }
+    return record, ledger_sources, valid_refs, source_ids_by_ref
+
+
+def _apply(record, ledger_sources, valid_refs, source_ids_by_ref):
+    from src.config import load_yaml
+
+    config = load_yaml(Path("config/strategy.yaml"))
+    return _apply_stage1_to_research(
+        _research(str(record.ticker)),
+        record,
+        valid_source_refs=valid_refs,
+        source_ids_by_ref=source_ids_by_ref,
+        source_values=ledger_sources,
+        config=config,
+    )
+
+
+def _security_type_check(research: dict) -> dict:
+    return next(
+        check
+        for check in research["stage1_checks"]
+        if check["check_id"] == "security_type"
+    )
 
 
 def test_a_domestic_common_stock_carries_both_listing_and_foreign_refs():
     """T14: absence from the complete foreign list is what makes it domestic,
-    so both Source Records must be referenced by the check."""
-    record, refs, by_ref = _record_with(market_segment="プライム")
+    so both Canonical Source Records must be referenced by the check."""
+    record, ledger, refs, by_ref = _evidence(market_segment="プライム")
     assert record.security_type == DOMESTIC_COMMON_STOCK
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "PASSED"
-    check = _security_type_check(research)
-    assert set(check["source_refs"]) == {LISTING_REF, FOREIGN_REF}
+    assert set(_security_type_check(research)["source_refs"]) == {
+        LISTING_REF,
+        FOREIGN_REF,
+    }
 
 
 def test_a_foreign_stock_is_rejected_with_both_refs():
     """T15: present in the foreign list -> FOREIGN_STOCK -> unsupported."""
-    record, refs, by_ref = _record_with(
+    record, ledger, refs, by_ref = _evidence(
         market_segment="プライム", foreign_units={"1234": "100"}
     )
     assert record.security_type == FOREIGN_STOCK
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
     assert set(_security_type_check(research)["source_refs"]) == {
@@ -751,60 +848,79 @@ def test_a_foreign_stock_is_rejected_with_both_refs():
 def test_an_explicit_product_segment_is_rejected_on_listing_evidence_alone(
     segment, expected
 ):
-    """T16: an ETF is decided by the listing alone -- the foreign list is not
-    part of that classification and must not be claimed as evidence."""
-    record, refs, by_ref = _record_with(market_segment=segment, share_unit=None)
+    """T16/T24: an ETF is decided by the listing alone -- the foreign list is
+    not part of that classification and must not be claimed as evidence."""
+    record, ledger, refs, by_ref = _evidence(market_segment=segment, share_unit=None)
     assert record.security_type == expected
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
     assert _security_type_check(research)["source_refs"] == [LISTING_REF]
 
 
-def test_an_explicit_product_segment_still_rejects_without_the_foreign_list():
-    """A foreign-list failure must not break an ETF rejection."""
-    record, refs, by_ref = _record_with(
+def test_an_etf_reject_stays_valid_without_any_foreign_list_evidence():
+    """T24: a foreign-list failure must not break an ETF rejection."""
+    from src.stage1 import source_backed_stage1_reject
+
+    record, ledger, refs, by_ref = _evidence(
         market_segment="ETF", share_unit=None, drop_foreign_source=True
     )
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
+    assert _security_type_check(research)["source_refs"] == [LISTING_REF]
+    assert source_backed_stage1_reject(
+        research,
+        valid_source_refs=refs,
+        valid_source_attempt_ids=set(),
+        source_ids_by_evidence_id=by_ref,
+        source_values=ledger,
+    )
 
 
 def test_an_unsupported_security_type_reject_is_source_backed():
     from src.stage1 import source_backed_stage1_reject
 
-    for segment in ("ETF", "プライム"):
-        record, refs, by_ref = _record_with(
-            market_segment=segment,
-            foreign_units={"1234": "100"} if segment == "プライム" else None,
-            share_unit=None,
+    for segment, units in (("ETF", None), ("プライム", {"1234": "100"})):
+        record, ledger, refs, by_ref = _evidence(
+            market_segment=segment, foreign_units=units, share_unit=None
         )
-        research = _apply(record, refs, by_ref)
+        research = _apply(record, ledger, refs, by_ref)
         assert research["stage1_status"] == "REJECTED"
         assert source_backed_stage1_reject(
             research,
             valid_source_refs=refs,
             valid_source_attempt_ids=set(),
             source_ids_by_evidence_id=by_ref,
+            source_values=ledger,
         ), segment
 
 
 def test_a_missing_foreign_list_blocks_a_common_stock_from_passing():
     """T17: Prime + no foreign evidence -> unclassified -> Stage 1 stays open."""
-    record, refs, by_ref = _record_with(
+    record, ledger, refs, by_ref = _evidence(
         market_segment="プライム", drop_foreign_source=True
     )
     assert record.security_type is None
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "NOT_STARTED"
 
 
 def test_an_unknown_market_segment_neither_passes_nor_rejects():
     """T28 at the eligibility layer: Stage 1 stays open, it does not guess."""
-    record, refs, by_ref = _record_with(market_segment="未知区分")
+    record, ledger, refs, by_ref = _evidence(market_segment="未知区分")
     assert record.security_type is None
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_duplicate_canonical_listing_records_are_ambiguous():
+    """Two Canonical Source Records for one field decide nothing -- not even
+    when their values agree."""
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="プライム", duplicate_listing_record=True
+    )
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "NOT_STARTED"
 
 
@@ -812,53 +928,178 @@ def test_an_unknown_market_segment_neither_passes_nor_rejects():
 def test_a_security_type_that_contradicts_its_evidence_decides_nothing(tampered):
     """T18: record.security_type is re-derived, never trusted as a string.
 
-    The evidence here says FOREIGN_STOCK. Any other value written into
-    market_data -- including the one that would let the candidate through --
-    leaves Stage 1 open rather than deciding anything.
+    The canonical evidence here says FOREIGN_STOCK. Any other value written
+    into market_data -- including the one that would let the candidate
+    through -- leaves Stage 1 open rather than deciding anything.
     """
-    record, refs, by_ref = _record_with(
+    record, ledger, refs, by_ref = _evidence(
         market_segment="プライム",
         foreign_units={"1234": "100"},
         security_type=tampered,
     )
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_market_data_cannot_override_the_canonical_market_segment():
+    """T22: canonical sources.json says ETF, while market_data's own copy of
+    the same source_ref says プライム and claims DOMESTIC_COMMON_STOCK.
+
+    The classification is recomputed from the Canonical Source Ledger, so
+    market_data agreeing with itself buys nothing: the tampered candidate is
+    not PASSED, and Stage 1 is left incomplete rather than deciding anything
+    on evidence that contradicts itself.
+    """
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="ETF",
+        market_data_market_segment="プライム",
+        security_type=DOMESTIC_COMMON_STOCK,
+    )
+    assert record.security_type == DOMESTIC_COMMON_STOCK
+    assert record.sources[1].value == "プライム"
+    research = _apply(record, ledger, refs, by_ref)
+    assert research["stage1_status"] != "PASSED"
+    assert research["stage1_status"] == "NOT_STARTED"
+
+
+def test_a_tampered_market_data_candidate_never_reaches_stage2():
+    """T22 (pipeline): a candidate Stage 1 did not pass is not a Stage 2 target."""
+    from src.candidate_research import plan_stage2_batches_payload
+
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="ETF",
+        market_data_market_segment="プライム",
+        security_type=DOMESTIC_COMMON_STOCK,
+    )
+    research = _apply(record, ledger, refs, by_ref)
+    payload = plan_stage2_batches_payload(
+        market_research={
+            "discovery_candidates": [{"ticker": "1234"}],
+            "candidate_research": [research],
+        }
+    )
+    assigned = {
+        code
+        for batch in payload.get("subagent_batches", [])
+        for code in batch["candidate_codes"]
+    }
+    assert assigned == set()
 
 
 def test_a_domestic_stock_missing_its_foreign_list_ref_cannot_pass():
-    """T19: the classification's evidence must be in the Source Ledger."""
-    record, refs, by_ref = _record_with(
+    """T19: the classification's evidence must be in the Canonical Ledger."""
+    record, ledger, refs, by_ref = _evidence(
         market_segment="プライム", drop_refs=(FOREIGN_REF,)
     )
     assert record.security_type == DOMESTIC_COMMON_STOCK
-    research = _apply(record, refs, by_ref)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "NOT_STARTED"
 
 
-def test_a_foreign_stock_missing_its_foreign_list_ref_is_not_a_valid_reject():
-    """T20: an unbacked FOREIGN_STOCK reject is not emitted at all."""
-    record, refs, by_ref = _record_with(
-        market_segment="プライム",
-        foreign_units={"1234": "100"},
-        drop_refs=(FOREIGN_REF,),
+def test_a_foreign_reject_stripped_of_its_foreign_ref_is_not_source_backed():
+    """T23: a valid FOREIGN_STOCK reject artifact, then its foreign list ref is
+    deleted from the check. The independent validator must reject it."""
+    from src.stage1 import source_backed_stage1_reject, stage1_reject_evidence_error
+
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="プライム", foreign_units={"1234": "100"}, share_unit=None
     )
-    assert record.security_type == FOREIGN_STOCK
-    research = _apply(record, refs, by_ref)
-    assert research["stage1_status"] == "NOT_STARTED"
+    research = _apply(record, ledger, refs, by_ref)
+    assert research["stage1_status"] == "REJECTED"
+
+    check = _security_type_check(research)
+    check["source_refs"] = [ref for ref in check["source_refs"] if ref != FOREIGN_REF]
+    assert check["source_refs"] == [LISTING_REF]
+
+    assert not source_backed_stage1_reject(
+        research,
+        valid_source_refs=refs,
+        valid_source_attempt_ids=set(),
+        source_ids_by_evidence_id=by_ref,
+        source_values=ledger,
+    )
+    assert (
+        stage1_reject_evidence_error(
+            research,
+            valid_source_refs=refs,
+            valid_source_attempt_ids=set(),
+            source_ids_by_evidence_id=by_ref,
+            source_values=ledger,
+        )
+        is not None
+    )
+
+
+def test_a_supported_domestic_stock_cannot_be_forged_into_a_reject():
+    """T25: the evidence says DOMESTIC_COMMON_STOCK, so a hand-written
+    SECURITY_TYPE_UNSUPPORTED reject contradicts it and is not backed."""
+    from src.stage1 import source_backed_stage1_reject, stage1_reject_evidence_error
+
+    record, ledger, refs, by_ref = _evidence(market_segment="プライム")
+    assert record.security_type == DOMESTIC_COMMON_STOCK
+    forged = _research("1234")
+    forged.update(
+        {
+            "stage1_status": "REJECTED",
+            "reason_codes": ["SECURITY_TYPE_UNSUPPORTED"],
+            "stage1_checks": [
+                {
+                    "check_id": "security_type",
+                    "status": "REJECTED",
+                    "reason_code": "SECURITY_TYPE_UNSUPPORTED",
+                    "source_refs": [LISTING_REF, FOREIGN_REF],
+                    "source_attempt_ids": [],
+                }
+            ],
+        }
+    )
+    assert not source_backed_stage1_reject(
+        forged,
+        valid_source_refs=refs,
+        valid_source_attempt_ids=set(),
+        source_ids_by_evidence_id=by_ref,
+        source_values=ledger,
+    )
+    assert (
+        stage1_reject_evidence_error(
+            forged,
+            valid_source_refs=refs,
+            valid_source_attempt_ids=set(),
+            source_ids_by_evidence_id=by_ref,
+            source_values=ledger,
+        )
+        is not None
+    )
+
+
+def test_a_security_type_reject_cannot_be_validated_without_canonical_evidence():
+    """No Canonical Source Ledger, no verification -- and no acceptance."""
+    from src.stage1 import source_backed_stage1_reject
+
+    record, ledger, refs, by_ref = _evidence(market_segment="ETF", share_unit=None)
+    research = _apply(record, ledger, refs, by_ref)
+    assert not source_backed_stage1_reject(
+        research,
+        valid_source_refs=refs,
+        valid_source_attempt_ids=set(),
+        source_ids_by_evidence_id=by_ref,
+    )
 
 
 def test_security_type_is_checked_before_share_unit():
     """T21: an ETF handed a share_unit of 100 still rejects on security_type."""
-    record, refs, by_ref = _record_with(market_segment="ETF", share_unit=100)
-    research = _apply(record, refs, by_ref)
+    record, ledger, refs, by_ref = _evidence(market_segment="ETF", share_unit=100)
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SECURITY_TYPE_UNSUPPORTED"]
 
 
 def test_a_non_100_share_unit_still_rejects_with_the_existing_reason_code():
     """T12: SHARE_UNIT_NOT_100 is unchanged and still reachable."""
-    record, refs, by_ref = _record_with(market_segment="プライム", share_unit=1000)
-    research = _apply(record, refs, by_ref)
+    record, ledger, refs, by_ref = _evidence(
+        market_segment="プライム", share_unit=1000
+    )
+    research = _apply(record, ledger, refs, by_ref)
     assert research["stage1_status"] == "REJECTED"
     assert research["reason_codes"] == ["SHARE_UNIT_NOT_100"]
 

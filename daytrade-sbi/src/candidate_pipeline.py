@@ -88,6 +88,7 @@ def build_candidate_pipeline(
                 valid_source_refs=valid_source_refs,
                 valid_source_attempt_ids=valid_source_attempt_ids,
                 source_ids_by_evidence_id=source_ids_by_evidence_id,
+                source_values=sources,
             )
             if evidence_error is not None:
                 raise ValueError(evidence_error)
@@ -98,6 +99,7 @@ def build_candidate_pipeline(
             valid_source_attempt_ids=valid_source_attempt_ids,
             source_ids_by_evidence_id=source_ids_by_evidence_id,
             source_attempt_statuses=source_attempt_statuses,
+            source_values=sources,
         )
         if ticker in unmerged_subagent_tickers:
             status = "RESEARCH_IN_PROGRESS"
@@ -139,6 +141,7 @@ def build_candidate_pipeline(
                     valid_source_refs=valid_source_refs,
                     valid_source_attempt_ids=valid_source_attempt_ids,
                     source_ids_by_evidence_id=source_ids_by_evidence_id,
+                    source_values=sources,
                 ),
                 "source_attempt_ids": source_attempt_ids,
                 "source_refs": source_refs,
@@ -171,6 +174,7 @@ def _pipeline_status(
     valid_source_attempt_ids: set[str],
     source_ids_by_evidence_id: dict[str, str],
     source_attempt_statuses: dict[str, str],
+    source_values: list[dict[str, Any]],
 ) -> str:
     if screening is not None:
         status = screening["status"]
@@ -187,6 +191,7 @@ def _pipeline_status(
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
             source_ids_by_evidence_id=source_ids_by_evidence_id,
+            source_values=source_values,
         ):
             return "REJECTED"
         return "RESEARCH_IN_PROGRESS"
@@ -346,12 +351,14 @@ def _failed_checks(
     valid_source_refs: set[str],
     valid_source_attempt_ids: set[str],
     source_ids_by_evidence_id: dict[str, str],
+    source_values: list[dict[str, Any]],
 ) -> list[str]:
     failed = rejected_stage1_check_ids(
         research,
         valid_source_refs=valid_source_refs,
         valid_source_attempt_ids=valid_source_attempt_ids,
         source_ids_by_evidence_id=source_ids_by_evidence_id,
+        source_values=source_values,
     )
     if status not in {"DATA_UNAVAILABLE", "REJECTED", "RESEARCH_IN_PROGRESS"}:
         return failed
