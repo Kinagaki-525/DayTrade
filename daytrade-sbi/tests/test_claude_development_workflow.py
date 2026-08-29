@@ -42,6 +42,7 @@ import tokenize
 from pathlib import Path
 
 import pytest
+from _pytest.outcomes import Failed
 
 from src import claude_development_launcher as launcher
 
@@ -58,7 +59,39 @@ import claude_safe_git as safe_git  # noqa: E402
 LAUNCHER_SCRIPT = PROJECT_ROOT / "scripts" / "claude-development"
 PRODUCTION_SCRIPT = PROJECT_ROOT / "scripts" / "claude-production"
 NETWORK_GUARD = REPO_ROOT / ".claude" / "hooks" / "network_guard.py"
+
 DEV_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
+
+
+@pytest.fixture
+def isolated_development_host(tmp_path):
+    """Every Production signal the launcher reads, pinned absent for one test.
+
+    ``verify_not_production`` defaults to the real ``/etc`` locations and
+    ``preflight`` falls back to ``os.environ``, so a test that passed neither
+    was reading the *host's* security state. On a developer machine that state
+    is empty and everything passes; on a Production WSL, on a host where an OS
+    Managed Policy has been deployed, or in a shell that happens to export
+    ``DAYTRADE_RUNTIME_PROFILE`` or a ``GIT_*`` routing variable, the same
+    tests would fail for a reason unrelated to what they assert.
+
+    The paths live under this test's own ``tmp_path`` and are never created, so
+    "absent" is a fact about this test rather than an assumption about the
+    repository. Deliberately not autouse: a test that wants a signal present
+    must say so, and one that forgets the fixture fails loudly rather than
+    silently reading the host again.
+    """
+    production_marker_path = tmp_path / "absent-production-marker"
+    managed_settings_path = tmp_path / "absent-managed-settings.json"
+
+    assert not production_marker_path.exists()
+    assert not managed_settings_path.exists()
+
+    return {
+        "environ": {},
+        "production_marker_path": production_marker_path,
+        "managed_settings_path": managed_settings_path,
+    }
 
 
 # ------------------------------------------------------------- launcher ----
@@ -99,12 +132,17 @@ ALLOWED_BRANCH = "claude/example"
     ],
 )
 def test_claude_starts_at_the_repository_root_from_any_subdirectory(
-    monkeypatch, exec_recorder, start_dir
+    monkeypatch, exec_recorder, start_dir, isolated_development_host
 ):
     """The whole point: cwd at exec time is the repository root, not $PWD."""
     monkeypatch.chdir(start_dir)
 
-    assert launcher.main([], current_branch=ALLOWED_BRANCH) == 0
+    assert (
+        launcher.main(
+            [], current_branch=ALLOWED_BRANCH, **isolated_development_host
+        )
+        == 0
+    )
 
     assert exec_recorder["cwd"] == REPO_ROOT
     assert exec_recorder["file"] == "claude"
@@ -112,23 +150,33 @@ def test_claude_starts_at_the_repository_root_from_any_subdirectory(
 
 
 def test_dev_launch_004_the_exec_environment_marks_the_development_profile(
-    monkeypatch, exec_recorder
+    monkeypatch, exec_recorder, isolated_development_host
 ):
     monkeypatch.chdir(PROJECT_ROOT)
     monkeypatch.delenv(launcher.RUNTIME_PROFILE_ENV, raising=False)
 
-    assert launcher.main([], current_branch=ALLOWED_BRANCH) == 0
+    assert (
+        launcher.main(
+            [], current_branch=ALLOWED_BRANCH, **isolated_development_host
+        )
+        == 0
+    )
 
     env = exec_recorder["env"]
     assert env[launcher.RUNTIME_PROFILE_ENV] == "development"
 
 
 def test_dev_launch_005_dry_run_reports_the_root_without_starting_claude(
-    monkeypatch, exec_recorder, capsys
+    monkeypatch, exec_recorder, capsys, isolated_development_host
 ):
     monkeypatch.chdir(PROJECT_ROOT)
 
-    assert launcher.main(["--dry-run"], current_branch=ALLOWED_BRANCH) == 0
+    assert (
+        launcher.main(
+            ["--dry-run"], current_branch=ALLOWED_BRANCH, **isolated_development_host
+        )
+        == 0
+    )
 
     assert "file" not in exec_recorder, "--dry-run must not exec claude"
     out = capsys.readouterr().out
@@ -143,100 +191,232 @@ def test_dev_launch_006_the_script_delegates_to_the_tested_core():
     assert os.access(LAUNCHER_SCRIPT, os.X_OK)
 
 
-def _checked_out_branch() -> str | None:
-    """This checkout's branch, or None when HEAD is not a branch.
+#: Runs the real wrapper source with the launcher's inputs pinned inside the
+#: child. The wrapper is executed, never re-implemented: ``runpy.run_path``
+#: loads ``scripts/claude-development`` itself, so this still tests the file a
+#: human invokes. Only ``launcher.main`` is bound to fixed inputs beforehand,
+#: which is what makes the outcome the same on a Development host, on a
+#: Production host, and in CI at a detached HEAD.
+_WRAPPER_CHILD = """
+import functools
+import runpy
+import sys
 
-    CI checks a pull request out at a detached HEAD, which the launcher refuses
-    by design, so the end-to-end test asserts whichever half of the contract
-    applies to the checkout it is running in.
+import src.claude_development_launcher as launcher
+
+script, marker, managed, branch = sys.argv[1:5]
+
+launcher.main = functools.partial(
+    launcher.main,
+    environ={},
+    production_marker_path=marker,
+    managed_settings_path=managed,
+    current_branch=branch,
+)
+
+sys.argv = [script, "--dry-run"]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def _sanitized_child_environment() -> dict[str, str]:
+    """The parent environment minus everything the launcher refuses to inherit.
+
+    ``environ={}`` is handed to ``launcher.main`` in the child, but
+    ``resolve_repository_root`` shells out to git, and that subprocess inherits
+    the child's OS environment. A ``GIT_*`` routing variable exported in the
+    developer's shell would therefore still reach git. PATH and the rest of the
+    ordinary environment are kept so Python and git start normally.
     """
-    completed = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "HEAD"],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return None
-    reference = completed.stdout.strip()
-    prefix = "refs/heads/"
-    return reference[len(prefix) :] if reference.startswith(prefix) else None
+    env = os.environ.copy()
+    env.pop(launcher.RUNTIME_PROFILE_ENV, None)
+    for name in launcher.GIT_ENVIRONMENT_OVERRIDES:
+        env.pop(name, None)
+    return env
 
 
-def test_dev_launch_007_the_script_runs_from_a_subdirectory():
-    """End to end, as a human would call it: `cd daytrade-sbi && scripts/...`."""
+def test_dev_launch_007_the_script_runs_from_a_subdirectory(tmp_path):
+    """End to end, as a human would call it: `cd daytrade-sbi && scripts/...`.
+
+    The wrapper runs for real; its Production signals are isolated inside the
+    child process. The expected result is therefore fixed -- it does not change
+    with the host's ``/etc`` state or with the branch this checkout happens to
+    be on.
+    """
+    marker = tmp_path / "absent-production-marker"
+    managed = tmp_path / "absent-managed-settings.json"
+    assert not marker.exists()
+    assert not managed.exists()
+
     completed = subprocess.run(
-        [sys.executable, "-B", str(LAUNCHER_SCRIPT), "--dry-run"],
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            _WRAPPER_CHILD,
+            str(LAUNCHER_SCRIPT),
+            str(marker),
+            str(managed),
+            ALLOWED_BRANCH,
+        ],
         cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
         check=False,
+        env=_sanitized_child_environment(),
     )
-    branch = _checked_out_branch()
-    if branch is not None and branch.startswith(launcher.BRANCH_PREFIX):
-        assert completed.returncode == 0, completed.stderr
-        assert f"repository_root: {REPO_ROOT}" in completed.stdout
-        assert f"current_branch: {branch}" in completed.stdout
-    else:
-        # main, another branch, or a detached HEAD: the launcher must refuse.
-        assert completed.returncode == 2, completed.stdout
-        assert "CLAUDE_DEVELOPMENT_BRANCH_NOT_ALLOWED" in completed.stderr
+
+    assert completed.returncode == 0, completed.stderr
+    assert f"repository_root: {REPO_ROOT}" in completed.stdout
+    assert f"current_branch: {ALLOWED_BRANCH}" in completed.stdout
+    assert "development launcher preflight PASS" in completed.stdout
+
+
+def test_dev_launch_008_the_child_environment_carries_no_routing_variable():
+    """The sanitizer must remove every variable the launcher refuses.
+
+    Pinned against the launcher's own list, so a variable added there cannot
+    quietly keep reaching git in the subprocess test above.
+    """
+    env = _sanitized_child_environment()
+    assert launcher.RUNTIME_PROFILE_ENV not in env
+    for name in launcher.GIT_ENVIRONMENT_OVERRIDES:
+        assert name not in env, f"{name} would still reach the child's git"
+    assert "PATH" in env, "the child still needs a normal PATH"
 
 
 # ------------------------------------------- launcher: production refusal ---
+#
+# These drive the real check by injecting a signal that IS present. Every other
+# launcher test pins both signals absent, so none of them can pass or fail
+# because of what happens to be installed under /etc on the host.
 
 
-def test_dev_launch_010_a_production_runtime_profile_is_refused():
+def test_dev_launch_016_the_default_etc_paths_are_never_consulted(
+    monkeypatch, isolated_development_host
+):
+    """Behaviour-level guard: a fall back to the real /etc paths fails here.
+
+    Asserting on the fixture's dictionary would only restate the fixture. This
+    watches ``Path.exists`` instead, so a launcher call that quietly loses its
+    injected paths -- or a new check that reads the module defaults directly --
+    is caught even on a machine where those files do not exist and nothing
+    would otherwise go wrong.
+    """
+    original_exists = Path.exists
+    forbidden = {
+        Path(launcher.PRODUCTION_MARKER_PATH),
+        Path(launcher.MANAGED_SETTINGS_PATH),
+    }
+
+    def guarded_exists(path):
+        if path in forbidden:
+            pytest.fail(f"real host Production path consulted: {path}")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", guarded_exists)
+
+    result = launcher.preflight(
+        current_branch=ALLOWED_BRANCH, **isolated_development_host
+    )
+
+    assert result["current_branch"] == ALLOWED_BRANCH
+    assert result["repository_root"] == REPO_ROOT
+
+
+def test_dev_launch_017_the_guard_itself_detects_a_default_path_read(monkeypatch):
+    """The guard above is only worth having if it actually fires."""
+    original_exists = Path.exists
+    forbidden = {
+        Path(launcher.PRODUCTION_MARKER_PATH),
+        Path(launcher.MANAGED_SETTINGS_PATH),
+    }
+
+    def guarded_exists(path):
+        if path in forbidden:
+            pytest.fail(f"real host Production path consulted: {path}")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", guarded_exists)
+
+    with pytest.raises(Failed):
+        # Exactly what a lost injection would do: the module default is read.
+        Path(launcher.PRODUCTION_MARKER_PATH).exists()
+
+
+def test_dev_launch_010_a_production_runtime_profile_is_refused(
+    isolated_development_host,
+):
+    """Only the runtime profile is set; both paths stay absent."""
+    inputs = dict(isolated_development_host)
+    inputs["environ"] = {launcher.RUNTIME_PROFILE_ENV: "production"}
+
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={"DAYTRADE_RUNTIME_PROFILE": "production"})
+        launcher.preflight(**inputs)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_PRODUCTION_RUNTIME"
 
 
-def test_dev_launch_011_the_production_marker_is_refused(tmp_path):
+def test_dev_launch_011_the_production_marker_is_refused(
+    tmp_path, isolated_development_host
+):
+    """Only the marker is present; the profile and the policy stay absent."""
     marker = tmp_path / "daytrade-production-runtime"
     marker.write_text("DAYTRADE_PRODUCTION_RUNTIME_V1\n", encoding="utf-8")
+    inputs = dict(isolated_development_host)
+    inputs["production_marker_path"] = marker
 
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={}, production_marker_path=marker)
+        launcher.preflight(**inputs)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_PRODUCTION_RUNTIME"
 
 
-def test_dev_launch_012_an_installed_managed_policy_is_refused(tmp_path):
+def test_dev_launch_012_an_installed_managed_policy_is_refused(
+    tmp_path, isolated_development_host
+):
+    """Only the policy is present; the profile and the marker stay absent."""
     managed = tmp_path / "managed-settings.json"
     managed.write_text("{}", encoding="utf-8")
+    inputs = dict(isolated_development_host)
+    inputs["managed_settings_path"] = managed
 
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={}, managed_settings_path=managed)
+        launcher.preflight(**inputs)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_PRODUCTION_RUNTIME"
 
 
 def test_dev_launch_013_main_returns_two_and_starts_nothing_on_a_production_host(
-    monkeypatch, exec_recorder, tmp_path, capsys
+    monkeypatch, exec_recorder, tmp_path, capsys, isolated_development_host
 ):
+    """main() on a Production host: the marker is the only signal set."""
     marker = tmp_path / "daytrade-production-runtime"
     marker.write_text("DAYTRADE_PRODUCTION_RUNTIME_V1\n", encoding="utf-8")
     monkeypatch.chdir(PROJECT_ROOT)
+    inputs = dict(isolated_development_host)
+    inputs["production_marker_path"] = marker
 
-    assert launcher.main([], production_marker_path=marker) == 2
+    assert launcher.main([], current_branch=ALLOWED_BRANCH, **inputs) == 2
 
     assert "file" not in exec_recorder, "claude must not be started"
     assert "CLAUDE_DEVELOPMENT_PRODUCTION_RUNTIME" in capsys.readouterr().err
 
 
-def test_dev_launch_014_a_disagreeing_git_top_level_fails_closed(tmp_path):
+def test_dev_launch_014_a_disagreeing_git_top_level_fails_closed(
+    tmp_path, isolated_development_host
+):
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={}, git_toplevel=str(tmp_path))
+        launcher.preflight(git_toplevel=str(tmp_path), **isolated_development_host)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_REPOSITORY_ROOT_UNRESOLVED"
 
 
-def test_dev_launch_015_a_tree_without_a_dot_git_fails_closed(tmp_path):
+def test_dev_launch_015_a_tree_without_a_dot_git_fails_closed(
+    tmp_path, isolated_development_host
+):
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
         launcher.preflight(
-            environ={},
             project_root=tmp_path,
             expected_root=tmp_path,
             git_toplevel=str(tmp_path),
+            **isolated_development_host,
         )
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_REPOSITORY_ROOT_UNRESOLVED"
 
@@ -257,39 +437,51 @@ def test_dev_launch_015_a_tree_without_a_dot_git_fails_closed(tmp_path):
         pytest.param("GIT_CEILING_DIRECTORIES", id="DEV-LAUNCH-047"),
     ],
 )
-def test_the_launcher_refuses_an_inherited_git_routing_variable(variable):
+def test_the_launcher_refuses_an_inherited_git_routing_variable(
+    variable, isolated_development_host
+):
     """The guard cannot see the environment; the launcher refuses to inherit it."""
+    inputs = dict(isolated_development_host)
+    inputs["environ"] = {variable: "/tmp/elsewhere"}
+
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(
-            environ={variable: "/tmp/elsewhere"}, current_branch=ALLOWED_BRANCH
-        )
+        launcher.preflight(current_branch=ALLOWED_BRANCH, **inputs)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_GIT_ENVIRONMENT_OVERRIDE"
     assert variable in excinfo.value.message
 
 
-def test_dev_launch_048_an_empty_git_routing_variable_still_fails_closed():
+def test_dev_launch_048_an_empty_git_routing_variable_still_fails_closed(
+    isolated_development_host,
+):
     """Presence is the test: an empty GIT_DIR is not a normal shell either."""
+    inputs = dict(isolated_development_host)
+    inputs["environ"] = {"GIT_DIR": ""}
+
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={"GIT_DIR": ""}, current_branch=ALLOWED_BRANCH)
+        launcher.preflight(current_branch=ALLOWED_BRANCH, **inputs)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_GIT_ENVIRONMENT_OVERRIDE"
 
 
-def test_dev_launch_049_a_plain_environment_passes_on_a_claude_branch():
+def test_dev_launch_049_a_plain_environment_passes_on_a_claude_branch(
+    isolated_development_host,
+):
     """The ordinary case: no GIT_* routing, a claude/* branch, PASS."""
     result = launcher.preflight(
-        environ={"PATH": os.environ.get("PATH", "")}, current_branch=ALLOWED_BRANCH
+        current_branch=ALLOWED_BRANCH, **isolated_development_host
     )
     assert result["current_branch"] == ALLOWED_BRANCH
     assert result["repository_root"] == REPO_ROOT
 
 
 def test_dev_launch_050_main_refuses_and_starts_nothing_with_git_dir_set(
-    monkeypatch, exec_recorder, capsys
+    monkeypatch, exec_recorder, capsys, isolated_development_host
 ):
+    """The routing variable is injected, not exported into the real process."""
     monkeypatch.chdir(PROJECT_ROOT)
-    monkeypatch.setenv("GIT_WORK_TREE", "/etc")
+    inputs = dict(isolated_development_host)
+    inputs["environ"] = {"GIT_WORK_TREE": "/etc"}
 
-    assert launcher.main([], current_branch=ALLOWED_BRANCH) == 2
+    assert launcher.main([], current_branch=ALLOWED_BRANCH, **inputs) == 2
 
     assert "file" not in exec_recorder, "claude must not be started"
     assert "CLAUDE_DEVELOPMENT_GIT_ENVIRONMENT_OVERRIDE" in capsys.readouterr().err
@@ -324,9 +516,11 @@ def _init_repo(path: Path, branch: str) -> Path:
     return path
 
 
-def test_dev_launch_030_a_claude_branch_is_allowed():
+def test_dev_launch_030_a_claude_branch_is_allowed(isolated_development_host):
     """ALLOW: the one branch namespace a Development session may commit on."""
-    result = launcher.preflight(environ={}, current_branch="claude/example")
+    result = launcher.preflight(
+        current_branch="claude/example", **isolated_development_host
+    )
     assert result["current_branch"] == "claude/example"
 
 
@@ -342,9 +536,11 @@ def test_dev_launch_030_a_claude_branch_is_allowed():
         pytest.param("claude/", id="DEV-LAUNCH-032d"),
     ],
 )
-def test_the_launcher_refuses_every_branch_outside_the_claude_namespace(branch):
+def test_the_launcher_refuses_every_branch_outside_the_claude_namespace(
+    branch, isolated_development_host
+):
     with pytest.raises(launcher.DevelopmentLauncherError) as excinfo:
-        launcher.preflight(environ={}, current_branch=branch)
+        launcher.preflight(current_branch=branch, **isolated_development_host)
     assert excinfo.value.code == "CLAUDE_DEVELOPMENT_BRANCH_NOT_ALLOWED"
 
 
@@ -385,11 +581,11 @@ def test_dev_launch_035_a_real_claude_branch_checkout_resolves(tmp_path):
 
 
 def test_dev_launch_036_main_refuses_and_starts_nothing(
-    monkeypatch, exec_recorder, capsys
+    monkeypatch, exec_recorder, capsys, isolated_development_host
 ):
     monkeypatch.chdir(PROJECT_ROOT)
 
-    assert launcher.main([], current_branch="main") == 2
+    assert launcher.main([], current_branch="main", **isolated_development_host) == 2
 
     assert "file" not in exec_recorder, "claude must not be started on main"
     assert "CLAUDE_DEVELOPMENT_BRANCH_NOT_ALLOWED" in capsys.readouterr().err
