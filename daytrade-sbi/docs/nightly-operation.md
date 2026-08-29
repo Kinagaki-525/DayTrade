@@ -296,40 +296,68 @@ Production allowed domainsは`config/source_matrix.yaml`の`url_template` host�
 
 ### Policy deployment（Human）
 
+この手順のcommandはすべて**Production Linux/WSL2のHuman shell**で、`daytrade-sbi`を
+current working directoryとして実行する。冒頭「開始方法」のPowerShell `py`は
+Windows Python Launcher向けの別contextであり、ここでは使わない。
+
 1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
 2. RepositoryをReviewed HEADへcheckoutする。
-3. `python -B -m pytest` が0 failedであることを確認する。
-4. Policyをrenderする（`/etc`には何も書きません）。
+3. **Production Python candidateを1回だけ決める。** 以降のpytest / render / deployは
+   すべてこの同じ値を使う。
+
+   ```bash
+   PRODUCTION_PYTHON="$(command -v python3)"
+   ```
+
+   `python3`はProduction Python candidateの**discovery launcher**にすぎない。
+   Managed Policy / Runtime Security上のcanonical identityは、この候補を
+   `canonical_production_python()`がresolveした**absolute executable path**である。
+   `--production-python`にsymlink（例: `python3 -> python3.11`）を渡しても構わない。
+   `canonical_production_python()`が内部で必ずresolved absolute pathへ正規化するため、
+   Managed Bash allow rule / Hook command / `runtime_security.json` /
+   `DAYTRADE_PRODUCTION_PYTHON` / Runtime Guardの比較はすべて同一identityになる。
+   Humanが事前にsymlinkを手動解決したり、独自にcanonicalizeする必要はない。
+
+   **Productionはbare `python` commandの存在を要求しない。** `python`のalias追加、
+   `python -> python3` symlink作成、`python-is-python3`のinstallをprerequisiteに
+   しない。`command -v python3`が失敗して`PRODUCTION_PYTHON`が空になる場合は
+   Fail-ClosedとしてPolicy deploymentを開始しない（aliasやsymlinkで回避しない）。
+
+4. 依存関係とtestをその候補で確認する。versionはrepositoryのcanonical版
+   （`daytrade-sbi/.python-version`）と一致していなければならない。
+
+   ```bash
+   "$PRODUCTION_PYTHON" --version
+   "$PRODUCTION_PYTHON" -B -m pytest
+   ```
+
+   version不一致、または0 failed以外ならSTOPする。独自にPythonをinstall・切替しない。
+
+5. Policyをrenderする（`/etc`には何も書きません）。
 
    ```bash
    scripts/render-claude-production-policy \
-       --production-python "$(command -v python3)" > /tmp/managed-settings.json
+       --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
    ```
 
-   `--production-python`にsymlink（例: `python3 -> python3.11`）を渡しても構いません。
-   `canonical_production_python()`が内部で必ずresolved absolute pathへ正規化するため、
-   Managed Bash allow rule / Hook command / `runtime_security.json` /
-   `DAYTRADE_PRODUCTION_PYTHON` / Runtime Guardの比較はすべて同一identityになります。
-   Humanが事前にsymlinkを手動解決する必要はありません。
-
-5. rendered policyをHumanがreviewする。
-6. root権限でdeployする。
+6. rendered policyをHumanがreviewする。
+7. root権限でdeployする。
 
    ```bash
-   sudo scripts/deploy-claude-managed-policy --production-python "$(command -v python3)"
+   sudo scripts/deploy-claude-managed-policy --production-python "$PRODUCTION_PYTHON"
    ```
 
    既に`/etc/claude-code/managed-settings.json`が存在する場合は
    `EXISTING_MANAGED_POLICY_PRESENT`で停止します。自動merge・自動backup・overwriteは
    行わず、`--force`も存在しません。既存の組織Policyを壊さないためです。
    `managed-settings.d`へのdrop-in配置も行いません。
-7. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
-8. `scripts/claude-production --target-date <YYYY-MM-DD> --preflight-only`で
+8. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
+9. `scripts/claude-production --target-date <YYYY-MM-DD> --preflight-only`で
    Runtime Security Preflightを通す。
-9. Claude Codeの`/status`でSetting sourcesを確認し、file-based
-   *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
-   sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
-10. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
+10. Claude Codeの`/status`でSetting sourcesを確認し、file-based
+    *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
+    sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
+11. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
     後述のProduction Path Materialization Contractに従い、path argumentは具体的な
     absolute pathへmaterializeし、1 Bash callにcanonical CLI commandを1個だけ入れる。
 
@@ -341,7 +369,7 @@ Production allowed domainsは`config/source_matrix.yaml`の`url_template` host�
     `; echo "EXIT_CODE=$?"`を付け足さない（`;`はGuardが拒否する）。
     `--source-matrix config/source_matrix.yaml`のような相対パスは
     `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`で拒否される。
-11. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
+12. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
 
 ### Runtime Security Preflight
 
