@@ -278,6 +278,111 @@ sudo apt-get install bubblewrap socat
   `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
   Repository Scriptからは変更しません。
 
+#### Production Python dependency bootstrap（Human専用）
+
+Production RuntimeのPython依存関係は、固定のroot-owned virtualenvへinstallする。
+**Coding Agentはこのbootstrapを実行しない。** Production runtimeごとに1回、Humanが行う。
+
+| 項目 | 値 |
+| --- | --- |
+| Production venv | `/opt/daytrade-production-python` |
+| Production canonical interpreter | `/opt/daytrade-production-python/bin/python3` |
+| Dependency manifest | `daytrade-sbi/requirements-dev.txt` |
+
+Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**であり、
+そこへ直接installしない。distribution提供のPython libraryでrepository requirementsを
+代替もしない（例: Ubuntu 26.04の`python3-jsonschema` 4.19.2は
+`jsonschema>=4.23`を満たさない）。
+
+1. base OS Pythonのversionがrepositoryのcanonical版（`daytrade-sbi/.python-version`）と
+   一致することを確認する。一致しなければSTOPする。
+
+   ```bash
+   python3 --version
+   ```
+
+2. venv作成能力をHumanがaptで導入する。これはPython project dependenciesのinstallでは
+   なく、venv creationのOS prerequisiteである。
+
+   ```bash
+   sudo apt-get install python3.14-venv
+   ```
+
+3. `/opt/daytrade-production-python`が既に存在する場合は**Fail-ClosedでSTOP**する。
+   独自の削除・上書き・`--clear`による再作成を行わない。既存環境の扱いはHumanが
+   別途判断する。
+
+4. base Pythonからroot-owned venvを作る。**`--copies`が必須**である。
+
+   ```bash
+   sudo python3 -m venv --copies /opt/daytrade-production-python
+   ```
+
+   通常のsymlink-based venvを使ってはいけない。`canonical_production_python()`は
+   `Path.resolve()`でsymlinkを解決するため、venvの`python3`がbase interpreterへの
+   symlinkだと**canonical pathがvenvの外へ解決され**、Production Python identityと
+   dependencyを持つvenv site-packages contextが分離し得る。`--copies`はvenv内Pythonを
+   regular fileにするので、canonicalize後も同じpathのままになる。
+
+5. venv内のpipからdependency manifestをinstallする。`requirements-dev.txt`は
+   `-r requirements.txt`を含むため、2つを別々にinstallしない。
+
+   ```bash
+   sudo /opt/daytrade-production-python/bin/python3 -m pip install \
+       --disable-pip-version-check -r <repository-root>/daytrade-sbi/requirements-dev.txt
+   ```
+
+6. root所有かつgroup/other非writableにする。Production ClaudeがDependency環境を
+   書き換えられる状態にしない。
+
+   ```bash
+   sudo chown -R root:root /opt/daytrade-production-python
+   sudo chmod -R go-w /opt/daytrade-production-python
+   ```
+
+7. Production Human shellでvenvのbinをPATH先頭へ置き、候補を1回だけ決める。
+
+   ```bash
+   export PATH="/opt/daytrade-production-python/bin:$PATH"
+   PRODUCTION_PYTHON="$(command -v python3)"
+   ```
+
+   期待値は`/opt/daytrade-production-python/bin/python3`である。異なる場合はSTOPする。
+
+8. 候補を検証する。1つでも満たさなければSTOPする。
+
+   ```bash
+   test -f "$PRODUCTION_PYTHON" && test ! -L "$PRODUCTION_PYTHON"
+   "$PRODUCTION_PYTHON" --version
+   "$PRODUCTION_PYTHON" -m pip check
+   ```
+
+   - regular fileであり**symlinkでない**こと（`--copies`の確認）
+   - versionが`.python-version`と一致すること
+   - `pip check`が成功すること
+
+9. repository自身のresolverが同じpathを返すことを確認する（`daytrade-sbi`をCWDとして
+   実行する）。異なる場合はSTOPする。
+
+   ```bash
+   "$PRODUCTION_PYTHON" -c 'import sys; from src.claude_runtime_security import canonical_production_python; print(canonical_production_python(sys.executable))'
+   ```
+
+   出力が`/opt/daytrade-production-python/bin/python3`と完全一致することを確認する。
+
+**禁止事項**（いずれもFail-Closedを回避する手段であり採用しない）:
+
+- systemPythonへの通常の`pip install`、およびPEP 668のoverride
+- `pip install`のuser installやrepository rootへの`pip --target`
+- `PYTHONPATH`によるdependency injection
+- `python`のalias追加、`python`→`python3`のmanual symlink作成、
+  `python-is-python3`のinstall
+- aptのPython libraryでrepository requirementsを代替すること
+
+このvenvにpytestが常設されるが、それを理由に**Runtime Guardのallowed commandを
+追加しない**。Production ClaudeのManaged Bash allowed invocationは引き続き
+`<canonical production python> -B -m src.cli ...`だけである。
+
 ### Source Matrixのdomain変更時にHumanが行うこと
 
 Production allowed domainsは`config/source_matrix.yaml`の`url_template` hostと
@@ -301,13 +406,20 @@ current working directoryとして実行する。冒頭「開始方法」のPowe
 Windows Python Launcher向けの別contextであり、ここでは使わない。
 
 1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
+   Python依存関係は「Production Python dependency bootstrap（Human専用）」を完了して
+   いること。未完了ならここから先へ進まない。
 2. RepositoryをReviewed HEADへcheckoutする。
 3. **Production Python candidateを1回だけ決める。** 以降のpytest / render / deployは
-   すべてこの同じ値を使う。
+   すべてこの同じ値を使う。PATHを先にmaterializeしてから`command -v python3`を
+   1回だけ実行する（同一手順中に再discoveryしない）。
 
    ```bash
+   export PATH="/opt/daytrade-production-python/bin:$PATH"
    PRODUCTION_PYTHON="$(command -v python3)"
    ```
+
+   期待値は`/opt/daytrade-production-python/bin/python3`である。PATHを先に
+   materializeしないと、dependencyを持たないsystem Pythonが選ばれる。
 
    `python3`はProduction Python candidateの**discovery launcher**にすぎない。
    Managed Policy / Runtime Security上のcanonical identityは、この候補を
@@ -333,18 +445,20 @@ Windows Python Launcher向けの別contextであり、ここでは使わない�
 
    version不一致、または0 failed以外ならSTOPする。独自にPythonをinstall・切替しない。
 
-5. Policyをrenderする（`/etc`には何も書きません）。
+5. Policyをrenderする（`/etc`には何も書きません）。scriptのshebang解決に任せず、
+   **script自身も同じProduction Pythonで起動する**。
 
    ```bash
-   scripts/render-claude-production-policy \
-       --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
+   "$PRODUCTION_PYTHON" scripts/render-claude-production-policy --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
    ```
 
 6. rendered policyをHumanがreviewする。
-7. root権限でdeployする。
+7. root権限でdeployする。ここも同様にscript自身をProduction Pythonで起動する。
+   `sudo`の`secure_path`はPATHを差し替えるため、shebang任せだと別のPythonが
+   選ばれ得る。
 
    ```bash
-   sudo scripts/deploy-claude-managed-policy --production-python "$PRODUCTION_PYTHON"
+   sudo "$PRODUCTION_PYTHON" scripts/deploy-claude-managed-policy --production-python "$PRODUCTION_PYTHON"
    ```
 
    既に`/etc/claude-code/managed-settings.json`が存在する場合は
