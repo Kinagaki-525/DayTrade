@@ -25,11 +25,13 @@ git commit -m "<message>"
   ↓
 daytrade-sbi/scripts/claude-safe-push
   ↓
-Draft Pull Request + Completion Evidence
+Draft Pull Request
+  ↓
+Implementation Completion Report（Claude → Human handoff）
   ↓
 GitHub Actions `CI / pytest`
   ↓
-ChatGPT / Human Review against Work Order
+ChatGPT / Human Review against Work Order（latest HEAD / diff / CI を独立確認）
   ↓
 Human Merge
 ```
@@ -44,16 +46,24 @@ Human Merge
 7. 変更 file を明示して `git add -- <explicit-path> [<explicit-path> ...]`
 8. `git commit -m "<message>"`
 9. `daytrade-sbi/scripts/claude-safe-push`
-10. Draft Pull Request（body は `.github/pull_request_template.md` の Completion Evidence）
-11. GitHub Actions `CI / pytest`
-12. ChatGPT / Human Review（Work Order の Acceptance Criteria に対して）
-13. Human Merge
+10. Draft Pull Request（body の書式は `.github/pull_request_template.md`）
+11. Implementation Completion Report を完成形 Markdown として Human へ handoff
+12. GitHub Actions `CI / pytest`
+13. ChatGPT / Human Review（Work Order の Acceptance Criteria に対して）
+14. Human Merge
 
 Development Work Order が発行されている作業では、実装を始める前に Work Order を読み、
 その FIXED Design Decision に従う。Work Order の形式仕様と Claude の裁量境界・STOP 契約の
 正本は [development-work-order.md](development-work-order.md) である。Work Order は
 `CLAUDE.md` / `AGENTS.md` / 既存 Security Contract を緩和できない。矛盾を見つけた場合は
 推測して実装を続けず、`IMPLEMENTATION_BLOCKED` として停止する。
+
+Evidence は provenance の異なる 2 層に分かれる。Claude が生成するのは step 11 の
+**Implementation Completion Report**（自己申告）までで、GitHub の latest HEAD / diff /
+CI を独立確認して **Review Evidence** を作るのは ChatGPT / Human の責務である。Claude が
+PR body を更新できないことや、GitHub Actions の結果を自分で確認できないことは
+Capability boundary であり、それだけで実装を `IMPLEMENTATION_BLOCKED` にはしない。
+確認できない外部状態は虚偽の `PASS` にせず `NOT VERIFIED` として handoff する。
 
 Safe Sync / Safe Start / Safe Push wrapper は cwd に依存せず repository を Git 自身から解決するため、repository root からも `daytrade-sbi/` からも同じ契約で動作する。pytest は `daytrade-sbi/pytest.ini` を使うので `cd daytrade-sbi && .venv/bin/python -B -m pytest` として実行する。
 

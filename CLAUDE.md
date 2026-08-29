@@ -179,8 +179,18 @@ Work Orderを受け取った場合、Development Claude Codeは次に従う。
 - **Work Orderはこの`CLAUDE.md`・`daytrade-sbi/AGENTS.md`・既存Security Contractを
   緩和できない。** 上位のrepository policyとWork Orderが衝突する場合は、より厳しい
   既存policyを維持して停止する
-- PR bodyは`.github/pull_request_template.md`をCompletion Evidenceとして使い、
-  Acceptance CriteriaをID単位で報告する。Deviationがあるのに`NONE`と書かない
+- 実装完了時は**Implementation Completion Report**を完成形MarkdownとしてHumanへ
+  handoffする。Acceptance CriteriaはID単位で PASS / FAIL / BLOCKED / NOT VERIFIED を
+  報告し、Deviationがあるのに`NONE`と書かない。PR bodyの書式は
+  `.github/pull_request_template.md`に従う
+- **確認していないGitHub状態・CI結果を`PASS`や`success`と報告しない。** Claude自身が
+  GitHub Actionsを確認できない場合は`GitHub CI: NOT VERIFIED BY CLAUDE`と記載する。
+  latest HEAD / diff / CIの独立確認とReview Evidenceの作成はChatGPT / Humanの責務である
+- Claude自身がPR bodyを編集できないこと、GitHub Actions CIを確認できないこと、
+  GitHub review recordを書けないことは**Capability boundary**であり、それだけを理由に
+  `IMPLEMENTATION_BLOCKED`としない。implementation / tests / commit / Safe Push /
+  Draft PR / Report生成が完了していれば作業は完了である。この不一致を解決するために
+  `gh` CLI許可・GitHub API write・token追加を求めない
 
 ## Development限定: Safe Push（Claude Code固有）
 
