@@ -28,6 +28,11 @@ from src.contracts import validate_json_document
 from src.file_io import atomic_write_text
 from src.research import merge_discovery_candidates, validate_market_research
 from src.source_acquisition import AcquisitionError, AcquisitionResult
+from src.security_type import (
+    COMMON_STOCK_MARKET_SEGMENTS,
+    classify_security_type,
+    is_supported_security_type,
+)
 from src.source_matrix import GLOBAL_SOURCE_IDS
 from src.tick_size import TickSizeError, select_tick_size
 
@@ -324,12 +329,18 @@ def write_market_research(path: Path, payload: dict[str, Any]) -> None:
 # Stage1 / Stage2 / Turnover -> market_data.json (FIX-008)
 # ---------------------------------------------------------------------------
 
-#: acquisition field_name -> market_data field name.
+#: acquisition field_name -> market_data field name, for the values that are
+#: copied straight through. ``share_unit`` is deliberately absent: it is not a
+#: pass-through of a candidate-scoped value but a Global Source rule that only
+#: some candidates are entitled to consume -- see :func:`_apply_share_unit`.
 STAGE1_FIELD_MAP = {
     "listed_company_name": "company_name",
     "market_segment": "market",
-    "trading_unit": "share_unit",
 }
+
+LISTED_COMPANY_SOURCE_ID = "JPX_LISTED_COMPANY"
+FOREIGN_STOCK_LIST_SOURCE_ID = "JPX_FOREIGN_STOCK_LIST"
+DOMESTIC_TRADING_UNIT_SOURCE_ID = "JPX_TRADING_UNIT"
 
 
 def _ledger_value_records(
@@ -431,6 +442,7 @@ def _empty_record(ticker: str, trading_date: str) -> dict[str, Any]:
         "company_name": None,
         "market": None,
         "share_unit": None,
+        "security_type": None,
         "data_status": "DATA_UNAVAILABLE",
         "data_status_reasons": [],
         "source_policy_status": "NOT_STARTED",
@@ -500,6 +512,99 @@ def _apply_stage1(record: dict[str, Any], indexed: dict[tuple[str, str], dict[st
                 verified_at=primary.get("retrieved_at"),
             ),
         )
+
+    _apply_security_type(record, indexed)
+    _apply_share_unit(record, indexed)
+
+
+def _apply_security_type(
+    record: dict[str, Any],
+    indexed: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Compose ``security_type`` from the Stage 1 listing evidence.
+
+    Deliberately not a parser's job: the market segment comes from the
+    candidate's own JPX stock-search result, and separating a foreign stock
+    from a domestic common stock inside Prime/Standard/Growth needs the JPX
+    foreign listed-issues evidence as well. When either is missing the
+    candidate stays unclassified -- there is no fallback to
+    DOMESTIC_COMMON_STOCK.
+    """
+    segment_value = indexed.get((LISTED_COMPANY_SOURCE_ID, "market_segment"))
+    if segment_value is None:
+        return
+    foreign_value = indexed.get(
+        (FOREIGN_STOCK_LIST_SOURCE_ID, "foreign_stock_trading_units")
+    )
+    foreign_units = foreign_value.get("value") if foreign_value else None
+    foreign_codes = (
+        list(foreign_units) if isinstance(foreign_units, dict) else None
+    )
+
+    security_type = classify_security_type(
+        market_segment=segment_value.get("value"),
+        candidate_code=str(record["ticker"]),
+        foreign_issue_codes=foreign_codes,
+    )
+    record["security_type"] = security_type
+    if security_type is None:
+        return
+
+    # Reference exactly the evidence the classification consumed. An explicit
+    # ETF/REIT segment is decided by the listing alone, so it must not claim
+    # the foreign list; separating a foreign stock from a domestic one used
+    # both, so it must not drop either.
+    consulted_foreign = (
+        str(segment_value.get("value") or "").strip() in COMMON_STOCK_MARKET_SEGMENTS
+    )
+    extra_refs = (
+        (str(foreign_value["source_ref"]),)
+        if consulted_foreign and foreign_value is not None
+        else ()
+    )
+    _set_provenance(
+        record,
+        _provenance(
+            "security_type",
+            status="VERIFIED",
+            verified_value=security_type,
+            primary=segment_value,
+            secondary=None,
+            extra_refs=extra_refs,
+            verified_at=segment_value.get("retrieved_at"),
+        ),
+    )
+
+
+def _apply_share_unit(
+    record: dict[str, Any],
+    indexed: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Apply the domestic trading-unit rule -- to domestic common stocks only.
+
+    JPX_TRADING_UNIT is a market-wide rule for domestic stocks, so it is a
+    Global Source Value shared by the whole run. Consuming it is an
+    entitlement, not an attribution: an ETF, a foreign stock or an
+    unclassified candidate keeps ``share_unit = None`` rather than inheriting
+    100 from a rule that does not govern it.
+    """
+    if not is_supported_security_type(record.get("security_type")):
+        return
+    unit_value = indexed.get((DOMESTIC_TRADING_UNIT_SOURCE_ID, "trading_unit"))
+    if unit_value is None:
+        return
+    record["share_unit"] = unit_value["value"]
+    _set_provenance(
+        record,
+        _provenance(
+            "share_unit",
+            status="VERIFIED",
+            verified_value=unit_value["value"],
+            primary=unit_value,
+            secondary=None,
+            verified_at=unit_value.get("retrieved_at"),
+        ),
+    )
 
 
 def _apply_stage2(record: dict[str, Any], indexed: dict[tuple[str, str], dict[str, Any]]) -> None:

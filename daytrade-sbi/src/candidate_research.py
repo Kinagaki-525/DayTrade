@@ -4,6 +4,10 @@ from copy import deepcopy
 from typing import Any, Iterable
 
 from src.market import MarketDataRecord
+from src.security_type import (
+    is_supported_security_type,
+    resolve_security_type_evidence,
+)
 from src.source_checks import STANDARD_SOURCE_CHECK_IDS
 from src.stage1 import source_ids_by_evidence_id_from_payload, source_refs_from_payload
 from src.strategy import build_order_plan
@@ -71,6 +75,7 @@ def apply_stage1_payload(
                 record,
                 valid_source_refs=valid_source_refs,
                 source_ids_by_ref=source_ids_by_ref,
+                source_values=source_payload.get("sources", []),
                 config=config,
             )
         )
@@ -165,9 +170,48 @@ def _apply_stage1_to_research(
     *,
     valid_source_refs: set[str],
     source_ids_by_ref: dict[str, str],
+    source_values: list[dict[str, Any]],
     config: dict[str, Any],
 ) -> dict[str, Any]:
     updated = deepcopy(research)
+    # Stage 1 eligibility order: security_type -> share_unit -> capital_limit.
+    # security_type comes first because it decides whether the domestic
+    # trading-unit rule governs this candidate at all.
+    #
+    # record.security_type is never trusted as a bare string: it is recomputed
+    # from the Canonical Source Ledger (sources.json) and must agree exactly.
+    # The evidence deliberately does NOT come from record.sources -- those are
+    # market_data's own copy, so a tampered market_data would simply agree
+    # with itself. A value that no longer follows from the canonical evidence
+    # decides nothing: Stage 1 stays open instead.
+    evidence = resolve_security_type_evidence(
+        source_values, candidate_code=str(record.ticker or "")
+    )
+    security_type_refs = [
+        ref for ref in evidence.source_refs if ref in valid_source_refs
+    ]
+    if (
+        evidence.security_type is None
+        or evidence.security_type != record.security_type
+        or len(security_type_refs) != len(evidence.source_refs)
+    ):
+        # Unclassified, tampered, or missing a Source Record the
+        # classification depended on: not a PASS and not a REJECT. Stage 1
+        # stays open rather than guessing a security type for the candidate.
+        return updated
+    if not is_supported_security_type(record.security_type):
+        return _stage1_rejected(
+            updated,
+            check_id="security_type",
+            reason_code="SECURITY_TYPE_UNSUPPORTED",
+            source_refs=security_type_refs,
+            status_reason=(
+                f"security_type {record.security_type} is not supported by the "
+                "current strategy"
+            ),
+            required_capital_yen=None,
+        )
+
     share_unit_refs = _source_refs_for_fields(
         record,
         ("share_unit",),
@@ -233,6 +277,13 @@ def _apply_stage1_to_research(
     updated["stage1_status"] = "PASSED"
     updated["stage1_reasons"] = []
     updated["stage1_checks"] = [
+        {
+            "check_id": "security_type",
+            "status": "PASSED",
+            "reason_code": None,
+            "source_refs": security_type_refs,
+            "source_attempt_ids": [],
+        },
         {
             "check_id": "share_unit",
             "status": "PASSED",

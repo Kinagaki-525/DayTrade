@@ -66,7 +66,16 @@ def test_ranking_v1_regression_fixture_build_ranking_reproduces_complete():
     market_data = load_json_document(FIXTURE_DIR / "market_data.json", "market_data.schema.json")
     source_payload = load_json_document(FIXTURE_DIR / "sources.json", "sources.schema.json")
     recorded_ranking = load_json_document(FIXTURE_DIR / "ranking.json", "ranking.schema.json")
-    source_matrix = load_source_matrix()
+    # A v2-era fixture is re-verified against the Source Matrix that was in
+    # force when the run happened -- resolved through the historical registry
+    # by its recorded hash -- never against whatever the live matrix contains
+    # today. Loading the live file here would force this frozen fixture to be
+    # rewritten on every Source Matrix change, which is exactly what
+    # config/source_matrix_registry/README.md forbids.
+    source_matrix = load_source_matrix(
+        Path("config/source_matrix_registry")
+        / f"{recorded_ranking['input_hashes']['source_matrix_sha256']}.yaml"
+    )
     config = load_strategy_config(FIXTURE_DIR / "strategy_snapshot.yaml")
 
     input_hashes = dict(recorded_ranking["input_hashes"])

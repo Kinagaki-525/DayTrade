@@ -63,6 +63,17 @@ REQUIRED_SOURCE_IDS = {
     "YAHOO_JP_QUOTE",
 }
 
+#: Source ids required from Source Matrix v3 onward only.
+#:
+#: A historical v2 matrix in ``config/source_matrix_registry/`` is byte-exact
+#: frozen evidence and must stay loadable forever, so a source introduced
+#: after the v2 era is required of v3 matrices only -- exactly how the schema
+#: already treats the v3-only ``acquisition`` block. Nothing here weakens the
+#: live contract: the current matrix is v3, so it must carry these.
+V3_REQUIRED_SOURCE_IDS = {
+    "JPX_FOREIGN_STOCK_LIST",
+}
+
 #: Source ids fetched once per run rather than once per candidate. A single
 #: Attempt Value from one of these carries ``ticker=None`` and is shared by
 #: every candidate that consumes it -- it is never cloned into a
@@ -75,6 +86,10 @@ GLOBAL_SOURCE_IDS = frozenset(
         "YAHOO_JP_VOLUME_RANKING",
         "YAHOO_JP_GAIN_RANKING",
         "JPX_CALENDAR",
+        # Market-wide rules and issue lists, not per-candidate pages: each is
+        # fetched once and shared as a single ticker=null Source Value.
+        "JPX_TRADING_UNIT",
+        "JPX_FOREIGN_STOCK_LIST",
         "JPX_TICK_SIZE",
         "JPX_TDNET",
         "JPX_EARNINGS_SCHEDULE",
@@ -115,7 +130,10 @@ def validate_source_matrix(payload: dict[str, Any]) -> SourceMatrixValidationRes
     if duplicate_count:
         errors.append(f"source_matrix contains {duplicate_count} duplicate source_id(s)")
 
-    missing_required = sorted(REQUIRED_SOURCE_IDS.difference(source_ids))
+    required = set(REQUIRED_SOURCE_IDS)
+    if int(payload["source_matrix_schema_version"]) >= 3:
+        required |= V3_REQUIRED_SOURCE_IDS
+    missing_required = sorted(required.difference(source_ids))
     if missing_required:
         errors.append(
             "source_matrix is missing required source_id(s): "

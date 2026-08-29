@@ -69,7 +69,7 @@ Issuer（企業IR）ドメインだけは `config/issuer_domain_registry.yaml` �
 | CLI | 対象 | 主な情報源 |
 | --- | --- | --- |
 | `acquire-discovery` | 全体1回 | Yahoo出来高/値上がりランキング |
-| `acquire-stage1-sources` | 候補全体 | JPXカレンダー・上場銘柄・売買単位 |
+| `acquire-stage1-sources` | 候補全体 | JPXカレンダー・東証上場会社情報検索・外国株一覧・内国株売買単位ルール |
 | `acquire-stage2-market-sources` | 候補ごと | Yahoo/Kabutan OHLCV・呼値・TOPIX500 |
 | `acquire-actual-turnover` | 候補ごと | Yahoo Quote（実売買代金） |
 | `acquire-event-sources` | Hard Screening通過候補のみ | TDnet・決算予定・企業IR（`COMPANY_IR` / `COMPANY_IR_DISCLOSURE`）・Yahoo/Kabutanニュースの6源すべて |
@@ -96,10 +96,133 @@ CLI / Acquisition ContextのHard Errorである。
 
 **`--ticker` は存在しない。** どの銘柄がネットワークアクセスを受けるかはディスク上の成果物から導出される: Stage1は`market_research.json`の`discovery_candidates`、Stage2とTurnoverはStage 1 `PASS`、Eventは`status=ELIGIBLE`かつ`screening_status=PASS`の候補。エージェントが候補集合を注入・拡大する経路はない。
 
+### Stage 1のJPX Source（PR #15）
+
+Stage 1は4つのJPX Sourceを取得する。**上場確認**と**Strategy eligibility**は
+完全に別の概念であり、別のレイヤが判断する。
+
+| Source ID | URL | Scope | 何を出すか |
+| --- | --- | --- | --- |
+| `JPX_CALENDAR` | `/corporate/about-jpx/calendar/` | Global | 非営業日 |
+| `JPX_LISTED_COMPANY` | `www2.jpx.co.jp/tseHpFront/StockSearch.do?method=topsearch&topSearchStr={ticker}` | candidate別 | `listed_company_name` / `market_segment` |
+| `JPX_FOREIGN_STOCK_LIST` | `/equities/products/foreign/issues/index.html` | Global | 外国株のcode → 売買単位 |
+| `JPX_TRADING_UNIT` | `/equities/trading/domestic/03.html` | Global | 内国株の制度上の売買単位ルール |
+
+**Ticker normalization contract**: JPX東証上場会社情報の表示コードは
+`candidate_code + "0"`との**完全一致**でのみ照合する。substring / startswith /
+数値変換は行わない。`285A` → `285A0`のように英字を含むCanonical 4文字コードも
+そのまま扱う。Candidate Contractは`^[0-9A-Z]{4}$`のまま変更しない。
+
+**構造不明ページはNOT_FOUNDにしない**: 検索結果行を1つも認識できないページは
+`PARSE_FAILED`であって「未上場」ではない。2026-08-27 Production失敗はこの取り違えで、
+検索フォームページを取得して全候補が`TICKER_NOT_LISTED_ON_PAGE`になった。
+
+**Trading unit Evidence Contract（JPX_TRADING_UNIT）**: 内国株の売買単位は
+**認識済みの公式assertion**からのみ読む。現在の公式本文は制度をproseで公開しており、
+`src/source_parsers/jpx.py`の`DOMESTIC_TRADING_UNIT_ASSERTIONS`が対象を限定する。
+
+- `内国株では<N>株単位で取引されています`
+- `内国株の売買単位を<N>株へ統一しました`
+
+ページ全体から単なる`100`や`100株`を検索しない（同ページには`2018年`や無関係な
+`100株`のproseが存在するため）。認識できたassertionが0件なら`PARSE_FAILED`、
+複数のassertionが異なる単位を示す場合も`PARSE_FAILED`。**Parserが無条件に100を
+生成することはない** — 値は必ずEvidenceから抽出する。
+
+**Foreign List complete coverage（JPX_FOREIGN_STOCK_LIST）**: 「一覧に無い」ことを
+内国株判定のnegative Evidenceに使う以上、**外国株一覧全体を正常にparseできたことを
+証明してからFOUNDにする**。公式の3 sectionすべてが対象:
+
+- `プライム市場外国株`
+- `スタンダード市場外国株`
+- `グロース市場外国株`
+
+各sectionについて、headingを一意に認識でき、対応tableが一意に定まり、headerに
+`コード`と`売買単位`が各1個存在し、全data rowがcanonical code / valid unitとして
+parseできることを要求する。1 sectionでも欠落・重複・mapping曖昧・header異常・
+row parse失敗があれば**ページ全体を`PARSE_FAILED`**とし、部分的な表を
+「完全な外国株一覧」として扱わない。銘柄数や特定tickerはhardcodeしない。
+
+**Security / product classification**: `security_type`は単一Parserが決めない。
+`market_segment`（JPX_LISTED_COMPANY）と外国株一覧（JPX_FOREIGN_STOCK_LIST）を
+`src/security_type.py`が決定論的に合成する。
+
+- `market_segment`が`ETF` / `ETN` / `REIT` / `インフラファンド` → その商品区分
+- `market_segment`が`プライム` / `スタンダード` / `グロース`
+  かつ外国株一覧に存在 → `FOREIGN_STOCK`
+- 同上かつ外国株一覧に存在しない → `DOMESTIC_COMMON_STOCK`
+- 未知の`market_segment`、または外国株一覧が`PARSE_FAILED` / 未取得 → `null`
+
+`null`は「未分類」であってdefaultではない。**未知値を`DOMESTIC_COMMON_STOCK`へ
+fallbackしない。** 外国株一覧が読めない場合、Prime/Standard/Growth候補も内国株と
+断定しない。
+
+**Trading unit Evidence policy**: `JPX_TRADING_UNIT`は内国株の市場全体ルールであって
+銘柄別ページではない。1 GET / 1 Global Attempt / 1 Global Source Value
+（`ticker=null`）として扱い、そこから`share_unit`を書き込むのは
+`security_type == DOMESTIC_COMMON_STOCK`の候補**だけ**である。
+**ETF・外国株・未分類候補へ100を推定設定しない**（`share_unit`は`null`のまま）。
+外国株の売買単位はEvidenceとして保持するが、現行StrategyのStage1 PASS判定には使わない。
+
+**security_type Trust Chain**: Stage 1は`market_data.security_type`の文字列を
+盲目的に信用しない。eligibility判定の直前に`resolve_security_type_evidence()`が
+**Canonical Source Ledger（`sources.json`の`sources[]`）**から
+`classify_security_type()`を再実行し、結果が`record.security_type`と完全一致する
+ことを要求する。
+
+再計算のEvidenceは`market_data.json`が持つSourceRecordのコピーではなく
+`sources.json`そのものである。`market_data`側の複製から再計算しても、改竄された
+`market_data`が自分自身と一致するだけで検証にならないため。
+
+- `JPX_LISTED_COMPANY.market_segment`（`ticker == candidate`）
+- `JPX_FOREIGN_STOCK_LIST.foreign_stock_trading_units`（`ticker == null`、
+  プライム / スタンダード / グロース分類時のみ必須）
+
+同一 source_id / field / candidate に対しCanonical Source Recordが2件以上見つかった
+場合は、**値が同じでも1件を選ばずFail-Closed**とする。不一致・分類不能・分類が
+参照したSource RecordがSource Ledgerに無い場合も、PASSもREJECTもせずStage 1未完了と
+する。
+
+security_type checkの`source_refs`は、分類が実際に参照したCanonical Evidenceと
+一致させる。
+
+- プライム / スタンダード / グロースから`FOREIGN_STOCK`または
+  `DOMESTIC_COMMON_STOCK`を確定した場合: `JPX_LISTED_COMPANY`と
+  `JPX_FOREIGN_STOCK_LIST`の**両方**のrefを必ず含める
+- ETF / ETN / REIT / インフラファンドの明示`market_segment`の場合:
+  `JPX_LISTED_COMPANY`のrefだけで確定できるため、外国株一覧のrefは必須にしない。
+  外国株一覧が`PARSE_FAILED`でもETF等のREJECTは成立する
+
+`source_backed_stage1_reject()`の独立validationも同じ再計算を行う。固定の
+required source id集合では表現できない（必要なEvidenceが分類pathごとに変わる）ため、
+Canonical Source Ledgerから分類を再計算し、checkがその分類の参照したrefを
+すべて持つことを要求する。
+
+| Canonical Evidence | 有効なsecurity_type rejectの必須ref |
+| --- | --- |
+| `market_segment` = ETF / ETN / REIT / インフラファンド | `JPX_LISTED_COMPANY`のみ |
+| common segment かつ外国株一覧に存在（FOREIGN_STOCK） | `JPX_LISTED_COMPANY` + `JPX_FOREIGN_STOCK_LIST` |
+| common segment かつ外国株一覧に不在（DOMESTIC_COMMON_STOCK） | security_type reject自体が不正 |
+| 分類不能 | security_type rejectをvalid扱いしない |
+
+checkの`status_reason`等の自由文をparseして分類を判断することはない。
+
+**Stage 1 eligibility順序**: `security_type` → `share_unit` → `capital_limit`。
+
+- `security_type != DOMESTIC_COMMON_STOCK` → `SECURITY_TYPE_UNSUPPORTED`でREJECT
+- `share_unit != 100` → 既存の`SHARE_UNIT_NOT_100`でREJECT
+- `security_type`が`null` → PASSもREJECTもせず、Stage 1は未完了のまま（推測しない）
+
+現行Strategyがサポートするのは`DOMESTIC_COMMON_STOCK`だけである。外国株を
+`share_unit=100`だからPASSさせることはしない。
+
 ### 重要な失敗セマンティクス
 
 - **TSE Listing Gate**: バッチ全体でall-or-nothing。1銘柄でも上場確認に失敗したら
   `TSE_LISTING_BATCH_GATE_FAILED`。銘柄単位の黙示的除外も`.T`サフィックスの推測もしない。
+  **ETF等が東証上場していればListingは`FOUND`である。** サポート外商品だからといって
+  Listingを`NOT_FOUND`にしてはいけない。除外はStage 1 eligibilityの
+  `SECURITY_TYPE_UNSUPPORTED`（Evidence付きREJECT）が行う。
 - **Turnover**: 取得失敗時は turnover=null。過去runのFOUNDを再利用しない。
 - **Request Budget（Physical Request）**: 実際のGETの単位は**Physical Request**であり、その識別子は
   `request_id = f(url, target_date, research_cutoff)`（`src/request_budget.py`の`request_id_for`）。

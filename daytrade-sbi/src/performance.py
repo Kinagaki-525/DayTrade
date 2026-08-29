@@ -63,6 +63,7 @@ def build_performance_payload(
                     research,
                     valid_source_refs=valid_source_refs,
                     valid_source_attempt_ids=valid_source_attempt_ids,
+                    source_values=sources,
                 )
             ),
             "stage2_candidate_count": _count_stage2_candidates(candidate_research),

@@ -144,10 +144,117 @@ def yahoo_mixed_top50_ranking_page(start: int = 1000) -> bytes:
     return yahoo_ranking_page_from_symbols(mixed_top50_symbols(start))
 
 
-def jpx_trading_unit_page(unit: str = "100") -> bytes:
+def jpx_trading_unit_page(
+    unit: str = "100",
+    *,
+    assertions: tuple[str, ...] = ("traded", "unified"),
+) -> bytes:
+    """The domestic-stock trading-unit rule page (a market-wide rule).
+
+    Shaped like the published page, which states the rule as prose rather
+    than as a labelled cell. ``assertions`` selects which official sentences
+    the page carries; the surrounding filler deliberately contains a year and
+    a bare "100株" so a parser that merely greps the page cannot pass.
+    """
+    sentences = {
+        "traded": f"内国株では{unit}株単位で取引されています。",
+        "unified": f"2018年10月1日に内国株の売買単位を{unit}株へ統一しました。",
+    }
+    body = "".join(f"<p>{sentences[name]}</p>" for name in assertions)
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<h1>内国株の売買制度</h1>
+<p>2018年までは複数の売買単位が存在していました。</p>
+{body}
+<p>詳細は100株ごとの取扱いに関する各社の説明をご確認ください。</p>
+</body></html>""".encode("utf-8")
+
+
+#: The three official market sections of the JPX foreign stocks listed-issues
+#: page. Their exact headings are part of the Evidence Contract: coverage is
+#: only proven when all three are recognized.
+FOREIGN_STOCK_SECTIONS = (
+    "プライム市場外国株",
+    "スタンダード市場外国株",
+    "グロース市場外国株",
+)
+
+
+def _foreign_stock_section(
+    heading: str,
+    issues: tuple[tuple[str, str], ...],
+    *,
+    header: str = "<tr><th>会社名</th><th>コード</th><th>売買単位</th><th>国籍</th></tr>",
+    tables: int = 1,
+) -> str:
+    rows = "".join(
+        f"<tr><td>Example {code} Inc.</td><td>{code}</td><td>{unit}</td>"
+        f"<td>アメリカ</td></tr>"
+        for code, unit in issues
+    )
+    table = f"<table><tbody>{header}{rows}</tbody></table>"
+    return f"<h2>{heading}</h2>" + table * tables
+
+
+def jpx_foreign_stock_list_page(
+    prime: tuple[tuple[str, str], ...] = (("1773", "1,000"),),
+    standard: tuple[tuple[str, str], ...] = (("9399", "1"),),
+    growth: tuple[tuple[str, str], ...] = (("4875", "100"),),
+) -> bytes:
+    """The complete JPX foreign stocks listed-issues page: all three sections."""
+    sections = "".join(
+        _foreign_stock_section(heading, issues)
+        for heading, issues in zip(FOREIGN_STOCK_SECTIONS, (prime, standard, growth))
+    )
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<h1>外国株の上場銘柄</h1>
+{sections}
+</body></html>""".encode("utf-8")
+
+
+def jpx_foreign_stock_list_partial_page(sections: tuple[str, ...]) -> bytes:
+    """A foreign-issues page carrying only ``sections`` -- coverage unproven."""
+    issues = {
+        "プライム市場外国株": (("1773", "1,000"),),
+        "スタンダード市場外国株": (("9399", "1"),),
+        "グロース市場外国株": (("4875", "100"),),
+    }
+    body = "".join(
+        _foreign_stock_section(heading, issues[heading]) for heading in sections
+    )
+    return f"""<html><head><meta charset="utf-8"></head><body>
+<h1>外国株の上場銘柄</h1>
+{body}
+</body></html>""".encode("utf-8")
+
+
+def jpx_stock_search_page(
+    ticker: str = "7203",
+    company_name: str = "Example Motor Corporation",
+    market_segment: str = "プライム",
+) -> bytes:
+    """A 東証上場会社情報 search result carrying the JPX displayed code.
+
+    The displayed code is the canonical four-character candidate code plus a
+    trailing character, exactly as the published search result renders it.
+    """
     return f"""<html><head><meta charset="utf-8"></head><body>
 <table><tbody>
-<tr><td>売買単位</td><td>{unit}</td></tr>
+<tr><th>コード</th><th>会社名</th><th>市場区分</th></tr>
+<tr><td>{ticker}0</td><td>{company_name}</td><td>{market_segment}</td></tr>
+</tbody></table>
+</body></html>""".encode("utf-8")
+
+
+def jpx_stock_search_empty_page() -> bytes:
+    """A recognizable search-result page that carries some other issue.
+
+    Structurally understood (so it is not PARSE_FAILED), but without the
+    searched code -- which is what NOT_FOUND means.
+    """
+    return """<html><head><meta charset="utf-8"></head><body>
+<table><tbody>
+<tr><th>コード</th><th>会社名</th><th>市場区分</th></tr>
+<tr><td>99990</td><td>Example Other Corporation</td><td>スタンダード</td></tr>
 </tbody></table>
 </body></html>""".encode("utf-8")
 

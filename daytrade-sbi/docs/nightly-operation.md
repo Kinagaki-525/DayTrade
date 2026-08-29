@@ -278,6 +278,22 @@ sudo apt-get install bubblewrap socat
   `1`の場合はClaude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定します。
   Repository Scriptからは変更しません。
 
+### Source Matrixのdomain変更時にHumanが行うこと
+
+Production allowed domainsは`config/source_matrix.yaml`の`url_template` hostと
+`config/issuer_domain_registry.yaml`から`derive_expected_domains()`が導出する。
+したがって**Source MatrixのhostがPRで変わると、Expected Managed Policyも変わる**。
+
+- 変更をmergeしたら、Humanが下記「Policy deployment」の手順で
+  `scripts/render-claude-production-policy`と`scripts/deploy-claude-managed-policy`を
+  **再実行する**。再deployしないとRuntime Guardが
+  `CLAUDE_NETWORK_DOMAIN_SET_MISMATCH`で起動を拒否する（Fail-Closed）
+- Development側の`.claude/settings.json`の`allowedDomains`もHumanが更新する。
+  **Agentはこのファイルを変更しない。** 必要hostが欠けている場合の唯一の正しい挙動は
+  `SECURITY_POLICY_CHANGE_REQUIRED`で停止し、Humanの変更を待つことである
+- PR #15で`JPX_LISTED_COMPANY`が`www2.jpx.co.jp`（東証上場会社情報検索）へ移ったため、
+  **この再deployが必要**である。追加は完全一致hostであり、wildcardではない
+
 ### Policy deployment（Human）
 
 1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。

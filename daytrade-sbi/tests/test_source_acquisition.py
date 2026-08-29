@@ -109,7 +109,7 @@ def test_tse_listing_gate_is_batch_all_or_nothing(tmp_path):
     result = _stage(
         "STAGE1",
         tmp_path,
-        pages.jpx_listed_company_page(ticker="7203"),
+        pages.jpx_stock_search_page(ticker="7203"),
         tickers=("7203", "6758"),
         source_ids=("JPX_LISTED_COMPANY",),
     )
@@ -123,7 +123,7 @@ def test_tse_listing_gate_opens_when_every_candidate_is_listed(tmp_path):
     result = _stage(
         "STAGE1",
         tmp_path,
-        pages.jpx_listed_company_page(ticker="7203"),
+        pages.jpx_stock_search_page(ticker="7203"),
         tickers=("7203",),
         source_ids=("JPX_LISTED_COMPANY",),
     )

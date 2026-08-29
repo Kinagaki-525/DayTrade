@@ -81,6 +81,9 @@ def clean_run_routes(
         "https://www.jpx.co.jp/equities/trading/domestic/03.html": (
             pages.jpx_trading_unit_page()
         ),
+        "https://www.jpx.co.jp/equities/products/foreign/issues/index.html": (
+            pages.jpx_foreign_stock_list_page()
+        ),
         "https://www.jpx.co.jp/equities/trading/domestic/07.html": (
             pages.jpx_tick_size_page()
         ),
@@ -91,14 +94,14 @@ def clean_run_routes(
             pages.jpx_earnings_schedule_page()
         ),
     }
-    listing_rows = "".join(
-        f"<tr><td>{code}</td><td>Example {code} Corporation</td><td>プライム</td></tr>"
-        for code in tickers
-    )
-    routes["https://www.jpx.co.jp/listing/co-search/"] = (
-        "<html><head><meta charset=\"utf-8\"></head><body><table><tbody>"
-        f"{listing_rows}</tbody></table></body></html>"
-    ).encode("utf-8")
+    # TSE listing is candidate-specific: one search result page per candidate.
+    for code in tickers:
+        routes[
+            "https://www2.jpx.co.jp/tseHpFront/StockSearch.do"
+            f"?method=topsearch&topSearchStr={code}"
+        ] = pages.jpx_stock_search_page(
+            code, company_name=f"Example {code} Corporation"
+        )
 
     # The issuer IR page. COMPANY_IR and COMPANY_IR_DISCLOSURE share this one
     # URL, so it is fetched once and reused for both source attempts.

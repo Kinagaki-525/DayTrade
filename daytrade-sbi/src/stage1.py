@@ -2,6 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from src.security_type import (
+    is_supported_security_type,
+    resolve_security_type_evidence,
+)
+
+
+#: The Stage 1 check whose required evidence depends on which classification
+#: path the Canonical Source Ledger actually took -- see
+#: :func:`_security_type_reject_is_backed`. It is deliberately not expressible
+#: as a fixed entry in STAGE1_CHECK_REQUIRED_SOURCE_IDS.
+SECURITY_TYPE_CHECK_ID = "security_type"
 
 ALLOWED_STAGE1_REJECTS = {
     "universe": {"UNIVERSE_OUT_OF_SCOPE"},
@@ -9,6 +20,10 @@ ALLOWED_STAGE1_REJECTS = {
     "share_unit": {"SHARE_UNIT_NOT_100"},
     "capital_limit": {"CAPITAL_LIMIT_EXCEEDED"},
 }
+#: Checks whose required evidence IS expressible as a fixed source-id set.
+#: ``security_type`` deliberately has no entry here: its requirement depends on
+#: the classification path, and :func:`_security_type_reject_is_backed` is the
+#: single source of truth for it.
 STAGE1_CHECK_REQUIRED_SOURCE_IDS = {
     "share_unit": {"JPX_TRADING_UNIT"},
 }
@@ -58,6 +73,7 @@ def source_backed_stage1_reject(
     valid_source_refs: set[str] | None = None,
     valid_source_attempt_ids: set[str] | None = None,
     source_ids_by_evidence_id: dict[str, str] | None = None,
+    source_values: list[dict[str, Any]] | None = None,
 ) -> bool:
     if research.get("stage1_status") != "REJECTED":
         return False
@@ -67,6 +83,7 @@ def source_backed_stage1_reject(
             valid_source_refs=valid_source_refs,
             valid_source_attempt_ids=valid_source_attempt_ids,
             source_ids_by_evidence_id=source_ids_by_evidence_id,
+            source_values=source_values,
         )
     )
 
@@ -77,6 +94,7 @@ def rejected_stage1_check_ids(
     valid_source_refs: set[str] | None = None,
     valid_source_attempt_ids: set[str] | None = None,
     source_ids_by_evidence_id: dict[str, str] | None = None,
+    source_values: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     if research is None:
         return []
@@ -91,6 +109,8 @@ def rejected_stage1_check_ids(
             valid_source_refs,
             valid_source_attempt_ids,
             source_ids_by_evidence_id=source_ids_by_evidence_id,
+            research=research,
+            source_values=source_values,
         ):
             failed.append(f"stage1:{check.get('check_id', 'unknown')}")
     return _unique(failed)
@@ -102,6 +122,7 @@ def stage1_reject_evidence_error(
     valid_source_refs: set[str],
     valid_source_attempt_ids: set[str],
     source_ids_by_evidence_id: dict[str, str] | None = None,
+    source_values: list[dict[str, Any]] | None = None,
 ) -> str | None:
     if research.get("stage1_status") != "REJECTED":
         return None
@@ -110,6 +131,7 @@ def stage1_reject_evidence_error(
         valid_source_refs=valid_source_refs,
         valid_source_attempt_ids=valid_source_attempt_ids,
         source_ids_by_evidence_id=source_ids_by_evidence_id,
+        source_values=source_values,
     ):
         return None
     ticker = str(research.get("ticker", "")).strip() or "<unknown>"
@@ -201,15 +223,18 @@ def _has_backing(
     valid_source_attempt_ids: set[str] | None,
     *,
     source_ids_by_evidence_id: dict[str, str] | None = None,
+    research: dict[str, Any] | None = None,
+    source_values: list[dict[str, Any]] | None = None,
 ) -> bool:
     if not (
         _has_matching_item(check.get("source_refs"), valid_source_refs)
         or _has_matching_item(check.get("source_attempt_ids"), valid_source_attempt_ids)
     ):
         return False
-    required_source_ids = STAGE1_CHECK_REQUIRED_SOURCE_IDS.get(
-        _text(check.get("check_id"))
-    )
+    check_id = _text(check.get("check_id"))
+    if check_id == SECURITY_TYPE_CHECK_ID:
+        return _security_type_reject_is_backed(check, research, source_values)
+    required_source_ids = STAGE1_CHECK_REQUIRED_SOURCE_IDS.get(check_id)
     if required_source_ids is None:
         return True
     if source_ids_by_evidence_id is None:
@@ -219,6 +244,59 @@ def _has_backing(
         required_source_ids,
         source_ids_by_evidence_id=source_ids_by_evidence_id,
     )
+
+
+def _security_type_reject_is_backed(
+    check: dict[str, Any],
+    research: dict[str, Any] | None,
+    source_values: list[dict[str, Any]] | None,
+) -> bool:
+    """Whether a SECURITY_TYPE_UNSUPPORTED reject follows from the evidence.
+
+    A fixed required-source-id set cannot express this: which evidence a
+    security_type reject must carry *depends on the classification path*. An
+    ETF is decided by the listing alone, while separating a foreign stock from
+    a domestic one also consumed the complete foreign list -- so requiring the
+    foreign list of every security_type reject would break the ETF case, and
+    requiring only the listing would let a FOREIGN_STOCK reject drop the very
+    evidence that distinguishes it.
+
+    So the classification is recomputed from the Canonical Source Ledger and
+    the check must carry **exactly** the refs that classification consumed --
+    no fewer, no more, and none repeated. Containment is not enough: a reject
+    that pads its refs with fabricated, unrelated or duplicated entries is
+    claiming evidence the classification never consumed, which is precisely
+    what this check exists to detect. For the same reason the check must carry
+    no ``source_attempt_ids`` at all: security_type classification reads
+    Source Records, never Attempts, so any Attempt id here is an assertion
+    about evidence that took no part in the decision.
+
+    The check's own free text is never parsed: a reject cannot describe itself
+    into validity.
+    """
+    if research is None or source_values is None:
+        # Without the canonical evidence this cannot be verified, and an
+        # unverifiable reject is not a backed one.
+        return False
+    ticker = _text(research.get("ticker"))
+    if not ticker:
+        return False
+
+    evidence = resolve_security_type_evidence(source_values, candidate_code=ticker)
+    if evidence.security_type is None:
+        # Unclassifiable evidence backs no security_type verdict at all.
+        return False
+    if is_supported_security_type(evidence.security_type):
+        # The evidence says this candidate IS supported, so an
+        # SECURITY_TYPE_UNSUPPORTED reject contradicts it.
+        return False
+
+    if _text_items(check.get("source_attempt_ids")):
+        return False
+    actual_refs = _text_items(check.get("source_refs"))
+    if len(actual_refs) != len(set(actual_refs)):
+        return False
+    return set(actual_refs) == set(evidence.source_refs)
 
 
 def _has_required_stage1_source(

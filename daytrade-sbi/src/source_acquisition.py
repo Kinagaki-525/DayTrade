@@ -75,7 +75,12 @@ SOURCES_SCHEMA_VERSION = 3
 #: Stage -> the ordered source ids acquired by that stage.
 STAGE_SOURCE_IDS: dict[str, tuple[str, ...]] = {
     "DISCOVERY": ("YAHOO_JP_VOLUME_RANKING", "YAHOO_JP_GAIN_RANKING"),
-    "STAGE1": ("JPX_CALENDAR", "JPX_LISTED_COMPANY", "JPX_TRADING_UNIT"),
+    "STAGE1": (
+        "JPX_CALENDAR",
+        "JPX_LISTED_COMPANY",
+        "JPX_FOREIGN_STOCK_LIST",
+        "JPX_TRADING_UNIT",
+    ),
     "STAGE2": (
         "YAHOO_JP_HISTORY",
         "KABUTAN_HISTORY",

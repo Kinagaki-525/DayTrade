@@ -8,12 +8,11 @@ from typing import Any
 
 from src.source_parsers.base import ParseContext, ParseResult, ParsedValue, parse_failed
 from src.source_parsers.decode import DecodeError, decode_source_page
-from src.source_parsers.html import clean, table_rows
+from src.source_parsers.html import clean, definition_pairs, table_rows
 from src.source_parsers.numeric import (
     ParseFailed,
     parse_grouped_decimal,
     parse_grouped_integer,
-    unambiguous,
 )
 
 
@@ -182,7 +181,11 @@ def parse_listed_company(
     source_definition: dict[str, Any],
     context: ParseContext,
 ) -> ParseResult:
-    """JPX_LISTED_COMPANY -> TSE listing facts for one ticker.
+    """JPX_LISTED_COMPANY_AUDIT -> TSE listing facts for one ticker.
+
+    The AUDIT listed-issues page parser. JPX_LISTED_COMPANY itself is
+    acquired from the candidate-specific 東証上場会社情報 search and parsed by
+    :func:`parse_stock_search`; this parser and its binding are unchanged.
 
     Listing is a binary fact read straight off the page. There is no
     ``.T`` suffix guessing anywhere: an absent ticker is ``NOT_FOUND``, which
@@ -225,36 +228,336 @@ def parse_listed_company(
     )
 
 
-def parse_trading_unit(
+#: The canonical candidate code contract shared with
+#: :mod:`src.source_acquisition` -- four characters, digits and capitals only.
+#: New alphanumeric TSE codes (``285A``) are ordinary candidates under it.
+CANONICAL_CODE_PATTERN = re.compile(r"^[0-9A-Z]{4}$")
+
+#: How the JPX 東証上場会社情報 search result publishes a code: the canonical
+#: four-character code plus one trailing character. The parser never derives a
+#: canonical code *from* this shape (no suffix stripping, no numeric
+#: conversion); it only recognizes that a cell is code-shaped, so that a page
+#: whose structure we do not recognize fails as PARSE_FAILED rather than
+#: masquerading as "this ticker is not listed".
+DISPLAYED_CODE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")
+
+#: Header labels that identify the JPX foreign-stock listed-issues table. Both
+#: must be present in one header row before any data row is read: a table we
+#: cannot label is never treated as a partial foreign-stock list.
+FOREIGN_LIST_CODE_LABEL = "コード"
+
+#: The three market sections the JPX foreign stocks listed-issues page
+#: publishes. All three must be recognized before the page counts as complete
+#: evidence -- see :func:`parse_foreign_stock_list`.
+FOREIGN_STOCK_SECTIONS: tuple[str, ...] = (
+    "プライム市場外国株",
+    "スタンダード市場外国株",
+    "グロース市場外国株",
+)
+
+#: Any section heading on a page, used to bound one section's content. Section
+#: identity comes from the heading's exact cleaned text, never from position.
+HEADING_PATTERN = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.IGNORECASE | re.DOTALL)
+
+#: The label JPX publishes a trading unit under, on both the foreign-stock
+#: listed-issues table and the domestic trading-unit rule page.
+TRADING_UNIT_LABEL = "売買単位"
+
+#: The official assertions the JPX domestic trading-rule page publishes the
+#: market-wide trading unit through. The page states the rule as prose, not as
+#: a labelled cell, so these are the *recognized assertions*: a number is only
+#: read from a sentence that carries this exact meaning.
+#:
+#: Deliberately narrow. The page also contains years (``2018年``) and bare
+#: ``100株`` mentions in unrelated prose, so scanning the document for a stray
+#: number -- or for any "N株" at all -- would read the wrong value. A page
+#: carrying none of these assertions is PARSE_FAILED, never a defaulted 100.
+DOMESTIC_TRADING_UNIT_ASSERTIONS = (
+    re.compile(r"内国株(?:式)?では、?\s*(\d{1,3}(?:,\d{3})*)\s*株単位で取引されて"),
+    re.compile(
+        r"内国株(?:式)?の売買単位を、?\s*(\d{1,3}(?:,\d{3})*)\s*株[へに]統一"
+    ),
+)
+
+
+def parse_stock_search(
     raw: bytes,
     source_definition: dict[str, Any],
     context: ParseContext,
 ) -> ParseResult:
+    """JPX_LISTED_COMPANY -> TSE listing facts for one candidate.
+
+    Reads the candidate-specific 東証上場会社情報 search result. Listing is a
+    binary fact read straight off the response body: passing a code as the
+    search string is never itself evidence that the code is listed.
+
+    The displayed code is matched as ``context.ticker + "0"`` and nothing
+    else -- no substring, no ``startswith``, no numeric conversion -- so an
+    unrelated but similar code can never satisfy a candidate.
+
+    This parser deliberately distinguishes two failures the TSE Listing Gate
+    must not confuse: a page with no recognizable search-result rows at all
+    is ``PARSE_FAILED`` (we do not understand the page), while a recognizable
+    result page that simply does not carry this code is ``NOT_FOUND`` (the
+    code is not listed). Neither is ever silently downgraded to a per-ticker
+    exclusion, and there is no ``.T`` suffix guessing anywhere.
+
+    Product classification is **not** decided here: this parser publishes the
+    market segment verbatim and nothing else. ``security_type`` is composed
+    from several sources by deterministic business logic (see
+    :mod:`src.security_type`), never by a single parser.
+    """
+    if not context.ticker:
+        return parse_failed("JPX_LISTED_COMPANY requires a target ticker")
+    if not CANONICAL_CODE_PATTERN.fullmatch(context.ticker):
+        return parse_failed(
+            f"{context.ticker!r} is not a canonical four-character candidate code"
+        )
     try:
         page = _decode(raw, context)
     except DecodeError as exc:
         return parse_failed(exc.message)
 
-    tokens = [
-        row[1]
+    result_rows = [
+        row
         for row in table_rows(page.text)
-        if len(row) >= 2 and row[0] == "売買単位"
+        if row and DISPLAYED_CODE_PATTERN.fullmatch(row[0])
     ]
-    try:
-        token = unambiguous(tokens, field_name="trading_unit")
-        unit = parse_grouped_integer(token)
-    except ParseFailed as exc:
-        return parse_failed(exc.message)
+    if not result_rows:
+        return parse_failed(
+            "no JPX stock-search result rows found on the source page"
+        )
+
+    expected_code = context.ticker + "0"
+    rows = [row for row in result_rows if row[0] == expected_code]
+    if not rows:
+        return ParseResult(status="NOT_FOUND", reason_codes=("TICKER_NOT_LISTED_ON_PAGE",))
+    if len({tuple(row) for row in rows}) > 1:
+        return parse_failed(f"ambiguous listing rows for ticker {context.ticker}")
+
+    row = rows[0]
+    if len(row) < 3:
+        return parse_failed(f"listing row for {context.ticker} is missing columns")
+    company_name, market_segment = row[1], row[2]
+    if not company_name:
+        return parse_failed(f"listing row for {context.ticker} has no company name")
+    if not market_segment:
+        return parse_failed(f"listing row for {context.ticker} has no market segment")
 
     return ParseResult(
         status="FOUND",
         values=(
             ParsedValue(
-                field_name="trading_unit",
+                field_name="listed_company_name",
                 ticker=context.ticker,
                 trading_date=context.trading_date,
-                value=str(unit),
-                raw_value=token,
+                value=company_name,
+            ),
+            ParsedValue(
+                field_name="market_segment",
+                ticker=context.ticker,
+                trading_date=context.trading_date,
+                value=market_segment,
+            ),
+        ),
+    )
+
+
+def parse_foreign_stock_list(
+    raw: bytes,
+    source_definition: dict[str, Any],
+    context: ParseContext,
+) -> ParseResult:
+    """JPX_FOREIGN_STOCK_LIST -> the published foreign listed-issue codes.
+
+    A Global Source: one GET, one Global Attempt, one Source Value carrying
+    ``ticker=None``, shared by every candidate that consumes it.
+
+    **Complete coverage is proven before anything is published.** The absence
+    of a candidate from this list is what lets a Prime/Standard/Growth issue
+    be classified as a domestic common stock, so a partial read of the page
+    is far more dangerous than no read at all: it would turn "we did not see
+    this section" into "this issue is not foreign". Every one of the three
+    published market sections must therefore be recognized end to end --
+    heading, its single table, its header, and every data row -- before the
+    merged map is emitted. One missing, duplicated, ambiguous or malformed
+    section fails the whole page.
+
+    Nothing about the sections' *contents* is assumed: how many issues a
+    section lists, and which codes they are, come entirely from the page.
+    """
+    try:
+        page = _decode(raw, context)
+    except DecodeError as exc:
+        return parse_failed(exc.message)
+
+    headings = [
+        (match.start(), match.end(), clean(match.group(1)))
+        for match in HEADING_PATTERN.finditer(page.text)
+    ]
+
+    units: dict[str, str] = {}
+    for section in FOREIGN_STOCK_SECTIONS:
+        matching = [heading for heading in headings if heading[2] == section]
+        if not matching:
+            return parse_failed(
+                f"the foreign stock listed-issues page has no {section} section; "
+                "coverage is unproven"
+            )
+        if len(matching) > 1:
+            return parse_failed(
+                f"the foreign stock listed-issues page has {len(matching)} "
+                f"{section} sections; the section-to-table mapping is ambiguous"
+            )
+
+        _, section_start, _ = matching[0]
+        following = [start for start, _, _ in headings if start >= section_start]
+        section_end = min(following) if following else len(page.text)
+        tables = TABLE_BLOCK_PATTERN.findall(page.text[section_start:section_end])
+        if len(tables) != 1:
+            return parse_failed(
+                f"the {section} section has {len(tables)} tables; exactly one "
+                "listed-issues table is required"
+            )
+
+        error = _merge_foreign_section(tables[0], section, units)
+        if error is not None:
+            return parse_failed(error)
+
+    if not units:
+        return parse_failed(
+            "the foreign stock listed-issues page published no issues at all"
+        )
+
+    return ParseResult(
+        status="FOUND",
+        values=(
+            ParsedValue(
+                field_name="foreign_stock_trading_units",
+                ticker=None,
+                trading_date=context.trading_date,
+                value={code: units[code] for code in sorted(units)},
+            ),
+        ),
+    )
+
+
+def _merge_foreign_section(
+    table_html: str,
+    section: str,
+    units: dict[str, str],
+) -> str | None:
+    """Read one section's table into ``units``. Returns an error, or None."""
+    rows = [row for row in table_rows(table_html) if row]
+    header_index = _foreign_list_header_index(rows)
+    if header_index is None:
+        return (
+            f"the {section} section's table has no recognizable "
+            f"{FOREIGN_LIST_CODE_LABEL}/{TRADING_UNIT_LABEL} header"
+        )
+    header = rows[header_index]
+    code_column = header.index(FOREIGN_LIST_CODE_LABEL)
+    unit_column = header.index(TRADING_UNIT_LABEL)
+
+    data_rows = rows[header_index + 1 :]
+    if not data_rows:
+        return f"the {section} section's table has no data rows"
+
+    for row in data_rows:
+        if len(row) <= max(code_column, unit_column):
+            return f"a {section} row is missing columns: {row!r}"
+        code = row[code_column]
+        if not CANONICAL_CODE_PATTERN.fullmatch(code):
+            return f"a {section} row has a non-canonical code: {code!r}"
+        try:
+            unit = str(parse_grouped_integer(row[unit_column]))
+        except ParseFailed as exc:
+            return f"{section}: {exc.message}"
+        if code in units and units[code] != unit:
+            return (
+                "the foreign stock listed-issues page publishes conflicting "
+                f"trading units for {code}"
+            )
+        units[code] = unit
+    return None
+
+
+def _foreign_list_header_index(rows: list[list[str]]) -> int | None:
+    for index, row in enumerate(rows):
+        if (
+            FOREIGN_LIST_CODE_LABEL in row
+            and TRADING_UNIT_LABEL in row
+            and row.count(FOREIGN_LIST_CODE_LABEL) == 1
+            and row.count(TRADING_UNIT_LABEL) == 1
+        ):
+            return index
+    return None
+
+
+def parse_domestic_trading_unit_rule(
+    raw: bytes,
+    source_definition: dict[str, Any],
+    context: ParseContext,
+) -> ParseResult:
+    """JPX_TRADING_UNIT -> the published domestic-stock trading-unit rule.
+
+    A Global Source: this page states the market-wide rule for domestic
+    stocks, so it yields exactly one Global Source Value with ``ticker=None``.
+    It is **not** a per-candidate trading-unit page, and this parser never
+    produces a candidate-scoped ``share_unit``. Which candidates are entitled
+    to consume this rule is decided later, from ``security_type``, by
+    :mod:`src.stage_wiring` -- an ETF or a foreign stock never receives it.
+
+    The unit is read only from a **recognized official assertion**
+    (:data:`DOMESTIC_TRADING_UNIT_ASSERTIONS`) -- a sentence that actually
+    states the domestic trading-unit rule. The page also publishes years and
+    unrelated ``100株`` prose, so no number is taken from anywhere else, and
+    the value is always extracted from the evidence: this parser never emits
+    a hardcoded 100.
+
+    Every recognized assertion must agree on one value. This is consensus,
+    not a fallback chain: nothing here picks the first, largest or last
+    candidate value, and a page whose assertions disagree is
+    ``PARSE_FAILED``.
+    """
+    try:
+        page = _decode(raw, context)
+    except DecodeError as exc:
+        return parse_failed(exc.message)
+
+    # Match against the tag-stripped text: the published sentence is broken up
+    # by inline markup, which a pattern run over raw HTML would not survive.
+    text = clean(page.text)
+    tokens = [
+        token
+        for pattern in DOMESTIC_TRADING_UNIT_ASSERTIONS
+        for token in pattern.findall(text)
+    ]
+
+    try:
+        units = {str(parse_grouped_integer(token)) for token in tokens}
+    except ParseFailed as exc:
+        return parse_failed(exc.message)
+    if not units:
+        return parse_failed(
+            "the domestic trading-unit page carries no recognized official "
+            "trading-unit assertion"
+        )
+    if len(units) > 1:
+        return parse_failed(
+            "the domestic trading-unit page publishes conflicting units: "
+            + ", ".join(sorted(units))
+        )
+
+    unit = units.pop()
+    return ParseResult(
+        status="FOUND",
+        values=(
+            ParsedValue(
+                field_name="trading_unit",
+                ticker=None,
+                trading_date=context.trading_date,
+                value=unit,
                 raw_unit="SHARES",
             ),
         ),
