@@ -8,8 +8,15 @@ Development Work Orderは単なるprompt templateではなく、**Development Pr
 である。ChatGPT / Humanが設計を確定してからClaude Codeへ実装を委譲するための正式な
 handoff形式であり、要求・test・実装・PR・reviewのtraceabilityを担保する。
 
-この文書はDevelopment専用である。Production Security Boundaryの正本はOS Managed Policyと
-OS Managed Runtime Guardであり、Work Orderはそれを緩和できない。
+この文書はDevelopment専用である。Production Security Boundaryの**runtime上の正本**は
+OS Managed PolicyとOS Managed Runtime Guardである。
+
+Development Work Orderは、**通常は既存Production Security Boundaryを緩和してはならない**。
+ただしHuman + ArchitectがProduction Security Boundary Changeを明示的に認可した正式
+Work Orderでは、そのWork Orderが列挙する**repository-side source変更に限り**実装してよい。
+
+このauthorizationは**installed Production stateへの変更権限を与えない**。Production
+deploy / install / replacement / runtime operationは常にHuman-onlyである。
 
 ## Requirement Language
 
@@ -226,11 +233,30 @@ GitHub Actions結果の最終確認はClaudeの完了条件に含まれない。
 MUST NOT:
 
 - FIXED Architectureを再設計する
-- Security Contractを緩和する
-- Fail-Closed Contractを緩和する
+- **Security Contractを緩和する** — ただし例外が1つだけある（下記）
+- **Fail-Closed Contractを緩和する** — こちらは例外なし。generic authorizationでも
+  Fail-Closed自体は緩和できない
 - Scopeを独断で拡張する
 - Production Human-only操作を実行する
 - 確認していないGitHub状態・CI結果を `PASS` / `success` と報告する
+
+Security relaxationの唯一の例外は、`Production Security Boundary Change
+Authorization: HUMAN + ARCHITECT EXPLICIT` を持つWork Orderで、
+`Authorized Repository-Side Files` と `Authorized Relaxations` の**両方へexactに
+列挙されたintersection**に収まる変更である。次のいずれかに該当する場合、Security
+relaxationを行っては**ならない（MUST NOT）**。
+
+```text
+Production Security Boundary Change Authorization = NONE
+authorization metadata missing
+authorization value invalid
+Authorized Repository-Side Files に対象 file がない
+Authorized Relaxations に対象 relaxation が exact に存在しない
+Human + Architect authorization を確認できない
+```
+
+列挙されたintersectionを超えるrelaxationはMUST NOTであり、
+[Protected Invariants](#protected-invariants)はこの例外の対象外である。
 
 ### Human
 
@@ -296,6 +322,83 @@ Implementation Authority
 Architecture / Requirements Authority
 Merge Authority
 ```
+
+### Production Security Boundary Change Authorization
+
+Production Security Boundaryへ影響するWork Orderは、上記に加えて次のmetadataを
+持たなければならない（MUST）。
+
+```text
+Production Security Boundary Change Authorization:
+Authorized By:
+Authorized Repository-Side Files:
+Authorized Relaxations:
+Preserved Security Controls:
+Production Deployment Authority:
+```
+
+`Production Security Boundary Change Authorization`の許可値は次の2つだけである。
+
+| 値 | 意味 |
+| --- | --- |
+| `NONE` | 通常のWork Order。既存Security Contractを緩和してはならない |
+| `HUMAN + ARCHITECT EXPLICIT` | Human + Architectが明示認可したSecurity Boundary変更Work Order |
+
+`HUMAN + ARCHITECT EXPLICIT`の場合、次をすべて満たすこと（MUST）。
+
+- `Authorized By`にHuman authorityとArchitecture authorityの**両方**が確認できる値を書く
+  （例: `Human + ChatGPT Architect`）。**Claude Code自身をここへ記載しては ならない（MUST NOT）**
+- `Authorized Repository-Side Files`に、変更を許可するrepository内fileを**exactに列挙**する
+- `Authorized Relaxations`に、認める緩和を**exactに列挙**する。曖昧な記述は無効
+- `Preserved Security Controls`に、維持しなければならない契約を列挙する
+- `Production Deployment Authority`は常に`Human only`である
+
+Authorizationが無い、値が不正、または列挙が曖昧な場合、Security Boundaryへ影響する
+変更を実装しては**ならない（MUST NOT）**。
+
+### Protected Invariants
+
+次は`Production Security Boundary Change Authorization: HUMAN + ARCHITECT EXPLICIT`
+**だけでは緩和できない（MUST NOT）**。generic authorizationの対象外である。
+
+```text
+Raw Evidence integrity
+SHA256 integrity
+Physical Request Record
+Exact Logical Attempt Immutability
+Trust Chain
+Canonical CLI Pipeline Order
+Production Human-only operation boundary
+Fail-Closed semantics
+Safe Sync / Safe Start / Safe Push authority boundary
+```
+
+これらはpipelineが主張する事実の裏付けそのものであり、1つのWork Orderの都合で
+交換できる性質のものではない。これら自体を変更する必要が生じた場合は、通常の
+Security Boundary authorizationでは足りず、**Human + Architectがこの Governance
+Contract 自体を変更対象として発行した別の正式Governance Work Order**を必要とする。
+
+Happy Pathを通すためだけの理由でこれらを変更しては**ならない（MUST NOT）**。
+
+### Authorization Non-Retroactivity
+
+`Production Security Boundary Change Authorization`は、**そのauthorizationを含む
+正式Work OrderがHumanからClaudeへhandoffされた後に開始されるimplementationにだけ**
+適用する（MUST）。
+
+次を後からauthorizationしては**ならない（MUST NOT）**。
+
+```text
+既に作成済みの commit
+既に push 済みの branch
+既に open 済みの PR
+既に merge 済みの PR
+既に Production へ反映済みの変更
+```
+
+Governance変更を、過去のSecurity Boundary変更に対する**retroactive approval**として
+扱っては**ならない（MUST NOT）**。既に行われた変更の是非は、その変更自身のreviewで
+判断する。authorizationを後付けして正当化しない。
 
 ### Work Order ID
 
@@ -380,20 +483,33 @@ PR Completion EvidenceはAcceptance Criteria単位で結果を返す（MUST）�
 
 次はMUSTで維持する。
 
-1. Development Work Orderは既存Security Contractを緩和**できない**
-2. `CLAUDE.md` / `AGENTS.md` / repository Security ContractとWork Orderが衝突する
-   場合、Claudeはより緩いWork Order指示を実行しては**ならない**
-3. Security上の衝突は `IMPLEMENTATION_BLOCKED` とする
-4. Sandboxを緩和しない
-5. raw Git network operationのallowlistを広げない
-6. Safe Sync / Safe Start / Safe Push Contractを変更しない
-7. Production Security Boundaryを変更しない
-8. Production Human-only commandを実行しない
-9. Canonical PipelineのSecurity / Trust Chainを変更しない
-10. SecurityをHappy Path成立のために弱めない
+1. `Production Security Boundary Change Authorization: NONE`のWork Orderは、既存
+   Security Contractを緩和しては**ならない**
+2. `Production Security Boundary Change Authorization: HUMAN + ARCHITECT EXPLICIT`の
+   場合**のみ**、`Authorized Repository-Side Files`および`Authorized Relaxations`へ
+   **exactに列挙された変更だけ**を実装してよい
+3. 明示認可されていないSecurity relaxationは禁止する
+4. Work Orderとrepository Security Contractが衝突し、上記explicit authorizationに
+   よって解決されていない場合は`IMPLEMENTATION_BLOCKED`とする
+5. Sandbox / Runtime Guard / network / MCP / Trust Chain / Raw Evidence /
+   Fail-Closed等は、`Preserved Security Controls`へ記載された契約を維持する
+6. **installed Production Security Boundary**（実機の`/etc`）をDevelopment Claudeが
+   変更しない
+7. Production Human-only commandを実行しない
+8. Productionへのdeployment / policy replacement / runtime operationはHuman-onlyとする
+9. **Claude自身がauthorizationを作成・拡張・変更してはならない**
+10. Happy Path成立だけを理由としてSecurityを緩和しては**ならない**
+11. [Protected Invariants](#protected-invariants)はgeneric authorizationでは緩和
+    できない。別の正式Governance Work Orderを要する
+12. authorizationは[non-retroactive](#authorization-non-retroactivity)であり、
+    既存のcommit / branch / PR / merge済み変更を後から正当化しない
 
-上位のrepository policyとWork Orderが衝突する場合、**より厳しい既存policyを維持して
-STOPする**（MUST）。
+`Authorization: NONE`のWork Orderが上位のrepository policyと衝突する場合、
+**より厳しい既存policyを維持してSTOPする**（MUST）。
+
+Sandbox / raw Git network operationのallowlist / Safe Sync / Safe Start / Safe Push
+Contract / Canonical PipelineのSecurity・Trust Chainは、`Authorized Relaxations`へ
+明示列挙されていない限り変更しない（MUST）。
 
 次をClaudeへ付与しては**ならない（MUST NOT）**。Capability mismatchはEvidence handoffで
 解決し、権限追加では解決しない。
@@ -423,6 +539,35 @@ Development Process Contract自体もFail-Closedとする。次の場合、Claud
 - Acceptance Criteriaの意味が一意に確定できない
 - Final HEAD SHAを取得できずImplementation Completion Reportを成立させられない
 - required testsを実行できない
+
+Production Security Boundaryに関しては、次も必ず`IMPLEMENTATION_BLOCKED`とする。
+
+- Production Security Boundaryへ影響するのに
+  `Production Security Boundary Change Authorization`が`NONE`
+- `Authorized Relaxations`が曖昧で、何を認めたのか一意に確定できない
+- 変更しようとするsecurity fileが`Authorized Repository-Side Files`に存在しない
+- Work Orderに記載された以上のSecurity relaxationが必要
+- Production `/etc`の変更が必要
+- Production Runtime operationが必要
+- **Human + ArchitectがGovernance Contract自体を変更対象として明示認可した別の正式
+  Governance Work Orderが存在しない状態で、Claude自身によるGovernance変更、または
+  自己許可のためのGovernance変更が必要**
+- Human + Architect authorizationを確認できない
+
+最後の条件が禁じているのは**自己許可**であって、Governance変更そのものではない。
+Human + Architectが[Protected Invariants](#protected-invariants)の記載どおりに
+Governance Contract自体を変更対象として発行した正式Governance Work Orderがある場合は、
+**そのWork Orderのexact scope内でGovernance変更を実装してよい**（この文書自体が
+そうした変更で書かれている）。
+
+一方で次は、authorizationの有無にかかわらず常にMUST NOTである。
+
+```text
+Claude 自身が authorization を生成する
+Claude 自身が authorization を拡張する
+Claude 自身が Governance を書き換えて自己許可する
+Work Order なしで Protected Invariant を変更する
+```
 
 この場合、実装を拡張・再設計せずSTOPする。
 
@@ -544,6 +689,19 @@ behaviorとの後方互換性を維持する（MUST）。
 - Implementation Authority: Claude Code
 - Architecture / Requirements Authority: ChatGPT / Human
 - Merge Authority: Human only
+- Production Security Boundary Change Authorization: NONE
+
+<!--
+Production Security Boundary へ影響する Work Order だけ、NONE を
+HUMAN + ARCHITECT EXPLICIT へ変え、次の 5 行を追加する。曖昧な列挙は無効。
+
+- Authorized By: Human + ChatGPT Architect
+- Authorized Repository-Side Files: <exact file list>
+- Authorized Relaxations: <exact relaxation list>
+- Preserved Security Controls: <exact control list>
+- Production Deployment Authority: Human only
+-->
+
 
 ## 1. 目的
 
