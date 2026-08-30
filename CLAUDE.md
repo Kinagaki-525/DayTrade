@@ -127,6 +127,33 @@ repository内Production Security Boundary sourceは、**原則として変更し
 この例外は**repository sourceの変更だけ**に適用され、installed Production stateへの
 変更権限を与えない。Work Orderに明示されていないSecurity Boundaryの緩和は禁止する。
 
+変更してよいのは`Authorized Repository-Side Files`と`Authorized Relaxations`の
+**両方へexactに列挙されたintersectionだけ**である。片方にしか無いものは対象外である。
+
+**authorizationはnon-retroactiveである。** 既に作成済みのcommit、push済みのbranch、
+open済み・merge済みのPR、Productionへ反映済みの変更を、後からauthorizationしない。
+Governance変更を過去の変更に対するretroactive approvalとして扱わない。
+
+次は**generic authorizationだけでは緩和できない**（Protected Invariants）。変更が
+必要な場合は、Human + ArchitectがGovernance Contract自体を変更対象として発行した
+別の正式Governance Work Orderを要する。
+
+```text
+Fail-Closed semantics
+Raw Evidence integrity
+SHA256 integrity
+Physical Request Record
+Exact Logical Attempt Immutability
+Trust Chain
+Canonical CLI Pipeline Order
+Safe Sync / Safe Start / Safe Push authority boundary
+Production Human-only operation boundary
+```
+
+**authorizationがあるという理由だけで、上記を変更してよいと解釈しない。**
+`/etc`・Production deployment・Production runtime operationは、authorizationの
+有無にかかわらず常にHuman-onlyである。
+
 Production Runtime Guard（`ops/claude/daytrade_runtime_guard.py`）とProduction launcher
 （`daytrade-sbi/scripts/claude-production`）は、**それ自身がHuman + Architectにより
 明示的な変更対象として認可されていない限り変更しない**。

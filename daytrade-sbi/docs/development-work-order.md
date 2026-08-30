@@ -233,11 +233,30 @@ GitHub Actions結果の最終確認はClaudeの完了条件に含まれない。
 MUST NOT:
 
 - FIXED Architectureを再設計する
-- Security Contractを緩和する
-- Fail-Closed Contractを緩和する
+- **Security Contractを緩和する** — ただし例外が1つだけある（下記）
+- **Fail-Closed Contractを緩和する** — こちらは例外なし。generic authorizationでも
+  Fail-Closed自体は緩和できない
 - Scopeを独断で拡張する
 - Production Human-only操作を実行する
 - 確認していないGitHub状態・CI結果を `PASS` / `success` と報告する
+
+Security relaxationの唯一の例外は、`Production Security Boundary Change
+Authorization: HUMAN + ARCHITECT EXPLICIT` を持つWork Orderで、
+`Authorized Repository-Side Files` と `Authorized Relaxations` の**両方へexactに
+列挙されたintersection**に収まる変更である。次のいずれかに該当する場合、Security
+relaxationを行っては**ならない（MUST NOT）**。
+
+```text
+Production Security Boundary Change Authorization = NONE
+authorization metadata missing
+authorization value invalid
+Authorized Repository-Side Files に対象 file がない
+Authorized Relaxations に対象 relaxation が exact に存在しない
+Human + Architect authorization を確認できない
+```
+
+列挙されたintersectionを超えるrelaxationはMUST NOTであり、
+[Protected Invariants](#protected-invariants)はこの例外の対象外である。
 
 ### Human
 
@@ -336,6 +355,50 @@ Production Deployment Authority:
 
 Authorizationが無い、値が不正、または列挙が曖昧な場合、Security Boundaryへ影響する
 変更を実装しては**ならない（MUST NOT）**。
+
+### Protected Invariants
+
+次は`Production Security Boundary Change Authorization: HUMAN + ARCHITECT EXPLICIT`
+**だけでは緩和できない（MUST NOT）**。generic authorizationの対象外である。
+
+```text
+Raw Evidence integrity
+SHA256 integrity
+Physical Request Record
+Exact Logical Attempt Immutability
+Trust Chain
+Canonical CLI Pipeline Order
+Production Human-only operation boundary
+Fail-Closed semantics
+Safe Sync / Safe Start / Safe Push authority boundary
+```
+
+これらはpipelineが主張する事実の裏付けそのものであり、1つのWork Orderの都合で
+交換できる性質のものではない。これら自体を変更する必要が生じた場合は、通常の
+Security Boundary authorizationでは足りず、**Human + Architectがこの Governance
+Contract 自体を変更対象として発行した別の正式Governance Work Order**を必要とする。
+
+Happy Pathを通すためだけの理由でこれらを変更しては**ならない（MUST NOT）**。
+
+### Authorization Non-Retroactivity
+
+`Production Security Boundary Change Authorization`は、**そのauthorizationを含む
+正式Work OrderがHumanからClaudeへhandoffされた後に開始されるimplementationにだけ**
+適用する（MUST）。
+
+次を後からauthorizationしては**ならない（MUST NOT）**。
+
+```text
+既に作成済みの commit
+既に push 済みの branch
+既に open 済みの PR
+既に merge 済みの PR
+既に Production へ反映済みの変更
+```
+
+Governance変更を、過去のSecurity Boundary変更に対する**retroactive approval**として
+扱っては**ならない（MUST NOT）**。既に行われた変更の是非は、その変更自身のreviewで
+判断する。authorizationを後付けして正当化しない。
 
 ### Work Order ID
 
@@ -436,6 +499,10 @@ PR Completion EvidenceはAcceptance Criteria単位で結果を返す（MUST）�
 8. Productionへのdeployment / policy replacement / runtime operationはHuman-onlyとする
 9. **Claude自身がauthorizationを作成・拡張・変更してはならない**
 10. Happy Path成立だけを理由としてSecurityを緩和しては**ならない**
+11. [Protected Invariants](#protected-invariants)はgeneric authorizationでは緩和
+    できない。別の正式Governance Work Orderを要する
+12. authorizationは[non-retroactive](#authorization-non-retroactivity)であり、
+    既存のcommit / branch / PR / merge済み変更を後から正当化しない
 
 `Authorization: NONE`のWork Orderが上位のrepository policyと衝突する場合、
 **より厳しい既存policyを維持してSTOPする**（MUST）。

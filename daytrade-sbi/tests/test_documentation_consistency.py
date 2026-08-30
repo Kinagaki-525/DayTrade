@@ -1406,8 +1406,8 @@ def _work_order_doc() -> str:
     return WORK_ORDER_DOC.read_text(encoding="utf-8")
 
 
-def test_the_work_order_contract_allows_only_authorized_boundary_changes():
-    """AC-GOV-02/AC-GOV-03: forbidden by default, permitted only when named."""
+def test_tc_gov_01_a_work_order_without_authorization_may_not_relax_security():
+    """AC-GOV-02: default deny. Authorization: NONE relaxes nothing."""
     text = _work_order_doc()
     assert "Production Security Boundary Change Authorization" in text
     assert "NONE" in text
@@ -1416,8 +1416,8 @@ def test_the_work_order_contract_allows_only_authorized_boundary_changes():
     assert "repository-side source変更に限り" in text
 
 
-def test_an_authorized_boundary_change_must_enumerate_its_scope():
-    """AC-GOV-06: authorisation is per-file and per-relaxation, never blanket."""
+def test_tc_gov_02_authorization_is_an_exact_file_and_relaxation_intersection():
+    """AC-GOV-03: per-file AND per-relaxation, never blanket."""
     text = _work_order_doc()
     for field in (
         "Authorized By",
@@ -1431,15 +1431,15 @@ def test_an_authorized_boundary_change_must_enumerate_its_scope():
     assert "曖昧な列挙は無効" in text or "曖昧な記述は無効" in text
 
 
-def test_authorization_never_reaches_the_installed_production_state():
-    """AC-GOV-01/AC-GOV-05: repository source is not /etc."""
+def test_tc_gov_07_installed_production_state_is_never_reachable():
+    """AC-GOV-01/AC-GOV-05: repository source is not /etc, authorized or not."""
     text = _work_order_doc()
     assert "installed Production stateへの変更権限を与えない" in text
     assert "Human-onlyである" in text
     assert "installed Production Security Boundary" in text
 
 
-def test_claude_cannot_authorize_itself():
+def test_ac_gov_04_claude_cannot_authorize_itself():
     """AC-GOV-04: the one loophole that would make all of this decorative."""
     text = _work_order_doc()
     assert "Claude Code自身をここへ記載しては" in text
@@ -1461,7 +1461,94 @@ def test_an_unauthorized_boundary_change_is_fail_closed():
 
 
 def test_the_preserved_controls_are_still_required():
-    """AC-GOV-07: authorisation does not suspend the rest of the contract."""
+    """AC-GOV-03: authorisation does not suspend the rest of the contract."""
     text = _work_order_doc()
     assert "Preserved Security Controls`へ記載された契約を維持する" in text
     assert "明示認可されていないSecurity relaxationは禁止" in text
+
+
+def test_tc_gov_03_the_responsibility_contract_admits_the_authorized_case():
+    """AC-GOV-08: the contract must not forbid what it elsewhere permits.
+
+    An unconditional "never relax the Security Contract" in the implementer's
+    duties would make the authorized case impossible, leaving Claude with two
+    rules that cannot both be followed.
+    """
+    text = _work_order_doc()
+    duties = text[text.index("### Claude Code / Implementer") :]
+    duties = duties[: duties.index("### Human")]
+    assert "例外が1つだけある" in duties
+    assert "HUMAN + ARCHITECT EXPLICIT" in duties
+    assert "intersection" in duties
+    for absent in (
+        "authorization metadata missing",
+        "authorization value invalid",
+        "Human + Architect authorization を確認できない",
+    ):
+        assert absent in duties, absent
+
+
+def test_tc_gov_04_fail_closed_is_not_relaxable_by_authorization():
+    """AC-GOV-07: the escape hatch must not reach the fail-closed semantics."""
+    text = _work_order_doc()
+    duties = text[text.index("### Claude Code / Implementer") :]
+    duties = duties[: duties.index("### Human")]
+    assert "こちらは例外なし" in duties
+    assert "Fail-Closed semantics" in text
+    assert "generic authorizationでも" in duties
+
+
+@pytest.mark.parametrize(
+    "invariant",
+    [
+        "Raw Evidence integrity",
+        "SHA256 integrity",
+        "Physical Request Record",
+        "Exact Logical Attempt Immutability",
+        "Trust Chain",
+        "Canonical CLI Pipeline Order",
+        "Production Human-only operation boundary",
+        "Fail-Closed semantics",
+        "Safe Sync / Safe Start / Safe Push authority boundary",
+    ],
+)
+def test_tc_gov_05_protected_invariants_are_outside_generic_authorization(invariant):
+    """AC-GOV-07: these need their own governance work order, not a boundary one."""
+    text = _work_order_doc()
+    protected = _section(text, "### Protected Invariants")
+    assert invariant in protected, invariant
+    assert "だけでは緩和できない" in protected
+    assert "別の正式Governance Work Order" in protected
+
+
+def test_tc_gov_06_authorization_is_not_retroactive():
+    """AC-GOV-06: a governance change does not bless what already happened."""
+    text = _work_order_doc()
+    section = _section(text, "### Authorization Non-Retroactivity")
+    assert "handoffされた後に開始されるimplementationにだけ" in section
+    for past in (
+        "既に作成済みの commit",
+        "既に push 済みの branch",
+        "既に open 済みの PR",
+        "既に merge 済みの PR",
+        "既に Production へ反映済みの変更",
+    ):
+        assert past in section, past
+    assert "retroactive approval" in section
+
+
+def test_claude_md_carries_the_same_authorization_semantics():
+    """AC-GOV-08: the two governance documents must not disagree."""
+    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "non-retroactive" in text
+    assert "intersectionだけ" in text
+    assert "generic authorizationだけでは緩和できない" in text
+    for invariant in (
+        "Fail-Closed semantics",
+        "Raw Evidence integrity",
+        "Trust Chain",
+        "Canonical CLI Pipeline Order",
+        "Safe Sync / Safe Start / Safe Push authority boundary",
+    ):
+        assert invariant in text, invariant
+    assert "authorizationの" in text and "Human-only" in text
