@@ -242,7 +242,14 @@ def test_rendered_policy_meets_the_managed_contract(rendered):
     assert permissions["defaultMode"] == "dontAsk"
     assert permissions["disableBypassPermissionsMode"] == "disable"
     assert permissions["disableAutoMode"] == "disable"
-    for rule in ("WebSearch", "WebFetch", "Agent", "mcp__*"):
+    for rule in (
+        "WebSearch",
+        "WebFetch",
+        "Agent",
+        "mcp__*",
+        "SendMessage",
+        "ListAgents",
+    ):
         assert rule in permissions["deny"]
     assert rendered["allowManagedPermissionRulesOnly"] is True
     assert rendered["allowManagedHooksOnly"] is True
@@ -250,6 +257,13 @@ def test_rendered_policy_meets_the_managed_contract(rendered):
     assert rendered["allowedMcpServers"] == []
     assert rendered["disableClaudeAiConnectors"] is True
     assert rendered["disableSkillShellExecution"] is True
+
+    # Remote Control: forbidden by nothing here and asserted by nothing here.
+    # The key is absent so a stricter scope can still disable it; activation
+    # stays manual; the cross-session traffic on the same transport is refused.
+    assert "disableRemoteControl" not in rendered
+    assert rendered["remoteControlAtStartup"] is False
+    assert rendered["crossSessionInbound"] == "refuse"
 
     sandbox = rendered["sandbox"]
     assert sandbox["enabled"] is True
@@ -2350,39 +2364,6 @@ def _valid_remote_control_policy(rendered):
     return json.loads(json.dumps(rendered))
 
 
-def test_rendered_policy_does_not_forbid_remote_control(rendered):
-    """AC-01: absent, not false.
-
-    A managed ``false`` would win over a stricter user, project or
-    organisation setting that wanted Remote Control off. Removing the key
-    stops DayTrade's policy from forbidding it and leaves every other scope
-    free to.
-    """
-    assert "disableRemoteControl" not in rendered
-
-
-def test_rendered_policy_pins_manual_activation_only(rendered):
-    """AC-02: starting a Production session must not expose it by itself."""
-    assert rendered["remoteControlAtStartup"] is False
-
-
-def test_rendered_policy_refuses_cross_session_inbound(rendered):
-    """AC-03: the transport is for a human client, not for other sessions."""
-    assert rendered["crossSessionInbound"] == "refuse"
-
-
-def test_rendered_policy_denies_cross_session_outbound(rendered):
-    """AC-04: refused inbound is only half of it."""
-    for rule in ("SendMessage", "ListAgents"):
-        assert rule in rendered["permissions"]["deny"]
-
-
-def test_rendered_policy_pins_the_cross_session_version_floor(rendered):
-    """AC-05: crossSessionInbound is only enforceable from 2.1.224."""
-    assert crs.REQUIRED_MINIMUM_CLAUDE_VERSION == "2.1.224"
-    assert rendered["requiredMinimumVersion"] == "2.1.224"
-
-
 @pytest.mark.parametrize(
     "value", [pytest.param(True, id="true"), pytest.param(False, id="false")]
 )
@@ -2476,44 +2457,38 @@ def test_a_missing_cross_session_deny_rule_is_refused(rendered, rule):
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
 
-def test_remote_control_does_not_touch_the_business_network_allowlist(rendered):
+def test_remote_control_adds_no_host_to_the_business_allowlist(rendered):
     """AC-07/SC-07: Remote Control is outbound from the Claude process itself.
 
-    Adding an Anthropic host to the *business* sandbox allowlist would widen
-    what the pipeline may fetch, which has nothing to do with a human input
-    transport.
+    The exact allowlist is asserted by the contract test above; what is new
+    here is that enabling Remote Control did not smuggle an Anthropic host
+    into the *business* sandbox, which would widen what the pipeline may fetch.
     """
-    network = rendered["sandbox"]["network"]
-    assert tuple(network["allowedDomains"]) == CURRENT_EXPECTED_DOMAINS
-    assert not any("anthropic" in domain for domain in network["allowedDomains"])
-    assert not any("claude.ai" in domain for domain in network["allowedDomains"])
+    domains = rendered["sandbox"]["network"]["allowedDomains"]
+    assert not any("anthropic" in domain for domain in domains)
+    assert not any("claude.ai" in domain for domain in domains)
 
 
-def test_remote_control_leaves_the_sandbox_controls_untouched(rendered):
-    """AC-06/AC-07: none of these is a Remote Control prerequisite."""
-    sandbox = rendered["sandbox"]
-    assert sandbox["enabled"] is True
-    assert sandbox["failIfUnavailable"] is True
-    assert sandbox["autoAllowBashIfSandboxed"] is False
-    assert sandbox["allowUnsandboxedCommands"] is False
-    assert sandbox["excludedCommands"] == []
-    assert sandbox["filesystem"]["disabled"] is False
-    network = sandbox["network"]
-    assert network["strictAllowlist"] is True
-    assert network["allowManagedDomainsOnly"] is True
-    assert network["allowLocalBinding"] is False
-    assert network["allowAllUnixSockets"] is False
+def test_a_host_still_forbidding_remote_control_reads_as_stale(tmp_path, rendered):
+    """A Production host on the old policy is stale, and the existing
+    replacement lifecycle is what notices -- no new mechanism is added.
 
-
-def test_an_old_style_policy_is_not_semantically_current(rendered):
-    """AC-11: a host still carrying disableRemoteControl is stale, and the
-    existing replacement lifecycle is what notices."""
+    Comparing two hashes here would be a tautology; this drives the real
+    check-mode helper, which is what a human will actually run.
+    """
     old_style = _valid_remote_control_policy(rendered)
     old_style["disableRemoteControl"] = True
     old_style.pop("remoteControlAtStartup")
     old_style.pop("crossSessionInbound")
 
-    assert old_style != rendered
-    assert crs.sha256_bytes(
-        crs.serialize_managed_settings(old_style)
-    ) != crs.sha256_bytes(crs.serialize_managed_settings(rendered))
+    root = _managed_root(tmp_path)
+    _install_policy(root, old_style)
+    _install_guard(root)
+
+    report = crs.inspect_managed_policy_replacement(
+        target_root=root,
+        rendered_settings=rendered,
+        expected_uid=REPLACEMENT_UID,
+    )
+    assert report["installed_policy_status"] == "STALE"
+    assert report["replacement_ready"] == "true"
