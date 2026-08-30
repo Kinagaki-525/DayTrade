@@ -612,9 +612,18 @@ atomicに差し替える。既存fileをin-placeで切り詰めたり編集し�
 失敗した場合、installed bytesは1 byteも変わらず、staged temporary fileは残さない。
 persistent backupは作成しない。
 
-rename成功後の検証（再読込・SHA・ownership・semantic一致）が失敗した場合は、
-**successとして報告しない**。backupを持たないため自動rollbackも行わず、
-Human inspection requiredとして停止する。
+rename成功後は、directory flush（durability確認）と検証（再読込・SHA・ownership・
+semantic一致）を行う。**いずれが失敗してもsuccessとして報告しない。**
+
+- directory flushが`EIO` / `ENOSPC`等のI/O errorになった場合は
+  `CLAUDE_MANAGED_POLICY_DURABILITY_FAILED`で失敗する。directory fsyncを実装しない
+  filesystemであることが限定列挙のerrnoで判別できる場合だけ続行し、**未知のerrnoを
+  unsupported扱いにしない**
+- 検証が失敗した場合は`CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED`で失敗する
+
+いずれもrename後であり、backupを持たないため**自動rollbackは行わない**。
+installed fileはcandidate bytesのまま残る。Human inspection requiredとして停止し、
+検証を緩めてsuccessに変えない。
 
 ### Runtime Security Preflight
 

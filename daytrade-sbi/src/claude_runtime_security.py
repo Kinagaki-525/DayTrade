@@ -22,6 +22,7 @@ Code, or opens a network connection.
 from __future__ import annotations
 
 import datetime as _datetime
+import errno
 import hashlib
 import ipaddress
 import json
@@ -149,6 +150,7 @@ ERROR_CODES = (
     "CLAUDE_MANAGED_POLICY_GUARD_MISMATCH",
     "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
     "CLAUDE_MANAGED_POLICY_REPLACE_FAILED",
+    "CLAUDE_MANAGED_POLICY_DURABILITY_FAILED",
     "CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED",
 )
 
@@ -1309,12 +1311,7 @@ def replace_managed_policy(
                 f"the atomic replacement failed: {error}",
             ) from error
         staged_name = None
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            # Not every filesystem supports fsync on a directory; the rename
-            # itself was atomic, and the verification below still runs.
-            pass
+        _fsync_directory(dir_fd)
 
         _verify_replacement(
             dir_fd,
@@ -1367,11 +1364,14 @@ def _stage_candidate(
 
     try:
         with os.fdopen(handle, "wb") as stream:
-            stream.write(candidate_bytes)
-            stream.flush()
-            os.fsync(stream.fileno())
+            # Contents and final metadata are both settled before the fsync, so
+            # what is made durable is the file exactly as it will be renamed
+            # into place -- not a correct file that still has to be chmod'd
+            # afterwards.
+            _write_staged_bytes(stream, candidate_bytes)
             os.fchmod(stream.fileno(), MANAGED_SETTINGS_MODE)
             os.fchown(stream.fileno(), owner[0], owner[1])
+            os.fsync(stream.fileno())
         staged = _read_managed_file(
             dir_fd, staged_name, code="CLAUDE_MANAGED_POLICY_STAGING_FAILED"
         )
@@ -1390,6 +1390,42 @@ def _stage_candidate(
             f"the candidate could not be staged: {error}",
         ) from error
     return staged_name
+
+
+#: Errnos that mean "this filesystem does not implement fsync on a directory",
+#: not "the write may be lost". Enumerated deliberately: an unknown errno is a
+#: real I/O failure until proven otherwise, and treating it as unsupported
+#: would turn a lost rename into a reported success.
+DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
+    {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+)
+
+
+def _fsync_directory(dir_fd: int) -> None:
+    """Make the rename durable, or fail.
+
+    The rename already happened, so there is nothing to roll back to and this
+    Work Order keeps no backup. What must not happen is reporting success for a
+    replacement whose directory entry may not survive a power loss: an EIO or
+    ENOSPC here is a failure the operator has to look at.
+    """
+    try:
+        os.fsync(dir_fd)
+    except OSError as error:
+        if error.errno in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
+            return
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_DURABILITY_FAILED",
+            f"the replacement was written but the directory could not be "
+            f"flushed ({error}); no backup is kept and no rollback is "
+            "attempted: human inspection required",
+        ) from error
+
+
+def _write_staged_bytes(stream: Any, payload: bytes) -> None:
+    """Write the candidate into the staged file and flush Python's buffer."""
+    stream.write(payload)
+    stream.flush()
 
 
 def _discard_staged(dir_fd: int, staged_name: str) -> None:

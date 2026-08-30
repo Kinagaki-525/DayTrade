@@ -7,6 +7,7 @@ a tmp directory stands in for "the OS".
 
 from __future__ import annotations
 
+import errno
 import inspect
 import json
 import os
@@ -1855,14 +1856,79 @@ def test_an_unparseable_installed_policy_is_not_rounded_to_stale(tmp_path):
 # TC-09 — every pre-commit failure leaves the old bytes untouched -----------
 
 
+def _leftovers(root):
+    return [
+        path.name
+        for path in root.iterdir()
+        if path.name not in {crs.MANAGED_SETTINGS_FILENAME, crs.MANAGED_GUARD_FILENAME}
+    ]
+
+
+def test_tc09_a_failing_temp_create_preserves_the_installed_bytes(
+    tmp_path, monkeypatch
+):
+    """AC-10: only the staged file's exclusive create fails.
+
+    Failing os.open outright would stop at the managed directory instead, and
+    the staging path would never be reached -- so the injection is narrowed to
+    the O_CREAT|O_EXCL call that creates the candidate.
+    """
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+    real_open = os.open
+
+    def failing_exclusive_create(path, flags, *args, **kwargs):
+        if flags & os.O_CREAT and flags & os.O_EXCL:
+            raise OSError(errno.ENOSPC, "simulated staging failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", failing_exclusive_create)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_STAGING_FAILED"
+
+    monkeypatch.undo()
+    assert world["target"].read_bytes() == before
+    assert _leftovers(world["root"]) == []
+
+
+def test_tc09_a_failing_candidate_write_preserves_the_installed_bytes(
+    tmp_path, monkeypatch
+):
+    """AC-10: the directory opens, the temp file is created, the write fails."""
+    world = _replacement_world(tmp_path)
+    before = world["target"].read_bytes()
+    created: list[str] = []
+    real_open = os.open
+
+    def recording_open(path, flags, *args, **kwargs):
+        if flags & os.O_CREAT and flags & os.O_EXCL:
+            created.append(str(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    def failing_write(stream, payload):
+        raise OSError(errno.EIO, "simulated write failure")
+
+    monkeypatch.setattr(os, "open", recording_open)
+    monkeypatch.setattr(crs, "_write_staged_bytes", failing_write)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_STAGING_FAILED"
+
+    monkeypatch.undo()
+    assert created, "the staged file was never created; the write was not exercised"
+    assert world["target"].read_bytes() == before
+    assert _leftovers(world["root"]) == []
+
+
 @pytest.mark.parametrize(
     "failing",
     [
-        pytest.param("open", id="temp-create"),
-        pytest.param("write", id="write"),
-        pytest.param("fsync", id="flush"),
         pytest.param("fchmod", id="chmod"),
         pytest.param("fchown", id="chown"),
+        pytest.param("fsync", id="flush"),
         pytest.param("replace", id="replace-syscall"),
     ],
 )
@@ -1872,44 +1938,54 @@ def test_tc09_a_failure_before_commit_preserves_the_installed_bytes(
     """AC-10: the old policy is never truncated or edited in place."""
     world = _replacement_world(tmp_path)
     before = world["target"].read_bytes()
-    real = getattr(os, failing)
 
     def exploding(*args, **kwargs):
-        # Only the replacement's own staging call is failed; unrelated writes
-        # by pytest or the interpreter must still work.
-        raise OSError(28, "simulated failure")
+        raise OSError(errno.EIO, "simulated failure")
 
-    if failing == "write":
-        real_open = os.open
-
-        def failing_write_open(*args, **kwargs):
-            handle = real_open(*args, **kwargs)
-            os.close(handle)
-            raise OSError(28, "simulated failure")
-
-        monkeypatch.setattr(os, "open", failing_write_open)
-    else:
-        monkeypatch.setattr(os, failing, exploding)
+    monkeypatch.setattr(os, failing, exploding)
 
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         _replace(world)
     assert excinfo.value.code in {
         "CLAUDE_MANAGED_POLICY_STAGING_FAILED",
         "CLAUDE_MANAGED_POLICY_REPLACE_FAILED",
-        "CLAUDE_MANAGED_POLICY_DIRECTORY_INVALID",
-        "CLAUDE_MANAGED_POLICY_TARGET_INVALID",
     }
 
     monkeypatch.undo()
     assert world["target"].read_bytes() == before
-    leftovers = [
-        path.name
-        for path in world["root"].iterdir()
-        if path.name
-        not in {crs.MANAGED_SETTINGS_FILENAME, crs.MANAGED_GUARD_FILENAME}
-    ]
-    assert leftovers == [], f"staged temporary file left behind: {leftovers}"
-    _ = real
+    assert _leftovers(world["root"]) == []
+
+
+def test_the_staged_file_is_complete_and_final_before_it_is_made_durable(
+    tmp_path, monkeypatch
+):
+    """Fix-02: contents and metadata are settled before the fsync.
+
+    What is made durable must be the file exactly as it will be renamed into
+    place, not one that still has to be chmod'd afterwards.
+    """
+    world = _replacement_world(tmp_path)
+    order: list[str] = []
+    real_write, real_chmod = crs._write_staged_bytes, os.fchmod
+    real_chown, real_fsync = os.fchown, os.fsync
+
+    def note(name, real):
+        def recorder(*args, **kwargs):
+            order.append(name)
+            return real(*args, **kwargs)
+
+        return recorder
+
+    monkeypatch.setattr(crs, "_write_staged_bytes", note("write", real_write))
+    monkeypatch.setattr(os, "fchmod", note("fchmod", real_chmod))
+    monkeypatch.setattr(os, "fchown", note("fchown", real_chown))
+    monkeypatch.setattr(os, "fsync", note("fsync", real_fsync))
+
+    _replace(world)
+    monkeypatch.undo()
+
+    staged = order[: order.index("fsync") + 1]
+    assert staged == ["write", "fchmod", "fchown", "fsync"], order
 
 
 def test_tc09_a_target_changed_while_staging_stops_at_the_commit_point(
@@ -1980,6 +2056,87 @@ def test_tc10_a_successful_replacement_is_atomic_and_verified(tmp_path):
     assert [
         path.name for path in sorted(world["root"].iterdir())
     ] == [crs.MANAGED_GUARD_FILENAME, crs.MANAGED_SETTINGS_FILENAME]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [pytest.param(errno.EIO, id="EIO"), pytest.param(errno.ENOSPC, id="ENOSPC")],
+)
+def test_a_failing_directory_fsync_after_the_rename_is_a_failure(
+    tmp_path, monkeypatch, code
+):
+    """Fix-01: durability that cannot be confirmed is not success.
+
+    The rename has already happened, so the candidate is what is installed and
+    there is nothing to roll back to. What must not happen is calling that a
+    success: an I/O error here means the directory entry may not survive, and a
+    human has to look at it.
+    """
+    world = _replacement_world(tmp_path)
+    real_fsync = os.fsync
+
+    def failing_directory_fsync(fd):
+        # The staged file's own fsync must still succeed: only the directory
+        # flush that follows the rename is failed.
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(code, "simulated directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_directory_fsync)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        _replace(world)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DURABILITY_FAILED"
+
+    monkeypatch.undo()
+    # Post-replace: the candidate is installed and no rollback was attempted.
+    assert world["target"].read_bytes() == crs.serialize_managed_settings(
+        world["rendered"]
+    )
+    assert _leftovers(world["root"]) == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    [pytest.param(errno.EIO, id="EIO"), pytest.param(errno.ENOSPC, id="ENOSPC")],
+)
+def test_the_directory_fsync_helper_refuses_to_swallow_an_io_error(monkeypatch, code):
+    """The helper itself, so the classification is pinned where it lives."""
+
+    def failing(fd):
+        raise OSError(code, "simulated")
+
+    monkeypatch.setattr(os, "fsync", failing)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs._fsync_directory(0)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DURABILITY_FAILED"
+    assert "human inspection required" in excinfo.value.message
+
+
+@pytest.mark.parametrize("code", sorted(crs.DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS))
+def test_only_an_enumerated_unsupported_errno_is_tolerated(monkeypatch, code):
+    """A filesystem without directory fsync is fine; an unknown errno is not."""
+
+    def failing(fd):
+        raise OSError(code, "not supported")
+
+    monkeypatch.setattr(os, "fsync", failing)
+    crs._fsync_directory(0)  # tolerated, no exception
+
+
+def test_an_unknown_errno_is_never_treated_as_unsupported(monkeypatch):
+    unknown = errno.EACCES
+    assert unknown not in crs.DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS
+
+    def failing(fd):
+        raise OSError(unknown, "simulated")
+
+    monkeypatch.setattr(os, "fsync", failing)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs._fsync_directory(0)
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_DURABILITY_FAILED"
 
 
 def test_a_post_verification_failure_is_reported_as_failure(tmp_path, monkeypatch):
