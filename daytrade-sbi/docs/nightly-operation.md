@@ -712,6 +712,37 @@ Claude session同士の自律的なmessage交換にRemote Control transportを�
 Cross-session Messagingがhost process側にinbox socketを持ち得ることを理由に
 `allowAllUnixSockets`を緩めない。
 
+#### Data Flow / Transcript
+
+Remote Controlを有効化すると、**新しいData Flowが1つ増える**。有効化前にHumanが
+これを受容する必要がある。
+
+- Remote Control接続中は、**session transcriptがAnthropic serversへ保存される**
+- transcriptには少なくとも次が含まれる
+  - Human messages
+  - Claude responses
+  - tool activity（実行したtoolとその内容）
+- **executionはlocal Production machineに残る。** remote clientはinputを送るだけで、
+  commandはProduction機で実行される
+- **filesystem accessもlocal Production machineに残る。** remote clientが
+  Production機のfileへ直接触れることはない
+
+したがってRemote Controlが追加するのは「実行権限」ではなく
+**transcriptのserver-side storage**である。
+
+Zero Data Retention等、この保存と両立しないorganization compliance requirementが
+存在する場合は、**Remote Controlを有効化しない**。
+
+このData Flowは次を変更しない。
+
+- Business Data Contract
+- Raw Evidence
+- SHA256 Trust Chain
+
+**Anthropic側に保存されたtranscriptをRaw Evidenceとして扱わない。**
+DayTrade Trust Chainのevidenceにもしない。transcriptの内容をrepository側で
+再現・保存もしない。
+
 #### Attachments
 
 Production v1ではremote clientからのfile / image attachmentを**使用しない**。
@@ -760,6 +791,62 @@ detached Production processを維持するためのtmux / screen運用は今回�
    reviewed replacement lifecycleで反映する
 
 **Production Policyを直接編集しない。**
+
+#### Production Remote Control Acceptance（Human-only）
+
+Managed Policy replacementとRuntime Security Preflightを終えた後、**Production
+Nightlyを開始する前に**Humanが次を実施する。**このPRおよびDevelopment Claudeは
+Productionで実行しない。DayTrade Production運用へのhandoff対象である。**
+
+```text
+Human merge
+  → Production main reflection
+  → Production full pytest
+  → Managed Policy --check
+  → candidate render
+  → Human review
+  → installed / candidate SHA256 attestation
+  → Human-only Managed Policy replacement
+  → post verification
+  → Runtime Security Preflight
+  → normal Production Claude launch
+  → /status
+  → /remote-control
+  → Remote Control Security Acceptance
+  → offline runtime smoke
+  → Production Nightly
+```
+
+**Remote Control Security Acceptance**として最低限次を確認する。
+
+1. **`/status`** — Enterprise managed settings (file) が読み込まれていること
+2. **Remote attach** — 認可済みの同一Claude account / organizationからattachできること。
+   unauthorized attachを許可する仕組みを追加しない
+3. **Runtime Guard negative Bash probe** — remote-origin promptからのnon-canonical Bashが
+   拒否されること。probe commandはProduction business dataを変更しない無害なものを
+   Production運用Work Order側で確定する
+4. **Canonical offline CLI probe** — 既存のcanonical Production Python invocationで、
+   network acquisitionを伴わない既存のoffline commandが通ること。Runtime Guardを
+   bypassしない
+5. **Write protection** — remote-originからの非許可Writeが拒否されること。
+   destructive probeは設計しない
+6. **ConfigChange protection** — remote-originからuser / project / local / policy設定の
+   変更が許可されないこと
+7. **Cross-session isolation** — `crossSessionInbound=refuse` / `SendMessage` denied /
+   `ListAgents` denied
+8. **Sandbox / network** — `strictAllowlist=true` / `allowManagedDomainsOnly=true` /
+   `allowLocalBinding=false` / `allowAllUnixSockets=false` /
+   `allowedDomains`のexact setが変わっていないこと
+9. **Attachments** — Production v1では使用しないこと
+10. **Secret persistence** — Remote Control URL / QR / token / credentialが
+    repository / log / Raw Evidence / Business Artifact / `runtime_security.json`へ
+    保存されていないこと
+
+**1項目でも確認できない場合はProduction Nightlyへ進まない。**
+
+ただしRemote Controlのconnection failure自体をBusiness結果へ変換しない
+（`NO_TRADE` / `DATA_UNAVAILABLE`等にしない）。接続できないときはRemote Controlを
+使わずにProduction Nightlyを実施するか、Human判断で停止する。
 
 ### Runtime Security Preflight
 
