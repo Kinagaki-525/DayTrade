@@ -8,7 +8,18 @@
 
     "allow": [
       "Bash(__PRODUCTION_PYTHON__ -B -m src.cli *)",
-      "Edit(__EVENT_EXTRACTION_PATH_PATTERN__)"
+      "Edit(__EVENT_EXTRACTION_PATH_PATTERN__)",
+
+      "Read(__CLAUDE_MD_READ_PATTERN__)",
+      "Read(__PREPARE_DAYTRADE_SKILL_READ_PATTERN__)",
+      "Read(__AGENTS_READ_PATTERN__)",
+      "Read(__TODO_READ_PATTERN__)",
+      "Read(__STRATEGY_READ_PATTERN__)",
+      "Read(__SOURCE_MATRIX_READ_PATTERN__)",
+      "Read(__CANONICAL_PIPELINE_READ_PATTERN__)",
+      "Read(__NIGHTLY_OPERATION_READ_PATTERN__)",
+      "Read(__NIGHTLY_RESEARCH_READ_PATTERN__)",
+      "Read(__RUNS_READ_PATTERN__)"
     ],
 
     "deny": [
