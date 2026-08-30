@@ -1444,7 +1444,40 @@ def test_ac_gov_04_claude_cannot_authorize_itself():
     text = _work_order_doc()
     assert "Claude Code自身をここへ記載しては" in text
     assert "Claude自身がauthorizationを作成・拡張・変更してはならない" in text
-    assert "Claude自身によるGovernance変更が必要" in text
+    for prohibited in (
+        "Claude 自身が authorization を生成する",
+        "Claude 自身が authorization を拡張する",
+        "Claude 自身が Governance を書き換えて自己許可する",
+        "Work Order なしで Protected Invariant を変更する",
+    ):
+        assert prohibited in text, prohibited
+
+
+def test_ac_gov_04_a_formal_governance_work_order_is_still_executable():
+    """The prohibition is on self-authorisation, not on governance change.
+
+    Protected Invariants say a formal governance work order is the way to
+    change them. A fail-closed rule that blocked every governance change
+    would make that route unreachable, leaving the contract unable to amend
+    itself by the one path it documents.
+    """
+    text = _work_order_doc()
+    blocked = _section(text, "## Fail-Closed Contract")
+    # The block is conditional on the authorising work order being absent.
+    assert "Governance Work Orderが存在しない状態で" in blocked
+    assert "自己許可のためのGovernance変更が必要" in blocked
+    # And the permitted route is stated, not merely implied.
+    assert "禁じているのは**自己許可**であって、Governance変更そのものではない" in blocked
+    assert "そのWork Orderのexact scope内でGovernance変更を実装してよい" in blocked
+
+
+def test_ac_gov_04_an_unauthorized_governance_change_is_still_blocked():
+    """Both halves must hold at once: the route exists, and self-permission
+    still fails closed."""
+    text = _work_order_doc()
+    blocked = _section(text, "## Fail-Closed Contract")
+    assert "Claude自身によるGovernance変更" in blocked
+    assert "authorizationの有無にかかわらず常にMUST NOT" in blocked
 
 
 def test_an_unauthorized_boundary_change_is_fail_closed():

@@ -549,8 +549,25 @@ Production Security Boundaryに関しては、次も必ず`IMPLEMENTATION_BLOCKE
 - Work Orderに記載された以上のSecurity relaxationが必要
 - Production `/etc`の変更が必要
 - Production Runtime operationが必要
-- **Claude自身によるGovernance変更が必要**
+- **Human + ArchitectがGovernance Contract自体を変更対象として明示認可した別の正式
+  Governance Work Orderが存在しない状態で、Claude自身によるGovernance変更、または
+  自己許可のためのGovernance変更が必要**
 - Human + Architect authorizationを確認できない
+
+最後の条件が禁じているのは**自己許可**であって、Governance変更そのものではない。
+Human + Architectが[Protected Invariants](#protected-invariants)の記載どおりに
+Governance Contract自体を変更対象として発行した正式Governance Work Orderがある場合は、
+**そのWork Orderのexact scope内でGovernance変更を実装してよい**（この文書自体が
+そうした変更で書かれている）。
+
+一方で次は、authorizationの有無にかかわらず常にMUST NOTである。
+
+```text
+Claude 自身が authorization を生成する
+Claude 自身が authorization を拡張する
+Claude 自身が Governance を書き換えて自己許可する
+Work Order なしで Protected Invariant を変更する
+```
 
 この場合、実装を拡張・再設計せずSTOPする。
 
