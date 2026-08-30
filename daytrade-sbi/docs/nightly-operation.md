@@ -828,21 +828,66 @@ Human merge
 4. **Canonical offline CLI probe** — 既存のcanonical Production Python invocationで、
    network acquisitionを伴わない既存のoffline commandが通ること。Runtime Guardを
    bypassしない
-5. **Write protection** — remote-originからの非許可Writeが拒否されること。
+5. **Approved Read probe（positive）** — Managed Policyがexactに許可したRead ruleで、
+   Canonical Nightlyが必要とするfileをRead toolで読めること。最低限
+   `CLAUDE.md`・`AGENTS.md`・`config/strategy.yaml`・`config/source_matrix.yaml`・
+   `docs/canonical-pipeline.md`・`prompts/nightly_research.md`と、当日の
+   `runs/<target-date>/working/runtime_security.json`を確認する。
+   `cat` / `head` / `grep` / `python -c`などBash経由の代替readerで代用しない
+   （Bash allowlistはcanonical CLI 1件のままである）
+6. **Unauthorized Read probe（negative）** — 許可されていないpathのReadが拒否されること。
+   最低限`src/`配下のsource file・`config/issuer_domain_registry.yaml`・
+   installed Managed Policy（`/etc/claude-code/managed-settings.json`）・
+   HOME配下のfileを確認する。拒否されたpathの内容を別経路で読み出さない
+7. **Write protection** — remote-originからの非許可Writeが拒否されること。
+   Read可能になったpathがWrite可能になっていないことも含めて確認する
+   （唯一のEdit対象は`runs/<target-date>/working/event_source_extraction.json`）。
    destructive probeは設計しない
-6. **ConfigChange protection** — remote-originからuser / project / local / policy設定の
-   変更が許可されないこと
-7. **Cross-session isolation** — `crossSessionInbound=refuse` / `SendMessage` denied /
+8. **ConfigChange protection** — `user_settings` / `project_settings` /
+   `local_settings` / `skills`のConfigChangeが、**running Production sessionの
+   effective configurationへ反映されないこと**を確認する。
+
+   Claude CodeのConfigChange blockは「設定fileのdisk上のbytesが変更されないこと」を
+   保証する契約では**ない**。blockが保証するのは「変更後のsettingsをrunning sessionへ
+   適用しないこと」である。したがって判定は次のとおり。
+
+   | 観測 | 判定 |
+   | --- | --- |
+   | block対象のvalid設定変更がrunning sessionのeffective configurationへ反映されない | PASS |
+   | 設定fileのdisk上のbytesだけが変わった | それだけではFAILではない |
+   | UIにblock messageが表示されなかった | それだけではFAILではない |
+   | block対象のvalid設定変更がrunning sessionで有効になった | **FAIL** |
+
+   `policy_settings`は**audit onlyである**。Claude Codeは`policy_settings`の
+   ConfigChangeに対するblocking decisionを適用しないため、
+   **`policy_settings`のblock成功をAcceptanceの成功条件として要求しない**。
+   `policy_settings`のSecurity Boundaryは、installed Managed Policyの
+   root ownership / expected SHA256 / semantic equality（項目11）である。
+
+   ConfigChange probeの後、Managed Policy dominance（`allowManagedPermissionRulesOnly` /
+   `allowManagedHooksOnly` / `allowManagedMcpServersOnly`）・Bash・Write・sandbox・
+   networkの各protectionが引き続き有効であることを再確認する。
+
+   **このConfigChange AcceptanceがFAILした場合、Business Pipelineを開始しない。**
+9. **Cross-session isolation** — `crossSessionInbound=refuse` / `SendMessage` denied /
    `ListAgents` denied
-8. **Sandbox / network** — `strictAllowlist=true` / `allowManagedDomainsOnly=true` /
-   `allowLocalBinding=false` / `allowAllUnixSockets=false` /
-   `allowedDomains`のexact setが変わっていないこと
-9. **Attachments** — Production v1では使用しないこと
-10. **Secret persistence** — Remote Control URL / QR / token / credentialが
+10. **Sandbox / network** — `strictAllowlist=true` / `allowManagedDomainsOnly=true` /
+    `allowLocalBinding=false` / `allowAllUnixSockets=false` /
+    `allowedDomains`のexact setが変わっていないこと
+11. **Managed Policy integrity** — installed Managed Policyがroot ownedで、
+    expected SHA256とrendered policyへのsemantic equalityを満たすこと
+12. **Attachments** — Production v1では使用しないこと
+13. **Secret persistence** — Remote Control URL / QR / token / credentialが
     repository / log / Raw Evidence / Business Artifact / `runtime_security.json`へ
     保存されていないこと
 
 **1項目でも確認できない場合はProduction Nightlyへ進まない。**
+
+Managed Policyを差し替えた後は、**Runtime Security PreflightとRemote Control
+Security Acceptanceを再実行し、全件PASSしたときだけBusiness Pipelineを開始する**。
+旧policyに対するPASS記録や旧`runtime_security.json`を、新policyのAcceptance Evidenceと
+して再利用しない。Security AcceptanceのFAILをBusiness Decision（`NO_TRADE` /
+`DATA_UNAVAILABLE`）へ変換しない。
 
 ただしRemote Controlのconnection failure自体をBusiness結果へ変換しない
 （`NO_TRADE` / `DATA_UNAVAILABLE`等にしない）。接続できないときはRemote Controlを

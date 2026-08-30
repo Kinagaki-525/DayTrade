@@ -1392,6 +1392,161 @@ def test_remote_control_acceptance_is_fail_closed_and_human_only():
     assert "DATA_UNAVAILABLE" in section
 
 
+# ------------------------------ DTWO-2026-024: read + ConfigChange gate ---
+#
+# Two drifts this section pins. The acceptance now probes the Read capability
+# the nightly actually needs -- positively and negatively -- and it measures
+# ConfigChange the way Claude Code defines it: a blocked change must not become
+# effective in the running session. Bytes on disk are not the measurement, and
+# ``policy_settings`` cannot be blocked at all.
+
+
+def test_remote_control_acceptance_probes_the_approved_reads():
+    """TC-09 / AC-12: the canonical instructions, config and run evidence."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "Approved Read probe" in section
+    for target in (
+        "CLAUDE.md",
+        "AGENTS.md",
+        "config/strategy.yaml",
+        "config/source_matrix.yaml",
+        "docs/canonical-pipeline.md",
+        "prompts/nightly_research.md",
+        "runtime_security.json",
+    ):
+        assert target in section, target
+
+
+def test_remote_control_acceptance_probes_an_unauthorized_read():
+    """TC-09 / AC-12: the grant is exact, so the negative side is measured too."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "Unauthorized Read probe" in section
+    for denied in (
+        "issuer_domain_registry.yaml",
+        "/etc/claude-code/managed-settings.json",
+        "HOME",
+    ):
+        assert denied in section, denied
+    assert "拒否されたpathの内容を別経路で読み出さない" in section
+
+
+def test_the_read_probe_never_becomes_a_bash_reader():
+    """TC-09 / SC-11.3: reading is the Read tool's job, not a shell's."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    for reader in ("cat", "head", "grep", "python -c"):
+        assert reader in section, reader
+    assert "代用しない" in section
+
+
+def test_readable_is_not_writable_in_the_acceptance():
+    """TC-09 / SC-11.2."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "Read可能になったpathがWrite可能になっていないこと" in section
+    assert "event_source_extraction.json" in section
+
+
+def test_configchange_acceptance_measures_the_running_session():
+    """TC-08 / AC-10: effective configuration, not bytes on disk."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "running Production sessionの" in section
+    assert "effective configurationへ反映されないこと" in section
+    for source in ("user_settings", "project_settings", "local_settings", "skills"):
+        assert source in section, source
+
+
+def test_configchange_acceptance_denies_the_disk_bytes_measurement():
+    """TC-08 / AC-10: the old wording is explicitly retired."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "設定fileのdisk上のbytesが変更されないこと" in section
+    assert "保証する契約では**ない**" in section
+    assert "設定fileのdisk上のbytesだけが変わった | それだけではFAILではない" in section
+    assert "UIにblock messageが表示されなかった | それだけではFAILではない" in section
+
+
+def test_configchange_acceptance_fails_only_on_an_effective_change():
+    """TC-08 / AC-10."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert (
+        "block対象のvalid設定変更がrunning sessionで有効になった | **FAIL**" in section
+    )
+    assert "このConfigChange AcceptanceがFAILした場合、Business Pipelineを開始しない" in section
+
+
+def test_policy_settings_configchange_is_documented_as_audit_only():
+    """TC-08 / AC-11: a block nobody can demonstrate is not a success condition."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "`policy_settings`は**audit onlyである**" in section
+    assert (
+        "`policy_settings`のblock成功をAcceptanceの成功条件として要求しない" in section
+    )
+    for boundary in ("root ownership", "SHA256", "semantic equality"):
+        assert boundary in section, boundary
+
+
+def test_protections_are_reconfirmed_after_the_configchange_probe():
+    """TC-08 / AC-10: probing the hook must not leave the boundary assumed."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "ConfigChange probeの後" in section
+    for control in (
+        "allowManagedPermissionRulesOnly",
+        "allowManagedHooksOnly",
+        "allowManagedMcpServersOnly",
+    ):
+        assert control in section, control
+
+
+def test_a_replaced_policy_reruns_the_preflight_and_the_acceptance():
+    """TC-10 / AC-13: the gate is re-entered, never inherited."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert (
+        "Runtime Security PreflightとRemote Control\nSecurity Acceptanceを再実行し、"
+        "全件PASSしたときだけBusiness Pipelineを開始する" in section
+    )
+    assert "新policyのAcceptance Evidenceと\nして再利用しない" in section
+    assert "Security AcceptanceのFAILをBusiness Decision" in section
+
+
+def test_the_acceptance_order_still_ends_at_the_business_pipeline():
+    """TC-10 / AC-13: replacement -> preflight -> acceptance -> nightly.
+
+    Read from the acceptance subsection's own flow block: the surrounding prose
+    names the same steps in whatever order the sentence needs, so only the
+    ordered listing is evidence of the order.
+    """
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"),
+        "#### Production Remote Control Acceptance（Human-only）",
+    )
+    flow = re.search(r"```text\n(.*?)```", section, re.DOTALL)
+    assert flow, "the acceptance flow block disappeared"
+    steps = flow.group(1)
+    replacement = steps.index("Human-only Managed Policy replacement")
+    preflight = steps.index("Runtime Security Preflight")
+    acceptance = steps.index("Remote Control Security Acceptance")
+    nightly = steps.rindex("Production Nightly")
+    assert replacement < preflight < acceptance < nightly
+
+
 # ------------------- Production Security Boundary Change Authorization ---
 #
 # Governance bootstrap. Changing the policy template in this repository and
