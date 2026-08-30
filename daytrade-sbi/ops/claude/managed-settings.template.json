@@ -1,5 +1,5 @@
 {
-  "requiredMinimumVersion": "2.1.219",
+  "requiredMinimumVersion": "2.1.224",
 
   "permissions": {
     "defaultMode": "dontAsk",
@@ -15,7 +15,9 @@
       "WebSearch",
       "WebFetch",
       "Agent",
-      "mcp__*"
+      "mcp__*",
+      "SendMessage",
+      "ListAgents"
     ]
   },
 
@@ -32,7 +34,8 @@
   "disableDeepLinkRegistration": "disable",
   "disableSkillShellExecution": true,
   "disableSideloadFlags": true,
-  "disableRemoteControl": true,
+  "remoteControlAtStartup": false,
+  "crossSessionInbound": "refuse",
 
   "sandbox": {
     "enabled": true,

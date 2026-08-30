@@ -214,7 +214,7 @@ def test_nightly_operation_documents_human_only_provisioning():
         "seccomp",
         "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
         "apparmor_restrict_unprivileged_userns",
-        "2.1.219",
+        "2.1.224",
     ):
         assert required in text
 
@@ -1182,3 +1182,116 @@ def test_http_user_agent_presence_checkpoint_precedes_preflight():
     assert "CLAUDE_HTTP_USER_AGENT_MISSING" in section
     assert "default" in section
     assert "値そのものをこのdocumentやrepository artifactへ書かない" in section
+
+
+# --------------------------- DTWO-2026-830: Production Remote Control ---
+
+REMOTE_CONTROL_HEADING = "### Production Remote Control（Human専用）"
+
+
+def _section_with_subsections(text: str, heading: str) -> str:
+    """A section including its own subsections.
+
+    _section stops at the next heading of any level, which would truncate a
+    section that organises itself with #### subheadings. This stops only at the
+    next heading of the same or higher level.
+    """
+    assert heading in text, f"missing section heading: {heading}"
+    level = len(heading) - len(heading.lstrip("#"))
+    body = text[text.index(heading) + len(heading) :]
+    following = re.search(rf"^#{{1,{level}}} ", body, re.MULTILINE)
+    return body[: following.start()] if following else body
+
+
+def test_remote_control_section_states_the_managed_policy_contract():
+    """The four keys the policy pins, named where an operator will read them."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    for token in (
+        "/remote-control",
+        "disableRemoteControl",
+        "remoteControlAtStartup",
+        "crossSessionInbound",
+        "SendMessage",
+        "ListAgents",
+        "2.1.224",
+    ):
+        assert token in section, token
+
+
+def test_remote_control_activation_follows_preflight_and_status():
+    """Activation is a human step in an already-verified session."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    for step in (
+        "scripts/claude-production",
+        "Runtime Security Preflight",
+        "/status",
+        "Enterprise managed settings",
+    ):
+        assert step in section, step
+    assert section.index("Runtime Security Preflight") < section.index(
+        "/remote-control"
+    )
+
+
+def test_remote_control_prohibits_the_launcher_and_server_start_modes():
+    """The transport must never be started for the human."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    for prohibited in (
+        "claude remote-control",
+        "claude --remote-control",
+        "remoteControlAtStartup=true",
+    ):
+        assert prohibited in section, prohibited
+    assert "Launcherから自動でRemote Controlを開始しない" in section
+
+
+def test_remote_control_does_not_widen_the_business_network_allowlist():
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "Anthropic hostを追加しない" in section
+    for control in (
+        "strictAllowlist",
+        "allowManagedDomainsOnly",
+        "allowLocalBinding",
+        "allowAllUnixSockets",
+        "allowedDomains",
+    ):
+        assert control in section, control
+
+
+def test_remote_control_forbids_attachments_and_stored_secrets():
+    """AC-13/AC-14."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "attachment" in section
+    assert "Production v1" in section
+    for secret in ("session URL", "QR", "token", "credential"):
+        assert secret in section, secret
+    assert "runtime_security.json" in section
+    assert "Raw Evidence" in section
+
+
+def test_remote_control_failure_is_not_a_business_result():
+    """AC-15: a transport that did not connect decides nothing about a trade."""
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    for verdict in ("NO_TRADE", "DATA_UNAVAILABLE", "TRADE", "REJECTED"):
+        assert verdict in section, verdict
+    assert "Business Pipelineの結果では" in section
+
+
+def test_remote_control_incident_path_uses_the_reviewed_replacement_lifecycle():
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "reviewed replacement" in section
+    assert "Production Policyを直接編集しない" in section

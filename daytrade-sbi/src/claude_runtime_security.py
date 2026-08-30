@@ -41,7 +41,7 @@ REPOSITORY_ROOT = PROJECT_ROOT.parent
 # ------------------------------------------------------------ constants ---
 
 RUNTIME_SECURITY_SCHEMA_VERSION = 1
-REQUIRED_MINIMUM_CLAUDE_VERSION = "2.1.219"
+REQUIRED_MINIMUM_CLAUDE_VERSION = "2.1.224"
 REQUIRED_RUNTIME_PROFILE = "production"
 
 DEFAULT_MANAGED_ROOT = Path("/etc/claude-code")
@@ -686,7 +686,16 @@ def verify_managed_settings_contract(
             "permissions.disableAutoMode must be 'disable'",
         )
     deny = list(permissions.get("deny") or [])
-    for rule in ("WebSearch", "WebFetch", "Agent", "mcp__*"):
+    for rule in (
+        "WebSearch",
+        "WebFetch",
+        "Agent",
+        "mcp__*",
+        # Remote Control shares its transport with cross-session messaging.
+        # Refusing inbound is only half of it; these deny the outbound half.
+        "SendMessage",
+        "ListAgents",
+    ):
         if rule not in deny:
             raise _fail(
                 "CLAUDE_MANAGED_POLICY_INVALID", f"permissions.deny must contain {rule}"
@@ -698,9 +707,26 @@ def verify_managed_settings_contract(
         raise _fail(
             "CLAUDE_MANAGED_POLICY_INVALID", "disableSideloadFlags must be true"
         )
-    if payload.get("disableRemoteControl") is not True:
+    # Remote Control is a human input transport, so this policy neither forbids
+    # it nor asserts it: the key must be ABSENT. A managed "false" would outrank
+    # a stricter user, project or organisation setting that wanted Remote
+    # Control disabled, and a managed "true" is the contract this replaces.
+    if "disableRemoteControl" in payload:
         raise _fail(
-            "CLAUDE_MANAGED_POLICY_INVALID", "disableRemoteControl must be true"
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "disableRemoteControl must be absent: this policy neither forbids "
+            "nor asserts Remote Control, so a stricter scope can still disable it",
+        )
+    # Starting a Production session must never expose it by itself. The human
+    # activates Remote Control explicitly, after checking /status.
+    if payload.get("remoteControlAtStartup") is not False:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "remoteControlAtStartup must be false"
+        )
+    # The transport carries a human client, not sessions talking to sessions.
+    if payload.get("crossSessionInbound") != "refuse":
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "crossSessionInbound must be 'refuse'"
         )
 
     if payload.get("allowManagedPermissionRulesOnly") is not True:
