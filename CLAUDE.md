@@ -97,16 +97,47 @@ local `main`へ`git add` / `git commit`できる状態で始まらないよう�
 Sandboxを無効化せず、`allowUnsandboxedCommands`を変更せず、`.git`へchmod/chownせず、
 fileを1つも書き込まない。**`daytrade-sbi/scripts/claude-production`とは完全に別物**である。
 
-Production関連資産の扱いは次のとおり。
+Production関連資産の扱いは次のとおり。**installed Production state**（実機の`/etc`）と
+**repository-side Production Security source**（このリポジトリ内のfile）を区別する。
 
-- Production runtime marker（`/etc/daytrade-production-runtime`）とOS Managed Policy
-  （`/etc/claude-code/managed-settings.json`）の**存在有無だけをread-onlyで参照する**。
+### installed Production state（Development Claudeは変更しない）
+
+- Production runtime marker（`/etc/daytrade-production-runtime`）とinstalled OS Managed
+  Policy（`/etc/claude-code/managed-settings.json`）の**存在有無だけをread-onlyで参照する**。
   これはDevelopment launcherの起動拒否判定のためである
 - これらの内容を書き換えない
-- Production Managed Policyをdeploy・変更しない
-- Production Runtime Guard（`ops/claude/daytrade_runtime_guard.py`）を変更しない
-- Production Security Boundaryを緩和しない
-- Production launcher（`daytrade-sbi/scripts/claude-production`）を変更しない
+- **installed OS Managed PolicyをDevelopment Claudeがdeploy・変更しない**
+- Production環境へのdeploy / install / replacement / Production Human-only commandを
+  実行しない
+- Productionへの反映は常にHuman-only lifecycleである
+
+### repository-side Production Security source（条件付きで変更可）
+
+`ops/claude/managed-settings.template.json`・`src/claude_runtime_security.py`・
+`ops/claude/daytrade_runtime_guard.py`・`scripts/claude-production`などの
+repository内Production Security Boundary sourceは、**原則として変更しない**。
+
+例外は次の条件をすべて満たす場合に限る。
+
+- Human + Architectが正式なDevelopment Work Orderで
+  **Production Security Boundary Changeを明示認可**している
+- そのWork Orderが**exact files / exact behavior / exact relaxation**を列挙している
+- 変更がその列挙範囲**内**に収まっている
+
+この例外は**repository sourceの変更だけ**に適用され、installed Production stateへの
+変更権限を与えない。Work Orderに明示されていないSecurity Boundaryの緩和は禁止する。
+
+Production Runtime Guard（`ops/claude/daytrade_runtime_guard.py`）とProduction launcher
+（`daytrade-sbi/scripts/claude-production`）は、**それ自身がHuman + Architectにより
+明示的な変更対象として認可されていない限り変更しない**。
+
+**Development Claude自身がWork Orderへauthorizationを追加したり、Governanceを変更して
+自己許可してはならない。** authorizationを確認できない場合は`IMPLEMENTATION_BLOCKED`で
+停止する。
+
+詳細な契約は
+[daytrade-sbi/docs/development-work-order.md](daytrade-sbi/docs/development-work-order.md)
+が正本である。
 
 local Git操作では`git restore --staged -- <path>`（indexのみをHEADへ戻すunstage）だけを許可する。
 `git restore <path>` / `--worktree` / `-W` / `--source` / `--patch`、および`--`の無い曖昧な形式は拒否する。

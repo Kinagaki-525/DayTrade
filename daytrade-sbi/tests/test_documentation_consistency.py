@@ -1390,3 +1390,78 @@ def test_remote_control_acceptance_is_fail_closed_and_human_only():
     # A failed transport is still not a business verdict.
     assert "NO_TRADE" in section
     assert "DATA_UNAVAILABLE" in section
+
+
+# ------------------- Production Security Boundary Change Authorization ---
+#
+# Governance bootstrap. Changing the policy template in this repository and
+# deploying to /etc are different acts with different authorities; the contract
+# now says which is which, and says that only a human-and-architect authorised
+# Work Order may do the first.
+
+WORK_ORDER_DOC = PROJECT_ROOT / "docs/development-work-order.md"
+
+
+def _work_order_doc() -> str:
+    return WORK_ORDER_DOC.read_text(encoding="utf-8")
+
+
+def test_the_work_order_contract_allows_only_authorized_boundary_changes():
+    """AC-GOV-02/AC-GOV-03: forbidden by default, permitted only when named."""
+    text = _work_order_doc()
+    assert "Production Security Boundary Change Authorization" in text
+    assert "NONE" in text
+    assert "HUMAN + ARCHITECT EXPLICIT" in text
+    assert "通常は既存Production Security Boundaryを緩和してはならない" in text
+    assert "repository-side source変更に限り" in text
+
+
+def test_an_authorized_boundary_change_must_enumerate_its_scope():
+    """AC-GOV-06: authorisation is per-file and per-relaxation, never blanket."""
+    text = _work_order_doc()
+    for field in (
+        "Authorized By",
+        "Authorized Repository-Side Files",
+        "Authorized Relaxations",
+        "Preserved Security Controls",
+        "Production Deployment Authority",
+    ):
+        assert field in text, field
+    assert "exactに列挙" in text
+    assert "曖昧な列挙は無効" in text or "曖昧な記述は無効" in text
+
+
+def test_authorization_never_reaches_the_installed_production_state():
+    """AC-GOV-01/AC-GOV-05: repository source is not /etc."""
+    text = _work_order_doc()
+    assert "installed Production stateへの変更権限を与えない" in text
+    assert "Human-onlyである" in text
+    assert "installed Production Security Boundary" in text
+
+
+def test_claude_cannot_authorize_itself():
+    """AC-GOV-04: the one loophole that would make all of this decorative."""
+    text = _work_order_doc()
+    assert "Claude Code自身をここへ記載しては" in text
+    assert "Claude自身がauthorizationを作成・拡張・変更してはならない" in text
+    assert "Claude自身によるGovernance変更が必要" in text
+
+
+def test_an_unauthorized_boundary_change_is_fail_closed():
+    """AC-GOV-02: the fail-closed list names each way authorisation can be absent."""
+    text = _work_order_doc()
+    for condition in (
+        "`NONE`",
+        "`Authorized Relaxations`が曖昧",
+        "`Authorized Repository-Side Files`に存在しない",
+        "Production `/etc`の変更が必要",
+        "Human + Architect authorizationを確認できない",
+    ):
+        assert condition in text, condition
+
+
+def test_the_preserved_controls_are_still_required():
+    """AC-GOV-07: authorisation does not suspend the rest of the contract."""
+    text = _work_order_doc()
+    assert "Preserved Security Controls`へ記載された契約を維持する" in text
+    assert "明示認可されていないSecurity relaxationは禁止" in text

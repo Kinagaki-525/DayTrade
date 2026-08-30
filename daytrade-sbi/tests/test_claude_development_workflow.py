@@ -806,14 +806,32 @@ def test_the_documents_do_not_claim_production_assets_are_never_read(document):
 @pytest.mark.parametrize(
     "required",
     [
-        "Production Managed Policyをdeploy・変更しない",
+        # installed Production state: never touched from Development.
+        "installed OS Managed PolicyをDevelopment Claudeがdeploy・変更しない",
         "Production Runtime Guard",
-        "Production Security Boundaryを緩和しない",
+        # repository-side source: changeable only inside an explicitly
+        # authorised Work Order, and never by self-authorisation.
+        "Production Security Boundary Changeを明示認可",
+        "自己許可してはならない",
     ],
 )
 def test_dev_doc_022_claude_md_states_the_production_asset_contract(required):
     text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     assert required in text
+
+
+def test_dev_doc_022b_claude_md_separates_installed_state_from_repository_source():
+    """The old wording did not say which "Managed Policy" it meant.
+
+    Deploying to /etc and editing the template in this repository are different
+    acts with different authorities, and conflating them made every legitimate
+    policy evolution look forbidden.
+    """
+    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "installed Production state" in text
+    assert "repository-side Production Security source" in text
+    assert "installed Production stateへの" in text
+    assert "Human-only" in text
 
 
 def test_dev_doc_023_the_launcher_only_reads_the_production_assets():
