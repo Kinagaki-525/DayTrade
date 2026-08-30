@@ -212,7 +212,8 @@ Coding Agentはinstallを行いません。Preflightは存在確認だけを行�
 sudo apt-get install bubblewrap socat
 ```
 
-- Claude Code >= 2.1.219（`sandbox.network.strictAllowlist`の要件）。
+- Claude Code >= 2.1.224（`sandbox.network.strictAllowlist`と、Remote Control
+  transport上の`crossSessionInbound`をSecurity Contractとして依存できる最小版）。
 - Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
   seccompの有無を推測しません。次のHuman Runtime Acceptance v2（V2差分Probe方式）
   の結果だけを検証します。`/sandbox`のDependencies表示だけをAcceptanceの根拠には
@@ -624,6 +625,228 @@ semantic一致）を行う。**いずれが失敗してもsuccessとして報告
 いずれもrename後であり、backupを持たないため**自動rollbackは行わない**。
 installed fileはcandidate bytesのまま残る。Human inspection requiredとして停止し、
 検証を緩めてsuccessに変えない。
+
+### Production Remote Control（Human専用）
+
+Remote Controlは**Human input transportの追加**であり、Production sessionができること
+を広げるものではない。Runtime Security Preflight / Runtime Guard / sandbox / seccomp /
+Managed Permission Rules / Managed Hooks / MCP lockdown / strict network allowlist /
+Production Python identity / Source Matrix domain制限 / Raw Evidence / SHA256 Trust Chain /
+Canonical Pipelineは一切変更しない。**Remote Controlを理由にこれらを緩めない。**
+
+#### Activation
+
+Remote ControlはProduction Launcherの機能では**ない**。次の順序でHumanが行う。
+
+```text
+scripts/claude-production
+  ↓
+Runtime Security Preflight
+  ↓ PASS
+normal interactive claude
+  ↓
+Human が /status を実行
+  ↓
+Enterprise managed settings (file) が読み込まれていることを確認
+  ↓
+同じ session で Human が /remote-control を実行
+  ↓
+browser / iPhone / Android から attach
+```
+
+Launcherから自動でRemote Controlを開始しない。Preflightを通っていないsessionを
+Production扱いしない。
+
+#### 禁止する起動形態
+
+DayTrade Production entryとして次を使わない。
+
+```text
+claude remote-control        （server mode）
+claude --remote-control
+remoteControlAtStartup=true
+```
+
+Production Launcherへ`--remote-control`相当のintegrationを追加しない。
+
+#### Managed Policy契約
+
+Production Managed Policyは次を固定する。
+
+| key | 値 | 理由 |
+| --- | --- | --- |
+| `disableRemoteControl` | **存在しない** | `false`を書くとManaged scopeが最優先になり、より厳しいuser / project / organisation設定によるdisableを妨げる。DayTrade Policyは「禁止を解除するだけ」で、Remote Controlを強制enableしない |
+| `remoteControlAtStartup` | `false` | session起動だけでRemote exposureさせない |
+| `crossSessionInbound` | `"refuse"` | 同じtransport上のsession間messageを受け取らない |
+| `permissions.deny` | `SendMessage` / `ListAgents`を含む | 上記のoutbound側 |
+| `requiredMinimumVersion` | `2.1.224` | `crossSessionInbound`をSecurity Contractとして依存できる最小版 |
+
+Remote Controlがaccount / organization設定の結果として使えない場合、それは
+Security failureではない。
+
+#### Authentication
+
+Remote Controlはclaude.ai account authenticationを使用する。API key /
+setup-token相当によるRemote ControlをProduction手順として採用しない。
+
+#### Network
+
+Remote Controlはlocal Claude Code processからのoutbound HTTPS/TLSであり、inbound port
+を必要としない。**Remote Controlのために次を変更しない。**
+
+```text
+sandbox.network.strictAllowlist
+sandbox.network.allowManagedDomainsOnly
+sandbox.network.allowLocalBinding
+sandbox.network.allowAllUnixSockets
+sandbox.network.allowedDomains
+```
+
+`allowedDomains`はSource Matrixとissuer registryから導出したBusiness用のexact setの
+ままであり、**Anthropic hostを追加しない**。
+
+#### Cross-session
+
+`crossSessionInbound=refuse`と`SendMessage` / `ListAgents` denyを維持する。
+Claude session同士の自律的なmessage交換にRemote Control transportを使わない。
+Cross-session Messagingがhost process側にinbox socketを持ち得ることを理由に
+`allowAllUnixSockets`を緩めない。
+
+#### Data Flow / Transcript
+
+Remote Controlを有効化すると、**新しいData Flowが1つ増える**。有効化前にHumanが
+これを受容する必要がある。
+
+- Remote Control接続中は、**session transcriptがAnthropic serversへ保存される**
+- transcriptには少なくとも次が含まれる
+  - Human messages
+  - Claude responses
+  - tool activity（実行したtoolとその内容）
+- **executionはlocal Production machineに残る。** remote clientはinputを送るだけで、
+  commandはProduction機で実行される
+- **filesystem accessもlocal Production machineに残る。** remote clientが
+  Production機のfileへ直接触れることはない
+
+したがってRemote Controlが追加するのは「実行権限」ではなく
+**transcriptのserver-side storage**である。
+
+Zero Data Retention等、この保存と両立しないorganization compliance requirementが
+存在する場合は、**Remote Controlを有効化しない**。
+
+このData Flowは次を変更しない。
+
+- Business Data Contract
+- Raw Evidence
+- SHA256 Trust Chain
+
+**Anthropic側に保存されたtranscriptをRaw Evidenceとして扱わない。**
+DayTrade Trust Chainのevidenceにもしない。transcriptの内容をrepository側で
+再現・保存もしない。
+
+#### Attachments
+
+Production v1ではremote clientからのfile / image attachmentを**使用しない**。
+
+#### Secrets
+
+Remote Controlのsession URL / QR payload / token / OAuth credential /
+session credential / device credentialを次へ保存しない。
+
+```text
+runs/ の Business Artifact
+Raw Evidence
+runtime_security.json
+repository
+log
+```
+
+Remote Control Policy stateのEvidenceは既存の**Managed Policy canonical bytes /
+SHA256 / `managed_settings` PASS / `/status`のSetting sources**で扱う。
+
+#### Failure
+
+Remote Controlの接続失敗はBusiness Pipelineの結果では**ない**。
+`NO_TRADE` / `DATA_UNAVAILABLE` / `TRADE` / `REJECTED` / risk result /
+recommendation resultへ変換しない。Remote Controlを復旧するためにSecurityを
+緩めない。
+
+#### Session lifecycle
+
+- local `claude` processを停止するとRemote Control sessionも終了する
+- browser / mobileがdisconnectしてもlocal processの継続はBusiness failureではない
+- 長時間のnetwork outageではClaude processが終了する可能性がある
+- WSL / Windowsを停止した場合、session継続を期待しない
+
+detached Production processを維持するためのtmux / screen運用は今回導入しない。
+
+#### Incident
+
+不審なattachやdevice紛失時は次を行う。
+
+1. local Production Claude processを停止する
+2. 該当するClaude active session / deviceをrevokeする
+3. 必要なら全session logout / Claude Code authorizationのrevoke
+4. Production Remote Control再開前にHuman incident review
+5. 恒久的なdisableが必要ならDevelopment → PR → Human merge →
+   reviewed replacement lifecycleで反映する
+
+**Production Policyを直接編集しない。**
+
+#### Production Remote Control Acceptance（Human-only）
+
+Managed Policy replacementとRuntime Security Preflightを終えた後、**Production
+Nightlyを開始する前に**Humanが次を実施する。**このPRおよびDevelopment Claudeは
+Productionで実行しない。DayTrade Production運用へのhandoff対象である。**
+
+```text
+Human merge
+  → Production main reflection
+  → Production full pytest
+  → Managed Policy --check
+  → candidate render
+  → Human review
+  → installed / candidate SHA256 attestation
+  → Human-only Managed Policy replacement
+  → post verification
+  → Runtime Security Preflight
+  → normal Production Claude launch
+  → /status
+  → /remote-control
+  → Remote Control Security Acceptance
+  → offline runtime smoke
+  → Production Nightly
+```
+
+**Remote Control Security Acceptance**として最低限次を確認する。
+
+1. **`/status`** — Enterprise managed settings (file) が読み込まれていること
+2. **Remote attach** — 認可済みの同一Claude account / organizationからattachできること。
+   unauthorized attachを許可する仕組みを追加しない
+3. **Runtime Guard negative Bash probe** — remote-origin promptからのnon-canonical Bashが
+   拒否されること。probe commandはProduction business dataを変更しない無害なものを
+   Production運用Work Order側で確定する
+4. **Canonical offline CLI probe** — 既存のcanonical Production Python invocationで、
+   network acquisitionを伴わない既存のoffline commandが通ること。Runtime Guardを
+   bypassしない
+5. **Write protection** — remote-originからの非許可Writeが拒否されること。
+   destructive probeは設計しない
+6. **ConfigChange protection** — remote-originからuser / project / local / policy設定の
+   変更が許可されないこと
+7. **Cross-session isolation** — `crossSessionInbound=refuse` / `SendMessage` denied /
+   `ListAgents` denied
+8. **Sandbox / network** — `strictAllowlist=true` / `allowManagedDomainsOnly=true` /
+   `allowLocalBinding=false` / `allowAllUnixSockets=false` /
+   `allowedDomains`のexact setが変わっていないこと
+9. **Attachments** — Production v1では使用しないこと
+10. **Secret persistence** — Remote Control URL / QR / token / credentialが
+    repository / log / Raw Evidence / Business Artifact / `runtime_security.json`へ
+    保存されていないこと
+
+**1項目でも確認できない場合はProduction Nightlyへ進まない。**
+
+ただしRemote Controlのconnection failure自体をBusiness結果へ変換しない
+（`NO_TRADE` / `DATA_UNAVAILABLE`等にしない）。接続できないときはRemote Controlを
+使わずにProduction Nightlyを実施するか、Human判断で停止する。
 
 ### Runtime Security Preflight
 

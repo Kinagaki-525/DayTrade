@@ -237,12 +237,19 @@ def test_the_template_is_not_directly_installable_json():
 
 
 def test_rendered_policy_meets_the_managed_contract(rendered):
-    assert rendered["requiredMinimumVersion"] == "2.1.219"
+    assert rendered["requiredMinimumVersion"] == "2.1.224"
     permissions = rendered["permissions"]
     assert permissions["defaultMode"] == "dontAsk"
     assert permissions["disableBypassPermissionsMode"] == "disable"
     assert permissions["disableAutoMode"] == "disable"
-    for rule in ("WebSearch", "WebFetch", "Agent", "mcp__*"):
+    for rule in (
+        "WebSearch",
+        "WebFetch",
+        "Agent",
+        "mcp__*",
+        "SendMessage",
+        "ListAgents",
+    ):
         assert rule in permissions["deny"]
     assert rendered["allowManagedPermissionRulesOnly"] is True
     assert rendered["allowManagedHooksOnly"] is True
@@ -250,6 +257,13 @@ def test_rendered_policy_meets_the_managed_contract(rendered):
     assert rendered["allowedMcpServers"] == []
     assert rendered["disableClaudeAiConnectors"] is True
     assert rendered["disableSkillShellExecution"] is True
+
+    # Remote Control: forbidden by nothing here and asserted by nothing here.
+    # The key is absent so a stricter scope can still disable it; activation
+    # stays manual; the cross-session traffic on the same transport is refused.
+    assert "disableRemoteControl" not in rendered
+    assert rendered["remoteControlAtStartup"] is False
+    assert rendered["crossSessionInbound"] == "refuse"
 
     sandbox = rendered["sandbox"]
     assert sandbox["enabled"] is True
@@ -399,14 +413,14 @@ def test_a_policy_without_any_edit_rule_is_rejected(rendered):
 # ------------------------------------------------- managed hardening ---
 
 
-def test_the_rendered_policy_disables_sideload_flags_and_remote_control(rendered):
+def test_the_rendered_policy_disables_sideload_flags(rendered):
+    """Remote Control moved out of this pair: it is no longer forbidden here,
+    and the tests that pin its new contract live with the rest of the
+    Remote Control section below."""
     assert rendered["disableSideloadFlags"] is True
-    assert rendered["disableRemoteControl"] is True
 
 
-@pytest.mark.parametrize(
-    "key", ["disableSideloadFlags", "disableRemoteControl"]
-)
+@pytest.mark.parametrize("key", ["disableSideloadFlags"])
 @pytest.mark.parametrize("mutate", ["false", "missing"])
 def test_a_policy_without_the_new_hardening_flags_is_rejected(rendered, key, mutate):
     payload = json.loads(json.dumps(rendered))
@@ -470,11 +484,13 @@ def test_run_dir_refuses_to_escape_the_runs_root(tmp_path, value):
 
 
 def test_claude_version_gate_accepts_the_minimum_and_above():
-    assert crs.verify_claude_version("2.1.219 (Claude Code)") == (2, 1, 219)
+    """The floor is 2.1.224: crossSessionInbound is only enforceable there."""
+    assert crs.verify_claude_version("2.1.224 (Claude Code)") == (2, 1, 224)
+    assert crs.verify_claude_version("2.1.251 (Claude Code)") == (2, 1, 251)
     assert crs.verify_claude_version("2.2.0") == (2, 2, 0)
 
 
-@pytest.mark.parametrize("text", ["2.1.218", "2.0.999", "1.9.9"])
+@pytest.mark.parametrize("text", ["2.1.223", "2.1.219", "2.0.999", "1.9.9"])
 def test_old_claude_versions_are_unsupported(text):
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_claude_version(text)
@@ -1005,7 +1021,7 @@ def _document(**overrides):
     kwargs = dict(
         target_date="2026-08-14",
         platform_name="Linux-6.6.0-x86_64",
-        claude_code_version="2.1.219",
+        claude_code_version="2.1.224",
         git_head_sha="0" * 40,
         production_python=PRODUCTION_PYTHON,
         managed_settings_sha256="a" * 64,
@@ -1094,7 +1110,7 @@ def production_world(tmp_path):
         if argv[:2] == ["git", "rev-parse"]:
             return HEAD_SHA + "\n"
         if argv[0] == "claude":
-            return "2.1.219 (Claude Code)\n"
+            return "2.1.224 (Claude Code)\n"
         raise AssertionError(f"unexpected command {argv}")
 
     kwargs = dict(
@@ -2328,3 +2344,151 @@ def test_the_replacement_cli_exposes_no_expected_uid_relaxation():
     )
     for forbidden in ("--expected-uid", "expected_uid", "--allow-any-owner"):
         assert forbidden not in source
+
+
+# --------------------------------------------- guarded remote control ---
+#
+# DTWO-2026-830. Remote Control is a human input transport, not a change to
+# what a Production session may do. The policy therefore stops forbidding it,
+# without ever asserting it: the key is absent rather than false, so a stricter
+# scope elsewhere can still disable it. Auto-connect stays off, and the
+# cross-session channel that rides the same transport is refused in both
+# directions.
+
+
+def _valid_remote_control_policy(rendered):
+    """The rendered policy, which must already satisfy the contract."""
+    crs.verify_managed_settings_contract(
+        rendered, expected_domains=CURRENT_EXPECTED_DOMAINS
+    )
+    return json.loads(json.dumps(rendered))
+
+
+@pytest.mark.parametrize(
+    "value", [pytest.param(True, id="true"), pytest.param(False, id="false")]
+)
+def test_a_disable_remote_control_key_is_refused_either_way(rendered, value):
+    """AC-01/AC-08: false is not "more permissive and therefore fine".
+
+    ``true`` is the old contract this Work Order removes; ``false`` would
+    assert Remote Control from the highest-priority scope, which is not what
+    DayTrade's policy is for.
+    """
+    payload = _valid_remote_control_policy(rendered)
+    payload["disableRemoteControl"] = value
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda p: p.pop("remoteControlAtStartup"), id="missing"),
+        pytest.param(
+            lambda p: p.__setitem__("remoteControlAtStartup", True), id="true"
+        ),
+        pytest.param(
+            lambda p: p.__setitem__("remoteControlAtStartup", "false"),
+            id="string-false",
+        ),
+    ],
+)
+def test_remote_control_auto_start_is_refused(rendered, mutate):
+    """AC-02/AC-08: only an explicit False passes."""
+    payload = _valid_remote_control_policy(rendered)
+    mutate(payload)
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("accept", id="accept"),
+        pytest.param("hold", id="hold"),
+        pytest.param(None, id="null"),
+        pytest.param("", id="empty"),
+        pytest.param("REFUSE", id="wrong-case"),
+    ],
+)
+def test_cross_session_inbound_must_be_refuse(rendered, value):
+    """AC-03/AC-08."""
+    payload = _valid_remote_control_policy(rendered)
+    payload["crossSessionInbound"] = value
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+def test_a_missing_cross_session_inbound_is_refused(rendered):
+    payload = _valid_remote_control_policy(rendered)
+    payload.pop("crossSessionInbound")
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+@pytest.mark.parametrize("rule", ["SendMessage", "ListAgents"])
+def test_a_missing_cross_session_deny_rule_is_refused(rendered, rule):
+    """AC-04/AC-08."""
+    payload = _valid_remote_control_policy(rendered)
+    payload["permissions"]["deny"] = [
+        entry for entry in payload["permissions"]["deny"] if entry != rule
+    ]
+
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload, expected_domains=CURRENT_EXPECTED_DOMAINS
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+def test_remote_control_adds_no_host_to_the_business_allowlist(rendered):
+    """AC-07/SC-07: Remote Control is outbound from the Claude process itself.
+
+    The exact allowlist is asserted by the contract test above; what is new
+    here is that enabling Remote Control did not smuggle an Anthropic host
+    into the *business* sandbox, which would widen what the pipeline may fetch.
+    """
+    domains = rendered["sandbox"]["network"]["allowedDomains"]
+    assert not any("anthropic" in domain for domain in domains)
+    assert not any("claude.ai" in domain for domain in domains)
+
+
+def test_a_host_still_forbidding_remote_control_reads_as_stale(tmp_path, rendered):
+    """A Production host on the old policy is stale, and the existing
+    replacement lifecycle is what notices -- no new mechanism is added.
+
+    Comparing two hashes here would be a tautology; this drives the real
+    check-mode helper, which is what a human will actually run.
+    """
+    old_style = _valid_remote_control_policy(rendered)
+    old_style["disableRemoteControl"] = True
+    old_style.pop("remoteControlAtStartup")
+    old_style.pop("crossSessionInbound")
+
+    root = _managed_root(tmp_path)
+    _install_policy(root, old_style)
+    _install_guard(root)
+
+    report = crs.inspect_managed_policy_replacement(
+        target_root=root,
+        rendered_settings=rendered,
+        expected_uid=REPLACEMENT_UID,
+    )
+    assert report["installed_policy_status"] == "STALE"
+    assert report["replacement_ready"] == "true"
