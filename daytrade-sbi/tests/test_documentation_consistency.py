@@ -1120,3 +1120,65 @@ def test_no_document_shows_an_acquire_output_into_a_business_artifact(name):
         if "src.cli acquire-" not in line or "--output" not in line:
             continue
         assert "/working/" in line, f"{name}: unsafe acquire --output example: {line}"
+
+# ------------------------- DTWO-2026-021: policy lifecycle and prerequisites ---
+
+POLICY_REPLACEMENT_HEADING = "### Policy replacement（Human専用）"
+
+
+def test_policy_replacement_is_documented_as_a_separate_human_only_operation():
+    """Installing and replacing are different operations with different risks."""
+    section = _section(_text("docs/nightly-operation.md"), POLICY_REPLACEMENT_HEADING)
+    assert "replace-claude-managed-policy" in section
+    assert "EXISTING_MANAGED_POLICY_PRESENT" in section
+    assert "--expected-installed-sha256" in section
+    assert "--expected-rendered-sha256" in section
+    assert "--check" in section
+    # The installer's refusal must not be described as something to work around.
+    assert "--force" not in _commands(section)
+
+
+def test_policy_replacement_documents_the_fail_closed_conditions():
+    section = _section(_text("docs/nightly-operation.md"), POLICY_REPLACEMENT_HEADING)
+    for required in (
+        "compare-and-swap",
+        "os.replace",
+        "Runtime Guard",
+        "Human inspection required",
+    ):
+        assert required in section, required
+    assert "手で編集しない" in section
+
+
+def test_apparmor_is_documented_separately_for_native_linux_and_wsl():
+    """TC-12: WSL has no such sysctl; that is not a licence to weaken anything."""
+    text = _text("docs/nightly-operation.md")
+    assert "kernel.apparmor_restrict_unprivileged_userns" in text
+    assert "NOT APPLICABLE" in text
+    assert "WSL2" in text
+    # The absent sysctl must never be created, nor kernel security disabled.
+    assert "sysctl`を新規作成しない" in text
+    assert "kernel security設定を無効化しない" in text
+    # Seccomp V2 stays mandatory on WSL.
+    assert "DAYTRADE_SECCOMP_VERIFIED_V2" in text
+
+
+def test_no_document_instructs_changing_the_apparmor_sysctl():
+    for name in DOCS:
+        text = _text(name)
+        for forbidden in (
+            "sysctl -w kernel.apparmor",
+            "sysctl --write kernel.apparmor",
+        ):
+            assert forbidden not in text, f"{name} instructs changing the sysctl"
+
+
+def test_http_user_agent_presence_checkpoint_precedes_preflight():
+    """TC-13: presence only -- never a default, never the value itself."""
+    section = _section(
+        _text("docs/nightly-operation.md"), "### Production Entry Contract"
+    )
+    assert 'test -n "$DAYTRADE_HTTP_USER_AGENT"' in section
+    assert "CLAUDE_HTTP_USER_AGENT_MISSING" in section
+    assert "default" in section
+    assert "値そのものをこのdocumentやrepository artifactへ書かない" in section
