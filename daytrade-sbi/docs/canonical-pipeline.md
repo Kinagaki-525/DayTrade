@@ -23,11 +23,11 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 
 この順序はSSOTが1つであり、2つではない。粒度が2層あるだけである。
 
-- **Business Canonical Dependency Order** — 業務上の依存関係。どの成果物がどの成果物を
+- **Business Canonical Dependency Order（25 dependency step）** — 業務上の依存関係。どの成果物がどの成果物を
   必要とするか。`README.md` / `docs/architecture.md` / `AGENTS.md` /
   `prompts/nightly_research.md` / `.agents/skills/prepare-daytrade-plan/SKILL.md`など
   高レベルdocumentが繰り返すのはこの層である。
-- **Detailed Nightly Execution Sequence** — 下の番号付きリスト。Nightlyが実際に実行する
+- **Detailed Nightly Execution Sequence（33 execution step）** — 下の番号付きリスト。Nightlyが実際に実行する
   完全な実行順序で、Business Canonical Dependency Orderを**refineしたもの**である。
   validation stepとreporting stepを追加するだけで、Business dependencyの相対順序は
   一切変更しない。
@@ -138,8 +138,9 @@ Runtime Security Gate  →  Business Canonical Pipeline
 
 ### Executor-specific command rendering
 
-Business Canonical Pipeline Order（上記33 step）は、どのexecutorでも同一です。変わるのは
-**commandのrendering**だけです。
+Detailed Nightly Execution Sequence（上記33 step）は、どのexecutorでも同一です。
+Business Canonical Dependency Order（25 dependency step）の相対順序も同一です。
+変わるのは**commandのrendering**だけです。
 
 - このドキュメント・`prompts/nightly_research.md`・`.agents/skills/prepare-daytrade-plan/SKILL.md`の
   `config/source_matrix.yaml`・`runs/YYYY-MM-DD/...`は、executor非依存の**論理パス表記**です。

@@ -186,6 +186,53 @@ def test_canonical_doc_renders_the_detailed_nightly_execution_sequence():
     assert _canonical_order_entries() == list(DETAILED_NIGHTLY_EXECUTION_SEQUENCE)
 
 
+# The two layers have two different lengths, and the canonical document had
+# called the 33-entry list by the 25-entry layer's name. Naming one layer with
+# the other's count is how a reader concludes there is a single 33-step
+# "business" order -- the exact confusion the two-layer contract exists to
+# prevent -- so the counts are pinned to the names.
+BUSINESS_DEPENDENCY_STEP_COUNT = 25
+DETAILED_EXECUTION_STEP_COUNT = 33
+
+
+def test_the_two_layers_have_their_contracted_lengths():
+    assert len(BUSINESS_CANONICAL_DEPENDENCY_ORDER) == BUSINESS_DEPENDENCY_STEP_COUNT
+    assert len(DETAILED_NIGHTLY_EXECUTION_SEQUENCE) == DETAILED_EXECUTION_STEP_COUNT
+    assert len(_canonical_order_entries()) == DETAILED_EXECUTION_STEP_COUNT
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Business Canonical Dependency Order（25 dependency step）",
+        "Detailed Nightly Execution Sequence（33 execution step）",
+    ],
+)
+def test_the_canonical_doc_names_each_layer_with_its_own_count(phrase):
+    assert phrase in _text("docs/canonical-pipeline.md"), phrase
+
+
+def test_no_document_calls_the_business_order_a_33_step_order():
+    """The exact drift: '33 step' attached to the business layer's name."""
+    misnomer = re.compile(r"Business Canonical[^\n]{0,40}33\s*step")
+    for name in sorted(DOCS):
+        found = misnomer.search(_text(name))
+        assert found is None, (
+            f"{name} calls the Business Canonical Dependency Order a 33-step "
+            f"order: {found.group(0)!r}"
+        )
+
+
+def test_the_executor_rendering_note_distinguishes_the_two_layers():
+    """Only the command rendering is executor-specific -- not the order."""
+    section = _section(
+        _text("docs/canonical-pipeline.md"), "### Executor-specific command rendering"
+    )
+    assert "Detailed Nightly Execution Sequence（上記33 step）" in section
+    assert "Business Canonical Dependency Order（25 dependency step）の相対順序も同一" in section
+    assert "commandのrendering" in section
+
+
 # The two layers are one SSOT, so layer 2 must refine layer 1, never contradict
 # it: adding validation and reporting stages may not reorder a business
 # dependency that every other document repeats.
