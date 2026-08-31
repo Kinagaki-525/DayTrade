@@ -272,6 +272,35 @@ def test_a_staged_change_is_refused(repository):
     assert error.value.code == "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY"
 
 
+def test_a_renamed_tracked_file_is_refused_and_named_by_its_destination(repository):
+    """Porcelain reports a rename as ``old -> new``; the message says which
+    file now differs from HEAD, not the arrow form."""
+    _git(repository, "mv", "daytrade-sbi/README.md", "daytrade-sbi/RENAMED.md")
+
+    with pytest.raises(ProductionContextError) as error:
+        _preflight(repository)
+    assert error.value.code == "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY"
+    assert "daytrade-sbi/RENAMED.md" in error.value.message
+    assert "->" not in error.value.message
+
+
+def test_a_failing_exec_is_a_launcher_error_not_a_traceback(repository, monkeypatch, capsys):
+    """WO 12.2 lists "Claude exec failure" as a launcher error: it exits with a
+    code and a reason, the way every other refusal does."""
+    monkeypatch.setattr(
+        os, "execvpe", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("claude"))
+    )
+    monkeypatch.setattr(os, "chdir", lambda path: None)
+
+    code = launcher.main(
+        ["--target-date", TARGET_DATE],
+        daytrade_root=repository / "daytrade-sbi",
+    )
+
+    assert code == 2
+    assert "CLAUDE_PRODUCTION_EXEC_FAILED" in capsys.readouterr().err
+
+
 def test_an_unresolvable_head_is_refused(repository):
     def failing_head(argv, cwd):
         if argv[:3] == ["git", "rev-parse", "HEAD"]:

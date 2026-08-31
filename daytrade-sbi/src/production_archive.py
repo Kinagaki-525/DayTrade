@@ -346,8 +346,11 @@ def _runtime_security_evidence(
 ) -> dict[str, Any]:
     """Classify ``run/working/runtime_security.json`` as VALID/MISSING/INVALID.
 
-    Uses the existing runtime_security schema and the existing JSON document
-    validator. No field name is invented: ``git_head_sha`` is read only from a
+    **Legacy v1 read path only.** No new run produces this attestation and no
+    v2 manifest records it; this exists so that archives sealed before
+    DTWO-2026-026 keep verifying under the contract they were written under.
+
+    No field name is invented: ``git_head_sha`` is read only from a
     schema-valid attestation, and no git command is ever run to guess it.
     """
     path = archive_root_dir / RUNTIME_SECURITY_ARCHIVE_PATH

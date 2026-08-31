@@ -10,9 +10,11 @@ a ``git`` shim first on ``PATH`` that delegates everything except ``push``.
 ``push`` records its argv to a file and exits 0, which lets the refspec and the
 absence of force options be asserted on the command that was actually built.
 
-The wrapper is a Development control, not a security boundary (it lives in the
-repository and Claude can edit it), so these tests pin its behaviour and the
-fact that Production was not taught about it -- not any immutability claim.
+DTWO-2026-026 demoted the wrapper to an optional legacy utility: ordinary
+``git push`` is the standard Development workflow now. What is still worth
+pinning is that the wrapper, when used, cannot be talked into pushing somewhere
+else -- it was never a security boundary (it lives in the repository and Claude
+can edit it), and it is not one now.
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ REPO_ROOT = PROJECT_ROOT.parent
 
 SAFE_PUSH = PROJECT_ROOT / "scripts" / "claude-safe-push"
 DEV_SETTINGS = REPO_ROOT / ".claude" / "settings.json"
-NETWORK_GUARD = REPO_ROOT / ".claude" / "hooks" / "network_guard.py"
 
 CANONICAL_ORIGIN_URL = "https://github.com/Kinagaki-525/DayTrade.git"
 

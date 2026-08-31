@@ -38,7 +38,6 @@ from src.production_context import (
 )
 
 DAYTRADE_ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = DAYTRADE_ROOT.parent
 
 #: The only branch a production nightly may run from. A nightly is attributed
 #: to an exact commit, and a feature branch is not the reviewed line of
@@ -63,6 +62,7 @@ ERROR_CODES = (
     "CLAUDE_PRODUCTION_GIT_OPERATION_IN_PROGRESS",
     "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY",
     "CLAUDE_PRODUCTION_HEAD_UNRESOLVED",
+    "CLAUDE_PRODUCTION_EXEC_FAILED",
 )
 
 #: A resolved commit is exactly forty lowercase hex characters.
@@ -186,17 +186,20 @@ def verify_tracked_tree_clean(porcelain_output: str) -> None:
     different thing entirely -- a scratch file in the checkout says nothing
     about which committed code is about to execute -- and never block a start.
     """
-    dirty = sorted(
-        {
-            line[3:].strip().strip('"')
-            for line in porcelain_output.splitlines()
-            if line.strip()
-        }
-    )
+    dirty = set()
+    for line in porcelain_output.splitlines():
+        if not line.strip():
+            continue
+        entry = line[3:].strip().strip('"')
+        # A rename is reported as "old -> new"; the file that is actually
+        # different from HEAD is the destination.
+        if " -> " in entry:
+            entry = entry.split(" -> ", 1)[1]
+        dirty.add(entry)
     if dirty:
         raise _fail(
             "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY",
-            f"tracked files have uncommitted changes: {dirty}",
+            f"tracked files have uncommitted changes: {sorted(dirty)}",
         )
 
 
@@ -227,8 +230,9 @@ def preflight(
 ) -> dict[str, Any]:
     """Every local operational precondition, in order.
 
-    Raises :class:`ProductionLauncherError` on the first failure. Nothing is
-    written to disk in either outcome.
+    Raises :class:`ProductionContextError` on the first failure -- the shared
+    base class, because the target-date validator is shared with the Archive
+    and raises it directly. Nothing is written to disk in either outcome.
     """
     # 1. untrusted human input, before any filesystem or git work at all.
     target_date = validate_target_date(target_date)
@@ -338,5 +342,12 @@ def main(argv: list[str] | None = None, **overrides: Any) -> int:
     env = build_environment(result, os.environ)
     sys.stdout.flush()
     os.chdir(result["daytrade_root"])
-    os.execvpe("claude", ["claude"], env)  # pragma: no cover - replaces process
-    return 0  # pragma: no cover
+    try:
+        os.execvpe("claude", ["claude"], env)
+    except OSError as error:
+        # Reached only if the exec itself fails -- claude not on PATH, not
+        # executable. That is an operational start failure like any other, so
+        # it exits with a code and a reason rather than a traceback.
+        sys.stderr.write(f"CLAUDE_PRODUCTION_EXEC_FAILED: {error}\n")
+        return 2
+    return 0  # pragma: no cover - execvpe replaced the process
