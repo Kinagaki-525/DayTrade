@@ -140,33 +140,15 @@ Draft PR
 ただしWork Orderがそのgateを**明示的にPRE-COMMITと指定した**場合は例外であり、
 その指定に従う（MUST）。
 
-Pre-Merge Gateの実施順序は次で固定する（MUST）。
-
-```text
-GitHub Actions CI
-→ exact PR HEAD freeze
-→ external / manual gate on the frozen HEAD
-→ Architect Final Review
-→ Human Merge
-→ Production rollout
-```
-
-CIがsuccessになる前にHuman側のexternal gateを開始しない（MUST NOT）。CI failの場合は
-gate実施前に修正commitを追加し、新HEADに対してやり直す（MUST）。
-
-Pre-Merge Gateが未実施、または1件でもFAILしている場合は次とする（MUST）。
+required Pre-Merge Gateが未実施、または1件でもFAILしている場合は次とする（MUST）。
 
 ```text
 Human Merge: BLOCKED
 Production rollout: BLOCKED
 ```
 
-Work Orderがexternal gateのcase一覧を定義している場合、**全件実施**が条件である。
-1件のFAILも、1件の未実施も、同じくBLOCKEDとする（MUST）。
-
-local unit testやmock testはexternal gateの代替にならない（MUST NOT）。repository側の
-testは「このコードが自分の契約どおりに振る舞うか」しか検査できず、実環境がその契約を
-どう解釈するかは検査できない。
+どのgateをrequiredとするか、どの順序で実施するかは、その案件のWork Orderが決める。
+このSSOTはgateの**配置**を定めるのであって、gateの中身や実施順序を一律に固定しない。
 
 ### Pre-Production Gate
 
@@ -175,7 +157,6 @@ testは「このコードが自分の契約どおりに振る舞うか」しか�
 ```text
 Production environment acceptance
 Production historical compatibility audit
-Human-only policy deployment / replacement validation
 Production operational readiness
 ```
 
@@ -184,11 +165,10 @@ Productionへ進んでは**ならない（MUST NOT）**。
 
 ### Exact HEAD Evidence
 
-manual / external / provider compatibility Evidenceには**exact commit SHA**を
-必須とする（MUST）。
+manual / external gate Evidenceには**exact commit SHA**を必須とする（MUST）。
 
 ```text
-Provider Compatibility Tested HEAD:
+External Gate Tested HEAD:
 <40-char SHA>
 ```
 
@@ -196,7 +176,7 @@ gate実施後にPR HEADへcommitが1つでも追加された場合、以前のEv
 流用しては**ならない（MUST NOT）**。
 
 ```text
-old PC Evidence = INVALID FOR NEW HEAD
+old external-gate Evidence = INVALID FOR NEW HEAD
 ```
 
 新しいHEADに対して、必要なgateを再実施する（MUST）。PR body / PR commentだけの
@@ -237,7 +217,7 @@ Claude自身が実施できないexternal / manual gateについて、`PASS` / `
 次のように記す（MUST）。
 
 ```text
-Provider Compatibility: NOT VERIFIED BY CLAUDE
+External Gate: NOT VERIFIED BY CLAUDE
 GitHub CI: NOT VERIFIED BY CLAUDE
 ```
 

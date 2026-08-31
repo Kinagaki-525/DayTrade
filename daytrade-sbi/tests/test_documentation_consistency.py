@@ -1001,13 +1001,13 @@ def test_vg_03_an_external_gate_is_not_a_pre_commit_requirement_by_default():
 def test_vg_04_external_gate_evidence_names_an_exact_commit():
     body = _section(_work_order_doc(), "### Exact HEAD Evidence")
     assert "exact commit SHA" in body
-    assert "Provider Compatibility Tested HEAD" in body
+    assert "External Gate Tested HEAD" in body
     assert "<40-char SHA>" in body
 
 
 def test_vg_05_evidence_does_not_survive_a_head_change():
     body = _section(_work_order_doc(), "### Exact HEAD Evidence")
-    assert "old PC Evidence = INVALID FOR NEW HEAD" in body
+    assert "old external-gate Evidence = INVALID FOR NEW HEAD" in body
     assert "流用しては" in body
     assert "再実施する" in body
     # A PR body edit moves no bytes, so it invalidates nothing.
@@ -1032,44 +1032,70 @@ def test_vg_06_an_unrun_external_gate_is_never_reported_as_a_pass():
     body = _section(_work_order_doc(), "### No False PASS")
     for claim in ("PASS", "SUCCESS", "VERIFIED"):
         assert claim in body, claim
-    assert "Provider Compatibility: NOT VERIFIED BY CLAUDE" in body
+    assert "External Gate: NOT VERIFIED BY CLAUDE" in body
     assert "GitHub CI: NOT VERIFIED BY CLAUDE" in body
 
 
-#: The pre-merge order every external gate follows, start to finish.
-EXTERNAL_GATE_ORDER = (
-    "GitHub Actions CI",
-    "exact PR HEAD freeze",
-    "external / manual gate on the frozen HEAD",
-    "Architect Final Review",
-    "Human Merge",
-    "Production rollout",
-)
+def test_vg_07_an_unmet_pre_merge_gate_blocks_the_merge_and_production():
+    """The blocking semantics, which are the contract.
 
-
-def test_vg_07_an_external_gate_runs_after_ci_on_a_frozen_head():
+    *Which* gates a piece of work requires, and in what order, is the Work
+    Order's decision -- this SSOT places gates, it does not enumerate them.
+    What it does fix is the consequence: a required pre-merge gate that has not
+    passed stops the merge and stops the rollout.
+    """
     section = _section(_work_order_doc(), PRE_MERGE_HEADING)
-    positions = []
-    for stage in EXTERNAL_GATE_ORDER:
-        index = section.find(stage)
-        assert index != -1, f"the pre-merge gate order omits {stage!r}"
-        positions.append(index)
-    assert positions == sorted(positions), "the pre-merge gate order is wrong"
-    assert "CIがsuccessになる前にHuman側のexternal gateを開始しない" in section
-
-
-def test_vg_08_one_failed_or_missing_case_blocks_merge_and_production():
-    section = _section(_work_order_doc(), PRE_MERGE_HEADING)
-    assert "全件実施" in section
-    assert "1件のFAILも、1件の未実施も、同じくBLOCKED" in section
+    assert "required Pre-Merge Gateが未実施、または1件でもFAIL" in section
     assert "Human Merge: BLOCKED" in section
     assert "Production rollout: BLOCKED" in section
 
 
-def test_vg_08_no_local_substitute_is_accepted_for_an_external_gate():
+def test_vg_07_the_ssot_does_not_fix_a_gate_order_of_its_own():
+    """RC-04: gate placement is not a licence to legislate gate content.
+
+    A fixed order written here would apply to every future Work Order, which is
+    a governance change no Work Order authorised.
+    """
     section = _section(_work_order_doc(), PRE_MERGE_HEADING)
-    assert "mock test" in section
-    assert "代替にならない" in section
+    assert "実施順序を一律に固定しない" in section
+    assert "その案件のWork Orderが決める" in section
+
+
+#: Mandatory Production checkpoints DTWO-2026-026 retired. Each is checked
+#: only inside the Pre-Production Gate section: the words may legitimately
+#: appear elsewhere in the repository as history, or as the Archive v1 legacy
+#: read contract, and a test that failed on those would be forcing the
+#: documentation to forget why the change happened.
+RETIRED_PRODUCTION_CHECKPOINTS = (
+    "Human-only policy deployment / replacement validation",
+    "Managed Policy deployment",
+    "Managed Policy replacement",
+    "Runtime Guard deployment",
+    "seccomp attestation",
+    "exact Claude provider version",
+    "Provider Compatibility Suite",
+)
+
+
+@pytest.mark.parametrize("retired", RETIRED_PRODUCTION_CHECKPOINTS)
+def test_rc_01_no_retired_lifecycle_returns_as_a_production_gate(retired):
+    """RC-01 / RC-02: the Pre-Production Gate lists what Production still
+    requires, so a retired mandatory lifecycle reappearing there is the
+    regression -- not a mention of it anywhere else."""
+    section = _section(_work_order_doc(), PRE_PRODUCTION_HEADING)
+    assert retired not in section, retired
+
+
+def test_rc_01_the_pre_production_gate_keeps_its_three_remaining_items():
+    """Removing the retired one must not quietly remove the others."""
+    section = _section(_work_order_doc(), PRE_PRODUCTION_HEADING)
+    for kept in (
+        "Production environment acceptance",
+        "Production historical compatibility audit",
+        "Production operational readiness",
+    ):
+        assert kept in section, kept
+    assert "Development Claudeが実行しては" in section
 
 
 @pytest.mark.parametrize(
