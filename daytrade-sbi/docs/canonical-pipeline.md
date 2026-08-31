@@ -21,6 +21,23 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 
 ## Canonical CLI Pipeline Order
 
+この順序はSSOTが1つであり、2つではない。粒度が2層あるだけである。
+
+- **Business Canonical Dependency Order** — 業務上の依存関係。どの成果物がどの成果物を
+  必要とするか。`README.md` / `docs/architecture.md` / `AGENTS.md` /
+  `prompts/nightly_research.md` / `.agents/skills/prepare-daytrade-plan/SKILL.md`など
+  高レベルdocumentが繰り返すのはこの層である。
+- **Detailed Nightly Execution Sequence** — 下の番号付きリスト。Nightlyが実際に実行する
+  完全な実行順序で、Business Canonical Dependency Orderを**refineしたもの**である。
+  validation stepとreporting stepを追加するだけで、Business dependencyの相対順序は
+  一切変更しない。
+
+したがって両者は競合しない。詳細層が業務依存層と矛盾したらそれはbugであり、
+`tests/test_documentation_consistency.py`がその保存を検証する。Runtime Guardの
+`APPROVED_SUBCOMMANDS`は詳細層から導出される。
+
+### Detailed Nightly Execution Sequence
+
 1. `snapshot-config`
 2. `validate-source-matrix`
 3. `resolve-research-window`
@@ -35,21 +52,37 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 12. market_data Stage2 reflect
 13. `acquire-actual-turnover`
 14. market_data turnover reflect
-15. `validate-market`
-16. `screen-market`
-17. `build-candidate-pipeline`
-18. `acquire-event-sources`
-19. Event AI Classification (local only)
-20. `merge-event-source-extraction`
-21. `init/complete event-research`
-22. `validate-event-research`
-23. `build-event-gate`
-24. `build-ranking`
-25. Case A/B/C
+15. `validate-market-research`
+16. `validate-market`
+17. `audit-official-ohlcv`
+18. `screen-market`
+19. `build-candidate-pipeline`
+20. `build-performance`
+21. `render-research`
+22. `acquire-event-sources`
+23. Event AI Classification (local only)
+24. `merge-event-source-extraction`
+25. `init/complete event-research`
+26. `validate-event-research`
+27. `build-event-gate`
+28. `build-ranking`
+29. Case A/B/C（Selection / Recommendation）
+30. `risk-check`
+31. `render-report`
+32. `render-daily-report`
+33. `validate-run-artifacts`
 
 手順7・12・14の "market_data reflect" は、対応する`acquire-*`コマンドが
 `--run-dir`の`market_data.json`へ自動的に反映します。Agentが別途書き込む工程では
 ありません。
+
+手順15・17・33のvalidation stepと、手順20・21・31・32のreporting stepは、Nightlyが
+実際に実行しているものです。Runtime Guardの`APPROVED_SUBCOMMANDS`はこの順序を正本と
+して導出されます。
+
+`record-recommendation`はこのCanonical Pipelineに**含まれません**。run directory外の
+global CSVへappendする非idempotentなHuman / record operationであり、Runtime Guardの
+`FORBIDDEN_SUBCOMMANDS`に残ります。
 
 ## 候補集合の由来
 
@@ -105,7 +138,7 @@ Runtime Security Gate  →  Business Canonical Pipeline
 
 ### Executor-specific command rendering
 
-Business Canonical Pipeline Order（上記25 step）は、どのexecutorでも同一です。変わるのは
+Business Canonical Pipeline Order（上記33 step）は、どのexecutorでも同一です。変わるのは
 **commandのrendering**だけです。
 
 - このドキュメント・`prompts/nightly_research.md`・`.agents/skills/prepare-daytrade-plan/SKILL.md`の

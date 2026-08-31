@@ -41,7 +41,9 @@ REPOSITORY_ROOT = PROJECT_ROOT.parent
 # ------------------------------------------------------------ constants ---
 
 RUNTIME_SECURITY_SCHEMA_VERSION = 1
-REQUIRED_MINIMUM_CLAUDE_VERSION = "2.1.224"
+#: The single Claude Code build this production boundary has been accepted on.
+#: Not a floor: see :func:`verify_claude_version`.
+REQUIRED_CLAUDE_VERSION = "2.1.251"
 REQUIRED_RUNTIME_PROFILE = "production"
 
 DEFAULT_MANAGED_ROOT = Path("/etc/claude-code")
@@ -208,222 +210,116 @@ def absolute_edit_permission_pattern(path: str | Path) -> str:
     return _absolute_permission_pattern(path)
 
 
-# ------------------------------------- production nightly read namespace ---
+# ----------------------------------------- production nightly read model ---
 #
-# DTWO-2026-024 / AR-01. A Production session running the canonical nightly
-# needs to read the approved instructions, the nightly config and the current
-# run's evidence. That capability is granted here as an exact, ordered
-# allowlist and nowhere else: no blanket repository read, and read-only --
-# nothing in this section grants a write.
+# DTWO-2026-025. Read is granted the way Claude Code actually grants it: the
+# session's working directory plus ``permissions.additionalDirectories``, not
+# a hand-maintained list of ``Read(...)`` allow rules.
+#
+# The predecessor contract (DTWO-2026-024 / AR-01) enumerated ten exact,
+# ordered ``Read(...)`` rules and asserted they were the *only* readable paths.
+# That assertion was false -- it described a boundary the provider does not
+# enforce that way -- and it made a Production nightly fail on any repository
+# file nobody had thought to list. Read is therefore no longer treated as a
+# security boundary here. The boundary that does the work is elsewhere and is
+# unchanged: Bash is confined to canonical CLI commands, Write/Edit to one
+# artifact, the network to an exact allowlist, and the sandbox to this tree.
+#
+# What survives as a Read control is a deny for the two places whose contents
+# would be worth exfiltrating rather than reading: the Managed Policy directory
+# and the user's Claude configuration.
 
-#: Read targets under the repository (project) root, in policy order.
-PROJECT_ROOT_READ_PATHS: tuple[str, ...] = (
-    "CLAUDE.md",
-    ".agents/skills/prepare-daytrade-plan/SKILL.md",
-)
-
-#: Read targets under the DayTrade root, in policy order. ``runs/**`` is the one
-#: deliberate recursive entry: the run evidence a nightly reads lives under a
-#: date directory, and pinning the date here would mean replacing the installed
-#: Managed Policy once per trading day.
-DAYTRADE_ROOT_READ_PATHS: tuple[str, ...] = (
-    "AGENTS.md",
-    "TODO.md",
-    "config/strategy.yaml",
-    "config/source_matrix.yaml",
-    "docs/canonical-pipeline.md",
-    "docs/nightly-operation.md",
-    "prompts/nightly_research.md",
-    "runs/**",
-)
-
-PRODUCTION_READ_RELATIVE_PATHS: tuple[str, ...] = (
-    PROJECT_ROOT_READ_PATHS + DAYTRADE_ROOT_READ_PATHS
-)
-
-#: Template placeholders, positionally aligned with the paths above.
-PRODUCTION_READ_PLACEHOLDERS: tuple[str, ...] = (
-    "__CLAUDE_MD_READ_PATTERN__",
-    "__PREPARE_DAYTRADE_SKILL_READ_PATTERN__",
-    "__AGENTS_READ_PATTERN__",
-    "__TODO_READ_PATTERN__",
-    "__STRATEGY_READ_PATTERN__",
-    "__SOURCE_MATRIX_READ_PATTERN__",
-    "__CANONICAL_PIPELINE_READ_PATTERN__",
-    "__NIGHTLY_OPERATION_READ_PATTERN__",
-    "__NIGHTLY_RESEARCH_READ_PATTERN__",
-    "__RUNS_READ_PATTERN__",
-)
-
-#: Targets that would grant an unbounded read. Rejected on sight so that a
-#: policy can never widen itself past the exact set above.
-_BLANKET_READ_TARGETS = frozenset(
-    {"*", "**", "/", "/*", "/**", "//", "//*", "//**", "~", "~/**"}
+#: ``Read`` deny rules the production policy must carry, in any order.
+PRODUCTION_READ_DENY_RULES: tuple[str, ...] = (
+    "Read(//etc/claude-code/**)",
+    "Read(~/.claude/**)",
 )
 
 
-def production_read_permission_patterns(
-    *, project_root: str | Path, daytrade_root: str | Path
-) -> tuple[str, ...]:
-    """The ``//absolute`` path patterns of AR-01, in their fixed order."""
-    project = _require_absolute_dir(project_root, "project_root")
-    daytrade = _require_absolute_dir(daytrade_root, "daytrade_root")
-    return tuple(
-        _absolute_permission_pattern(f"{root}/{relative}")
-        for root, relatives in (
-            (project, PROJECT_ROOT_READ_PATHS),
-            (daytrade, DAYTRADE_ROOT_READ_PATHS),
-        )
-        for relative in relatives
-    )
+def verify_read_permission_rules(allow_rules: Iterable[str]) -> None:
+    """A production policy must grant no ``Read`` allow rule at all.
 
-
-def production_read_permission_rules(
-    *,
-    project_root: str | Path,
-    daytrade_root: str | Path,
-) -> tuple[str, ...]:
-    """The exact AR-01 ``Read(...)`` allow rules, in their fixed order.
-
-    Order is part of the contract: the verifier compares sequences, so a
-    reordered allowlist is a mismatch rather than a stylistic difference.
+    Read reaches the session through ``additionalDirectories``. A ``Read(...)``
+    entry in ``permissions.allow`` would mean someone had gone back to
+    describing Read as an allowlist, so it is refused rather than merged.
     """
-    return tuple(
-        f"Read({pattern})"
-        for pattern in production_read_permission_patterns(
-            project_root=project_root, daytrade_root=daytrade_root
-        )
-    )
-
-
-_READ_RULE_RE = re.compile(r"^Read\((?P<target>.+)\)$")
-
-
-def _collect_read_rules(allow_rules: Iterable[str]) -> tuple[tuple[str, str], ...]:
-    """Every ``Read`` allow rule, in order, as ``(rule, target)``.
-
-    A bare ``Read`` -- the tool-wide grant -- does not parse as a path rule and
-    is rejected here rather than being skipped as "not a Read path rule".
-    """
-    collected: list[tuple[str, str]] = []
-    for rule in allow_rules:
-        text = str(rule)
-        if not text.startswith("Read"):
-            continue
-        match = _READ_RULE_RE.match(text)
-        if match is None:
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID",
-                f"a Read allow rule must name one explicit path: {text!r}",
-            )
-        collected.append((text, match.group("target")))
-    return tuple(collected)
-
-
-def _verify_read_rule_shape(
-    rules: Sequence[tuple[str, str]], *, label: str
-) -> None:
-    """The AR-01 shape, checked without knowing the deployment roots.
-
-    Exact-set comparison alone would be satisfied by an expectation that merely
-    echoes the policy, so the shape is enforced on both sides: ten rules, the
-    AR-01 relative paths in order, the ``//absolute`` form, one project root and
-    one DayTrade root.
-    """
-    expected_count = len(PRODUCTION_READ_RELATIVE_PATHS)
-    if len(rules) != expected_count:
+    offenders = [str(rule) for rule in allow_rules if str(rule).startswith("Read")]
+    if offenders:
         raise _fail(
             "CLAUDE_MANAGED_POLICY_INVALID",
-            f"{label} must contain exactly {expected_count} Read allow rules "
-            f"(found {len(rules)}); the authorized production read allowlist is "
-            f"{PRODUCTION_READ_RELATIVE_PATHS}",
+            "permissions.allow must contain no Read rules: read access comes "
+            f"from permissions.additionalDirectories, found {offenders}",
         )
 
-    roots: dict[str, set[str]] = {"project": set(), "daytrade": set()}
-    for index, (rule, target) in enumerate(rules):
-        relative = PRODUCTION_READ_RELATIVE_PATHS[index]
-        if target in _BLANKET_READ_TARGETS:
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID",
-                f"{label} grants a blanket Read: {rule!r}",
-            )
-        if not target.startswith("//"):
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID",
-                "an absolute Read permission rule must start with '//': "
-                f"{rule!r}",
-            )
-        if target.startswith("///"):
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID",
-                f"malformed absolute Read permission rule: {rule!r}",
-            )
-        suffix = "/" + relative
-        if not target.endswith(suffix) or len(target) < len(suffix) + 3:
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID",
-                f"{label} Read rule {index + 1} must address {relative!r}: "
-                f"{rule!r}",
-            )
-        key = "project" if index < len(PROJECT_ROOT_READ_PATHS) else "daytrade"
-        roots[key].add(target[: -len(suffix)])
 
-    for key, values in roots.items():
-        if len(values) != 1:
+def verify_read_deny_rules(deny_rules: Iterable[str]) -> None:
+    """The sensitive-path Read denies must be present."""
+    deny = [str(rule) for rule in deny_rules]
+    for rule in PRODUCTION_READ_DENY_RULES:
+        if rule not in deny:
             raise _fail(
                 "CLAUDE_MANAGED_POLICY_INVALID",
-                f"{label} Read rules must share one {key} root, found "
-                f"{sorted(values)}",
+                f"permissions.deny must contain {rule}",
             )
 
 
-def verify_read_permission_rules(
-    allow_rules: Iterable[str],
-    *,
-    expected_rules: Sequence[str],
-) -> tuple[str, ...]:
-    """The policy's ``Read`` allowlist must be exactly ``expected_rules``.
+def verify_additional_directories(
+    values: Any, *, expected_project_root: str | Path
+) -> str:
+    """``additionalDirectories`` must be exactly one absolute project root.
 
-    Missing, extra, reordered, blanket, bare and single-slash rules are all
-    fail-closed errors. Nothing is repaired: a policy that does not already
-    match the authorized allowlist is refused, never rewritten.
+    One entry, not a set: every path a nightly reads lives under the repository
+    root, so a second entry can only be widening the session past it.
     """
-    expected = tuple(str(rule) for rule in expected_rules)
-    _verify_read_rule_shape(
-        _collect_read_rules(expected), label="the expected read allowlist"
-    )
-
-    actual_pairs = _collect_read_rules(allow_rules)
-    _verify_read_rule_shape(actual_pairs, label="permissions.allow")
-    actual = tuple(rule for rule, _ in actual_pairs)
-
+    expected = str(_require_absolute_dir(expected_project_root, "project_root"))
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "permissions.additionalDirectories must be a list of one directory",
+        )
+    entries = [str(value) for value in values]
+    if len(entries) != 1:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "permissions.additionalDirectories must contain exactly one entry "
+            f"(found {len(entries)}): {entries}",
+        )
+    actual = entries[0]
+    if not actual.startswith("/"):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            f"permissions.additionalDirectories must be absolute: {actual!r}",
+        )
     if actual != expected:
-        missing = [rule for rule in expected if rule not in actual]
-        extra = [rule for rule in actual if rule not in expected]
-        detail = (
-            f"missing={missing}, extra={extra}"
-            if (missing or extra)
-            else "the same rules in a different order"
-        )
         raise _fail(
             "CLAUDE_MANAGED_POLICY_INVALID",
-            f"permissions.allow does not match the authorized production read "
-            f"allowlist ({detail})",
+            f"permissions.additionalDirectories must be {expected!r}, "
+            f"found {actual!r}",
         )
     return actual
 
 
-def policy_read_permission_rules(payload: Mapping[str, Any]) -> tuple[str, ...]:
-    """The ``Read`` allow rules a rendered policy declares, shape-checked.
+def policy_project_root(payload: Mapping[str, Any]) -> str:
+    """The project root an already-rendered policy declares.
 
-    Used where the expectation *is* an already-rendered policy -- the installed
-    policy comparison, and the deploy/replace paths that are handed a policy
-    this module rendered.
+    Used where the expectation *is* a policy this module rendered -- the
+    installed-policy comparison and the deploy/replace paths -- so those call
+    sites do not have to be told a root they are already holding.
     """
     permissions = payload.get("permissions") or {}
-    pairs = _collect_read_rules(permissions.get("allow") or [])
-    _verify_read_rule_shape(pairs, label="the expected read allowlist")
-    return tuple(rule for rule, _ in pairs)
+    entries = permissions.get("additionalDirectories")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "permissions.additionalDirectories must be a list of one directory",
+        )
+    if len(entries) != 1:
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "permissions.additionalDirectories must contain exactly one entry "
+            f"(found {len(entries)})",
+        )
+    return str(entries[0])
 
 
 # ---------------------------------------------------- target date input ---
@@ -692,10 +588,6 @@ def render_managed_settings(
 
     domains = derive_expected_domains(source_matrix_path, issuer_registry_path)
 
-    read_patterns = production_read_permission_patterns(
-        project_root=project_root, daytrade_root=daytrade_root
-    )
-
     text = Path(template_path).read_text(encoding="utf-8")
     replacements = {
         "__PRODUCTION_PYTHON__": canonical_python,
@@ -706,7 +598,6 @@ def render_managed_settings(
         ),
         "__MANAGED_GUARD_PATH__": str(guard_path),
         "__ALLOWED_DOMAINS_JSON__": json.dumps(list(domains)),
-        **dict(zip(PRODUCTION_READ_PLACEHOLDERS, read_patterns)),
     }
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, value)
@@ -722,9 +613,7 @@ def render_managed_settings(
     verify_managed_settings_contract(
         payload,
         expected_domains=domains,
-        expected_read_rules=production_read_permission_rules(
-            project_root=project_root, daytrade_root=daytrade_root
-        ),
+        expected_project_root=project_root,
     )
     return payload
 
@@ -758,13 +647,21 @@ def parse_semver(text: str) -> tuple[int, int, int]:
 
 
 def verify_claude_version(
-    version_output: str, minimum: str = REQUIRED_MINIMUM_CLAUDE_VERSION
+    version_output: str, expected: str = REQUIRED_CLAUDE_VERSION
 ) -> tuple[int, int, int]:
+    """Production runs on **one** Claude Code build, not "at least" one.
+
+    A range accepts versions nobody has run the Provider Compatibility suite
+    against. Read semantics, hook dispatch, ConfigChange and Remote Control are
+    provider behaviour, so "newer than the tested build" is exactly as unproven
+    as "older": both are refused here.
+    """
     found = parse_semver(version_output)
-    if found < parse_semver(minimum):
+    if found != parse_semver(expected):
         raise _fail(
             "CLAUDE_RUNTIME_VERSION_UNSUPPORTED",
-            f"claude {'.'.join(map(str, found))} < required {minimum}",
+            f"claude {'.'.join(map(str, found))} is not the exact accepted "
+            f"version {expected}",
         )
     return found
 
@@ -899,17 +796,19 @@ def verify_managed_settings_contract(
     payload: Mapping[str, Any],
     *,
     expected_domains: Sequence[str],
-    expected_read_rules: Sequence[str],
+    expected_project_root: str | Path,
 ) -> None:
     """Every hard requirement of section 9/16/18 of FIX-R2-004."""
     if not isinstance(payload, Mapping):
         raise _fail("CLAUDE_MANAGED_POLICY_INVALID", "managed settings must be an object")
 
-    if payload.get("requiredMinimumVersion") != REQUIRED_MINIMUM_CLAUDE_VERSION:
-        raise _fail(
-            "CLAUDE_MANAGED_POLICY_INVALID",
-            f"requiredMinimumVersion must be {REQUIRED_MINIMUM_CLAUDE_VERSION}",
-        )
+    # Pinned from both sides: the policy admits exactly one build.
+    for key in ("requiredMinimumVersion", "requiredMaximumVersion"):
+        if payload.get(key) != REQUIRED_CLAUDE_VERSION:
+            raise _fail(
+                "CLAUDE_MANAGED_POLICY_INVALID",
+                f"{key} must be {REQUIRED_CLAUDE_VERSION}",
+            )
 
     permissions = payload.get("permissions") or {}
     if permissions.get("defaultMode") != "dontAsk":
@@ -943,8 +842,11 @@ def verify_managed_settings_contract(
             )
 
     verify_edit_permission_rules(permissions.get("allow") or [])
-    verify_read_permission_rules(
-        permissions.get("allow") or [], expected_rules=expected_read_rules
+    verify_read_permission_rules(permissions.get("allow") or [])
+    verify_read_deny_rules(deny)
+    verify_additional_directories(
+        permissions.get("additionalDirectories"),
+        expected_project_root=expected_project_root,
     )
 
     if payload.get("disableSideloadFlags") is not True:
@@ -1049,11 +951,21 @@ def verify_managed_settings_contract(
     verify_domain_sync(network.get("allowedDomains") or [], expected_domains)
 
     hooks = payload.get("hooks") or {}
-    for event in ("PreToolUse", "ConfigChange"):
-        if not hooks.get(event):
-            raise _fail(
-                "CLAUDE_MANAGED_POLICY_INVALID", f"managed hooks.{event} is missing"
-            )
+    if not hooks.get("PreToolUse"):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID", "managed hooks.PreToolUse is missing"
+        )
+    # The guard enforces the boundary at PreToolUse and nowhere else. A
+    # ConfigChange hook cannot block the one source that matters
+    # (``policy_settings``), so wiring one only produced a critical-looking
+    # acceptance step that proved nothing -- and a Nightly that stopped when it
+    # failed. Its absence is now part of the contract.
+    if hooks.get("ConfigChange"):
+        raise _fail(
+            "CLAUDE_MANAGED_POLICY_INVALID",
+            "managed hooks.ConfigChange must be absent: the production boundary "
+            "is enforced at PreToolUse",
+        )
 
 
 _EDIT_RULE_RE = re.compile(r"^Edit\((?P<target>.*)\)$")
@@ -1133,7 +1045,7 @@ def verify_installed_managed_settings(
     verify_managed_settings_contract(
         installed,
         expected_domains=expected_domains,
-        expected_read_rules=policy_read_permission_rules(expected),
+        expected_project_root=policy_project_root(expected),
     )
 
     if _canonical(installed) != _canonical(expected):
@@ -1516,7 +1428,7 @@ def replace_managed_policy(
     verify_managed_settings_contract(
         rendered_settings,
         expected_domains=expected_domains,
-        expected_read_rules=policy_read_permission_rules(rendered_settings),
+        expected_project_root=policy_project_root(rendered_settings),
     )
 
     candidate_bytes = serialize_managed_settings(rendered_settings)
@@ -1808,7 +1720,7 @@ def deploy_managed_policy(
     verify_managed_settings_contract(
         rendered_settings,
         expected_domains=expected_domains,
-        expected_read_rules=policy_read_permission_rules(rendered_settings),
+        expected_project_root=policy_project_root(rendered_settings),
     )
 
     settings_bytes = serialize_managed_settings(rendered_settings)

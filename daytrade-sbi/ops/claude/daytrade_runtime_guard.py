@@ -29,7 +29,6 @@ from pathlib import Path
 CODE_PROFILE_MISSING = "CLAUDE_RUNTIME_PROFILE_MISSING"
 CODE_BASH_DENIED = "CLAUDE_PRODUCTION_BASH_DENIED"
 CODE_WRITE_DENIED = "CLAUDE_PRODUCTION_WRITE_DENIED"
-CODE_CONFIG_CHANGE_DENIED = "CLAUDE_PRODUCTION_CONFIG_CHANGE_DENIED"
 CODE_NOT_CANONICAL = "CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL"
 CODE_PATH_OUTSIDE_RUN = "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN"
 
@@ -52,9 +51,13 @@ APPROVED_SUBCOMMANDS = frozenset(
         "plan-stage2-batches",
         "acquire-stage2-market-sources",
         "acquire-actual-turnover",
+        "validate-market-research",
         "validate-market",
+        "audit-official-ohlcv",
         "screen-market",
         "build-candidate-pipeline",
+        "build-performance",
+        "render-research",
         "acquire-event-sources",
         "merge-event-source-extraction",
         "init-event-research",
@@ -66,6 +69,9 @@ APPROVED_SUBCOMMANDS = frozenset(
         "build-ranking-terminal-recommendation",
         "build-selection-recommendation",
         "risk-check",
+        "render-report",
+        "render-daily-report",
+        "validate-run-artifacts",
         "verify-production-run",
         "verify-production-happy-path",
     }
@@ -273,6 +279,49 @@ SUBCOMMAND_FLAGS = {
         "--sources",
         "--trades-today",
     },
+    # Reporting / validation stages. Each flag set is the subset of the CLI's
+    # argparse contract the canonical nightly actually uses -- deliberately not
+    # the whole parser. ``build-performance --timings`` and
+    # ``validate-run-artifacts --output`` exist in the CLI and are omitted:
+    # the nightly never passes them, so approving them would widen the
+    # boundary for capability nobody runs.
+    "validate-market-research": {
+        "--market-research",
+        "--output",
+        "--research-window",
+        "--source-matrix",
+        "--sources",
+    },
+    "audit-official-ohlcv": {
+        "--market-data",
+        "--output",
+        "--source-matrix",
+        "--sources",
+    },
+    "build-performance": {
+        "--candidate-pipeline",
+        "--market-research",
+        "--output",
+        "--sources",
+    },
+    "render-research": {
+        "--candidate-pipeline",
+        "--market-research",
+        "--output",
+        "--performance",
+        "--sources",
+    },
+    "render-report": {"--output", "--recommendation", "--risk-result"},
+    "render-daily-report": {
+        "--candidate-pipeline",
+        "--market-research",
+        "--output",
+        "--performance",
+        "--recommendation",
+        "--risk-result",
+        "--sources",
+    },
+    "validate-run-artifacts": {"--run-dir"},
     "verify-production-run": {"--output", "--run-dir", "--source-matrix"},
     "verify-production-happy-path": {"--output", "--run-dir", "--source-matrix"},
 }
@@ -292,6 +341,7 @@ RUN_ARTIFACT_FLAGS = frozenset(
         "--selection",
         "--recommendation",
         "--extraction",
+        "--performance",
         "--risk-result",
     }
 )
@@ -337,12 +387,6 @@ SHELL_METACHARACTERS = (
 )
 
 EVENT_EXTRACTION_RELATIVE = ("working", "event_source_extraction.json")
-
-BLOCKED_CONFIG_SOURCES = frozenset(
-    {"user_settings", "project_settings", "local_settings", "skills"}
-)
-AUDIT_ONLY_CONFIG_SOURCES = frozenset({"policy_settings"})
-
 
 class GuardDenied(Exception):
     def __init__(self, code: str, reason: str) -> None:
@@ -592,41 +636,22 @@ def _validate_write(tool_name: str, tool_input: dict) -> None:
         )
 
 
-# ----------------------------------------------------- config change ---
-
-
-def _handle_config_change(payload: dict) -> str | None:
-    source = payload.get("source") or (payload.get("tool_input") or {}).get("source")
-    if not isinstance(source, str) or not source:
-        raise GuardDenied(CODE_CONFIG_CHANGE_DENIED, "ConfigChange source is missing")
-    if source in AUDIT_ONLY_CONFIG_SOURCES:
-        # Claude Code cannot block policy_settings changes from a hook; audit
-        # only, and never pretend the block happened.
-        return (
-            "CLAUDE_PRODUCTION_CONFIG_CHANGE_AUDIT: "
-            "policy_settings change observed (not blockable from a hook)"
-        )
-    if source in BLOCKED_CONFIG_SOURCES:
-        raise GuardDenied(
-            CODE_CONFIG_CHANGE_DENIED,
-            f"{source} may not change during a production run",
-        )
-    raise GuardDenied(CODE_CONFIG_CHANGE_DENIED, f"unknown ConfigChange source {source}")
-
-
 # ---------------------------------------------------------------- main ---
 
 
-def evaluate(payload: object) -> str | None:
-    """Return an optional audit message, or raise :class:`GuardDenied`."""
+def evaluate(payload: object) -> None:
+    """Allow a PreToolUse call, or raise :class:`GuardDenied`.
+
+    The guard has one job: enforce the production boundary before a tool runs.
+    It returns nothing -- an allowed call is silent, and every other outcome is
+    a denial.
+    """
     _require_runtime_profile()
 
     if not isinstance(payload, dict):
         raise GuardDenied(CODE_BASH_DENIED, "hook payload must be a JSON object")
 
     event = payload.get("hook_event_name")
-    if event == "ConfigChange":
-        return _handle_config_change(payload)
     if event != "PreToolUse":
         raise GuardDenied(CODE_BASH_DENIED, f"unsupported hook event {event!r}")
 
@@ -655,15 +680,13 @@ def main(argv: list[str] | None = None) -> int:
             payload = json.loads(raw)
         except ValueError:
             raise GuardDenied(CODE_BASH_DENIED, "stdin is not valid JSON") from None
-        audit = evaluate(payload)
+        evaluate(payload)
     except GuardDenied as denial:
         sys.stderr.write(f"{denial.code}: {denial.reason}\n")
         return 2
     except Exception as error:  # fail closed on anything unexpected
         sys.stderr.write(f"{CODE_BASH_DENIED}: unexpected guard failure: {error}\n")
         return 2
-    if audit:
-        sys.stderr.write(audit + "\n")
     return 0
 
 

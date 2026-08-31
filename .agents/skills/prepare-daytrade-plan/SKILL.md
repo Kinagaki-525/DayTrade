@@ -9,7 +9,11 @@ Run from the repository root with `daytrade-sbi/` as the Python working director
 
 Canonical CLI Pipeline Order (source of truth: `daytrade-sbi/docs/canonical-pipeline.md`):
 
-`snapshot-config` -> `validate-source-matrix` -> `resolve-research-window` -> `acquire-discovery` -> `init-candidate-research` -> `acquire-stage1-sources` -> market_data Stage1 reflect -> `apply-stage1` -> TSE Listing Batch Gate -> `plan-stage2-batches` -> `acquire-stage2-market-sources` -> market_data Stage2 reflect -> `acquire-actual-turnover` -> market_data turnover reflect -> `validate-market` -> `screen-market` -> `build-candidate-pipeline` -> `acquire-event-sources` -> Event AI Classification (local only) -> `merge-event-source-extraction` -> `init/complete event-research` -> `validate-event-research` -> `build-event-gate` -> `build-ranking` -> Case A/B/C
+`snapshot-config` -> `validate-source-matrix` -> `resolve-research-window` -> `acquire-discovery` -> `init-candidate-research` -> `acquire-stage1-sources` -> market_data Stage1 reflect -> `apply-stage1` -> TSE Listing Batch Gate -> `plan-stage2-batches` -> `acquire-stage2-market-sources` -> market_data Stage2 reflect -> `acquire-actual-turnover` -> market_data turnover reflect -> `validate-market-research` -> `validate-market` -> `audit-official-ohlcv` -> `screen-market` -> `build-candidate-pipeline` -> `build-performance` -> `render-research` -> `acquire-event-sources` -> Event AI Classification (local only) -> `merge-event-source-extraction` -> `init/complete event-research` -> `validate-event-research` -> `build-event-gate` -> `build-ranking` -> Case A/B/C -> `risk-check` -> `render-report` -> `render-daily-report` -> `validate-run-artifacts`
+
+`validate-run-artifacts` is the last command of a nightly. `record-recommendation` is
+**HUMAN-ONLY** and never part of this flow — it appends to a global CSV outside the run
+directory, so it stays in the Runtime Guard's `FORBIDDEN_SUBCOMMANDS`.
 
 ## Canonical Instructions
 
@@ -21,6 +25,13 @@ Read these files before starting:
 - `daytrade-sbi/docs/canonical-pipeline.md` for the Canonical CLI Pipeline Order
 - `daytrade-sbi/prompts/nightly_research.md` for the detailed artifact and CLI workflow
 - `daytrade-sbi/config/source_matrix.yaml` for the fixed market research sources
+
+Read is not an allowlist: a production session may read the repository through
+`permissions.additionalDirectories`, so nothing above needs a per-file grant. The
+production boundary that does the work is Bash (canonical CLI commands only), Write/Edit
+(one artifact), and the network allowlist. The security contract itself is **not**
+duplicated here — `daytrade-sbi/docs/nightly-operation.md` and
+`daytrade-sbi/docs/claude-provider-compatibility.md` are the sources of truth.
 
 Follow the nightly prompt as the procedural source of truth. Do not copy or replace its commands with inferred alternatives.
 

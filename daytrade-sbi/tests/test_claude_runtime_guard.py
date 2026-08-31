@@ -115,6 +115,9 @@ def _canonical_commands(production) -> dict[str, str]:
     ranking = _artifact(production, "ranking.json")
     selection = _artifact(production, "selection.json")
     window = _artifact(production, "research_window.json")
+    performance = _artifact(production, "performance.json")
+    recommendation = _artifact(production, "recommendation.json")
+    risk_result = _artifact(production, "risk_result.json")
     out = _artifact(production, "working/out.json")
     dates = "--target-date 2026-08-14 --trading-date 2026-08-15 --research-cutoff 20:00:00+09:00"
     acquire = f"{dates} --run-dir {run_dir} --sources {sources} --source-matrix {matrix}"
@@ -213,6 +216,35 @@ def _canonical_commands(production) -> dict[str, str]:
             f"--research-window {window} --source-matrix {matrix} --sources {sources} "
             f"--current-positions 0 --trades-today 0 --output {out}"
         ),
+        "validate-market-research": (
+            f"validate-market-research --market-research {market_research} "
+            f"--research-window {window} --sources {sources} --source-matrix {matrix} "
+            f"--output {out}"
+        ),
+        "audit-official-ohlcv": (
+            f"audit-official-ohlcv --market-data {market_data} --sources {sources} "
+            f"--source-matrix {matrix} --output {out}"
+        ),
+        "build-performance": (
+            f"build-performance --market-research {market_research} "
+            f"--candidate-pipeline {pipeline} --sources {sources} --output {performance}"
+        ),
+        "render-research": (
+            f"render-research --market-research {market_research} "
+            f"--candidate-pipeline {pipeline} --sources {sources} "
+            f"--performance {performance} --output {_artifact(production, 'research.md')}"
+        ),
+        "render-report": (
+            f"render-report --recommendation {recommendation} --risk-result {risk_result} "
+            f"--output {_artifact(production, 'recommendation.md')}"
+        ),
+        "render-daily-report": (
+            f"render-daily-report --market-research {market_research} "
+            f"--candidate-pipeline {pipeline} --sources {sources} "
+            f"--performance {performance} --recommendation {recommendation} "
+            f"--risk-result {risk_result} --output {_artifact(production, 'report.md')}"
+        ),
+        "validate-run-artifacts": f"validate-run-artifacts --run-dir {run_dir}",
         "verify-production-run": (
             f"verify-production-run --run-dir {run_dir} --source-matrix {matrix} --output {out}"
         ),
@@ -234,9 +266,13 @@ CANONICAL_SUBCOMMANDS = (
     "plan-stage2-batches",
     "acquire-stage2-market-sources",
     "acquire-actual-turnover",
+    "validate-market-research",
     "validate-market",
+    "audit-official-ohlcv",
     "screen-market",
     "build-candidate-pipeline",
+    "build-performance",
+    "render-research",
     "acquire-event-sources",
     "merge-event-source-extraction",
     "init-event-research",
@@ -248,9 +284,20 @@ CANONICAL_SUBCOMMANDS = (
     "build-ranking-terminal-recommendation",
     "build-selection-recommendation",
     "risk-check",
+    "render-report",
+    "render-daily-report",
+    "validate-run-artifacts",
     "verify-production-run",
     "verify-production-happy-path",
 )
+
+#: CLI flags an approved subcommand accepts that the guard deliberately does
+#: **not**. The nightly never passes these, so approving them would widen the
+#: boundary for capability nobody runs.
+WITHHELD_FLAGS = {
+    "build-performance": {"--timings"},
+    "validate-run-artifacts": {"--output"},
+}
 
 
 @pytest.mark.parametrize("subcommand", CANONICAL_SUBCOMMANDS)
@@ -278,7 +325,12 @@ def test_the_guard_allow_list_matches_the_real_cli(production):
             for option in action.option_strings
             if option not in ("-h", "--help")
         }
-        assert flags == real, f"{name} flag contract drifted from src/cli.py"
+        withheld = WITHHELD_FLAGS.get(name, set())
+        assert flags <= real, f"{name} approves a flag src/cli.py does not define"
+        assert real - flags == withheld, (
+            f"{name} flag contract drifted from src/cli.py "
+            f"(unaccounted: {sorted((real - flags) ^ withheld)})"
+        )
 
 
 def _load_guard_module():
@@ -406,6 +458,78 @@ def test_human_only_subcommands_are_denied(production, subcommand):
     result = _bash(production, _cli(production, subcommand))
     assert result.returncode == 2
     assert b"CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Real CLI capability the nightly never uses. Approving the subcommand
+        # does not approve everything its parser accepts.
+        "build-performance --market-research {mr} --candidate-pipeline {pipeline} "
+        "--sources {sources} --output {performance} --timings {out}",
+        "validate-run-artifacts --run-dir {run_dir} --output {out}",
+    ],
+)
+def test_withheld_flags_on_approved_subcommands_are_denied(production, command):
+    run_dir = production["run_dir"]
+    result = _bash(
+        production,
+        _cli(
+            production,
+            command.format(
+                mr=_artifact(production, "market_research.json"),
+                pipeline=_artifact(production, "candidate_pipeline.json"),
+                sources=_artifact(production, "sources.json"),
+                performance=_artifact(production, "performance.json"),
+                out=_artifact(production, "working/out.json"),
+                run_dir=run_dir,
+            ),
+        ),
+    )
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "subcommand",
+    [
+        "validate-market-research",
+        "audit-official-ohlcv",
+        "build-performance",
+        "render-research",
+        "render-report",
+        "render-daily-report",
+    ],
+)
+def test_new_reporting_commands_reject_an_output_outside_the_run(production, subcommand):
+    command = _canonical_commands(production)[subcommand]
+    outside = str(production["daytrade_root"] / "escaped.json")
+    head, _, _ = command.rpartition("--output ")
+    result = _bash(production, _cli(production, f"{head}--output {outside}"))
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "subcommand",
+    ["validate-market-research", "build-performance", "validate-run-artifacts"],
+)
+def test_new_commands_reject_relative_paths(production, subcommand):
+    command = _canonical_commands(production)[subcommand]
+    root = str(production["daytrade_root"]) + "/"
+    result = _bash(production, _cli(production, command.replace(root, "")))
+    assert result.returncode == 2
+    assert (
+        b"CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in result.stderr
+        or b"CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL" in result.stderr
+    )
+
+
+def test_new_commands_reject_shell_metacharacters(production):
+    command = _canonical_commands(production)["validate-run-artifacts"]
+    result = _bash(production, _cli(production, command) + '; echo "EXIT_CODE=$?"')
+    assert result.returncode == 2
+    assert b"CLAUDE_PRODUCTION_BASH_DENIED" in result.stderr
 
 
 def test_unknown_flag_is_denied(production):
@@ -680,29 +804,34 @@ def test_symlinked_extraction_path_is_denied(production, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "source", ["user_settings", "project_settings", "local_settings", "skills"]
+    "source",
+    ["user_settings", "project_settings", "local_settings", "skills", "policy_settings"],
 )
-def test_config_change_sources_are_blocked(production, source):
+def test_config_change_is_not_a_supported_guard_event(production, source):
+    """The guard is a PreToolUse enforcer and nothing else.
+
+    It never dispatched a ConfigChange usefully -- ``policy_settings``, the only
+    source worth blocking, is not blockable from a hook -- so ConfigChange is
+    now simply an unsupported event rather than a second half-contract.
+    """
     result = _invoke(
         production, {"hook_event_name": "ConfigChange", "source": source}
     )
     assert result.returncode == 2
-    assert b"CLAUDE_PRODUCTION_CONFIG_CHANGE_DENIED" in result.stderr
+    assert b"unsupported hook event" in result.stderr
+    assert b"CONFIG_CHANGE" not in result.stderr
 
 
-def test_policy_settings_change_is_audited_but_not_blocked(production):
-    result = _invoke(
-        production, {"hook_event_name": "ConfigChange", "source": "policy_settings"}
-    )
-    assert result.returncode == 0
-    assert b"CLAUDE_PRODUCTION_CONFIG_CHANGE_AUDIT" in result.stderr
-
-
-def test_unknown_config_change_source_is_blocked(production):
-    result = _invoke(
-        production, {"hook_event_name": "ConfigChange", "source": "mystery"}
-    )
-    assert result.returncode == 2
+def test_the_guard_carries_no_config_change_contract():
+    text = GUARD.read_text(encoding="utf-8")
+    for removed in (
+        "CODE_CONFIG_CHANGE_DENIED",
+        "BLOCKED_CONFIG_SOURCES",
+        "AUDIT_ONLY_CONFIG_SOURCES",
+        "_handle_config_change",
+        "ConfigChange",
+    ):
+        assert removed not in text, f"{removed} survived the ConfigChange removal"
 
 
 # ------------------------------------------------------------ fail-closed ---

@@ -1,25 +1,19 @@
 {
-  "requiredMinimumVersion": "2.1.224",
+  "requiredMinimumVersion": "2.1.251",
+  "requiredMaximumVersion": "2.1.251",
 
   "permissions": {
     "defaultMode": "dontAsk",
     "disableBypassPermissionsMode": "disable",
     "disableAutoMode": "disable",
 
+    "additionalDirectories": [
+      "__PROJECT_ROOT__"
+    ],
+
     "allow": [
       "Bash(__PRODUCTION_PYTHON__ -B -m src.cli *)",
-      "Edit(__EVENT_EXTRACTION_PATH_PATTERN__)",
-
-      "Read(__CLAUDE_MD_READ_PATTERN__)",
-      "Read(__PREPARE_DAYTRADE_SKILL_READ_PATTERN__)",
-      "Read(__AGENTS_READ_PATTERN__)",
-      "Read(__TODO_READ_PATTERN__)",
-      "Read(__STRATEGY_READ_PATTERN__)",
-      "Read(__SOURCE_MATRIX_READ_PATTERN__)",
-      "Read(__CANONICAL_PIPELINE_READ_PATTERN__)",
-      "Read(__NIGHTLY_OPERATION_READ_PATTERN__)",
-      "Read(__NIGHTLY_RESEARCH_READ_PATTERN__)",
-      "Read(__RUNS_READ_PATTERN__)"
+      "Edit(__EVENT_EXTRACTION_PATH_PATTERN__)"
     ],
 
     "deny": [
@@ -28,7 +22,9 @@
       "Agent",
       "mcp__*",
       "SendMessage",
-      "ListAgents"
+      "ListAgents",
+      "Read(//etc/claude-code/**)",
+      "Read(~/.claude/**)"
     ]
   },
 
@@ -80,22 +76,6 @@
     "PreToolUse": [
       {
         "matcher": "Bash|Edit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "__PRODUCTION_PYTHON__",
-            "args": [
-              "-I",
-              "-B",
-              "__MANAGED_GUARD_PATH__"
-            ]
-          }
-        ]
-      }
-    ],
-    "ConfigChange": [
-      {
-        "matcher": "user_settings|project_settings|local_settings|skills|policy_settings",
         "hooks": [
           {
             "type": "command",

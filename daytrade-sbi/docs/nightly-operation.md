@@ -1,5 +1,31 @@
 # Nightly Operation
 
+## 通常Operator Flow（Production, 毎晩）
+
+普通の夜はこの9段階だけである。長い節はすべて**例外時**のためのものであり、
+毎晩読む必要はない。
+
+1. **Safe Sync main** — Production作業ツリーを`origin/main`へ同期する
+2. **update requirement確認** — Managed Policy / Runtime Guard / 受理済み
+   Claude Code versionに差分があるかを確認する
+3. **必要時Human-only replacement** — 差分があるときだけ
+   [Policy replacement（Human専用）](#policy-replacementhuman専用)を実施する。
+   差分がなければskipする
+4. **Runtime Security Preflight** — `scripts/claude-production`が起動前に
+   fail-closedで全項目を検査する
+5. **Production Claude launch** — Preflightが通れば`claude`が`exec`される
+6. **`/status`確認** — managed settings sourceが`(file)`であること
+7. **optional `/remote-control`** — 使わないなら8をskipする
+8. **Remote使用時だけ2件smoke** —
+   Read project-root `CLAUDE.md` → **PASS** / Bash `pwd` → **DENY**
+9. **`$prepare-daytrade-plan`** — Canonical CLI Pipeline Orderを実行する
+
+段階4がProduction Security Boundaryの検査点である。Managed Policyのstatic
+property（sandbox / network / managed lock / version pin）はそこでfail-closedに
+検査済みなので、起動後に人間が同じ項目をもう一度目視確認する手順は置かない。
+稀なrecovery手順とSecurity Architectureの説明は、この通常手順とは分離して
+後段の節にある。
+
 ## 開始方法
 
 毎晩、Codex または Claude Code へ次のように依頼します。どちらでも同じリポジトリCLIパイプラインが動きます。
@@ -212,8 +238,11 @@ Coding Agentはinstallを行いません。Preflightは存在確認だけを行�
 sudo apt-get install bubblewrap socat
 ```
 
-- Claude Code >= 2.1.224（`sandbox.network.strictAllowlist`と、Remote Control
-  transport上の`crossSessionInbound`をSecurity Contractとして依存できる最小版）。
+- Claude Code **2.1.251 ちょうど**。範囲ではなくexact versionである。Read semantics /
+  hook dispatch / Remote Controlはprovider挙動であり、Provider Compatibility Suite
+  （[claude-provider-compatibility.md](claude-provider-compatibility.md)）を実際に
+  通したbuildだけを受理する。新しいbuildは古いbuildと同じだけ未検証なので、
+  どちらもPreflightが拒否する。
 - Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
   seccompの有無を推測しません。次のHuman Runtime Acceptance v2（V2差分Probe方式）
   の結果だけを検証します。`/sandbox`のDependencies表示だけをAcceptanceの根拠には
@@ -679,7 +708,7 @@ Production Managed Policyは次を固定する。
 | `remoteControlAtStartup` | `false` | session起動だけでRemote exposureさせない |
 | `crossSessionInbound` | `"refuse"` | 同じtransport上のsession間messageを受け取らない |
 | `permissions.deny` | `SendMessage` / `ListAgents`を含む | 上記のoutbound側 |
-| `requiredMinimumVersion` | `2.1.224` | `crossSessionInbound`をSecurity Contractとして依存できる最小版 |
+| `requiredMinimumVersion` / `requiredMaximumVersion` | ともに`2.1.251` | 両側からpinし、Provider Compatibility Suiteを通したexact buildだけを受理する |
 
 Remote Controlがaccount / organization設定の結果として使えない場合、それは
 Security failureではない。
@@ -794,104 +823,38 @@ detached Production processを維持するためのtmux / screen運用は今回�
 
 #### Production Remote Control Acceptance（Human-only）
 
-Managed Policy replacementとRuntime Security Preflightを終えた後、**Production
-Nightlyを開始する前に**Humanが次を実施する。**このPRおよびDevelopment Claudeは
-Productionで実行しない。DayTrade Production運用へのhandoff対象である。**
+Remote Controlは**人間の入力transport**であって、独立したSecurity Boundaryではない。
+attachした人間が送るpromptは、そのProduction sessionのManaged Policyと
+Runtime Guardに、local promptとまったく同じように従う（PC-16）。したがって
+Remote Controlを有効にしたからといって、Managed Policyのstatic propertyを
+人間がもう一度目視確認する必要はない。それらはRuntime Security Preflightが
+起動前にfail-closedで検査済みであり、二重確認は手順を長くするだけで新しい保証を
+生まない。
 
-```text
-Human merge
-  → Production main reflection
-  → Production full pytest
-  → Managed Policy --check
-  → candidate render
-  → Human review
-  → installed / candidate SHA256 attestation
-  → Human-only Managed Policy replacement
-  → post verification
-  → Runtime Security Preflight
-  → normal Production Claude launch
-  → /status
-  → /remote-control
-  → Remote Control Security Acceptance
-  → offline runtime smoke
-  → Production Nightly
-```
+Remote Controlを使う場合にだけ、**2件のsmoke**を実施する。目的はattachした
+transportが本当にこのProduction sessionの境界配下にあることの確認である。
 
-**Remote Control Security Acceptance**として最低限次を確認する。
+| # | Probe | Expected |
+| --- | --- | --- |
+| 1 | Read tool で project rootの`CLAUDE.md`を読む | **PASS**（trusted repository readが効いている） |
+| 2 | Bash tool で`pwd`を実行する | **DENY**（`CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL`） |
 
-1. **`/status`** — Enterprise managed settings (file) が読み込まれていること
-2. **Remote attach** — 認可済みの同一Claude account / organizationからattachできること。
-   unauthorized attachを許可する仕組みを追加しない
-3. **Runtime Guard negative Bash probe** — remote-origin promptからのnon-canonical Bashが
-   拒否されること。probe commandはProduction business dataを変更しない無害なものを
-   Production運用Work Order側で確定する
-4. **Canonical offline CLI probe** — 既存のcanonical Production Python invocationで、
-   network acquisitionを伴わない既存のoffline commandが通ること。Runtime Guardを
-   bypassしない
-5. **Approved Read probe（positive）** — Managed Policyがexactに許可したRead ruleで、
-   Canonical Nightlyが必要とするfileをRead toolで読めること。最低限
-   `CLAUDE.md`・`AGENTS.md`・`config/strategy.yaml`・`config/source_matrix.yaml`・
-   `docs/canonical-pipeline.md`・`prompts/nightly_research.md`と、当日の
-   `runs/<target-date>/working/runtime_security.json`を確認する。
-   `cat` / `head` / `grep` / `python -c`などBash経由の代替readerで代用しない
-   （Bash allowlistはcanonical CLI 1件のままである）
-6. **Unauthorized Read probe（negative）** — 許可されていないpathのReadが拒否されること。
-   最低限`src/`配下のsource file・`config/issuer_domain_registry.yaml`・
-   installed Managed Policy（`/etc/claude-code/managed-settings.json`）・
-   HOME配下のfileを確認する。拒否されたpathの内容を別経路で読み出さない
-7. **Write protection** — remote-originからの非許可Writeが拒否されること。
-   Read可能になったpathがWrite可能になっていないことも含めて確認する
-   （唯一のEdit対象は`runs/<target-date>/working/event_source_extraction.json`）。
-   destructive probeは設計しない
-8. **ConfigChange protection** — `user_settings` / `project_settings` /
-   `local_settings` / `skills`のConfigChangeが、**running Production sessionの
-   effective configurationへ反映されないこと**を確認する。
+2件ともexpectedどおりなら、Remote Control経由でProduction Nightlyへ進んでよい。
+どちらかがexpectedと異なる場合はRemote Controlを使わず、Human判断で停止するか
+localでProduction Nightlyを実施する。
 
-   Claude CodeのConfigChange blockは「設定fileのdisk上のbytesが変更されないこと」を
-   保証する契約では**ない**。blockが保証するのは「変更後のsettingsをrunning sessionへ
-   適用しないこと」である。したがって判定は次のとおり。
-
-   | 観測 | 判定 |
-   | --- | --- |
-   | block対象のvalid設定変更がrunning sessionのeffective configurationへ反映されない | PASS |
-   | 設定fileのdisk上のbytesだけが変わった | それだけではFAILではない |
-   | UIにblock messageが表示されなかった | それだけではFAILではない |
-   | block対象のvalid設定変更がrunning sessionで有効になった | **FAIL** |
-
-   `policy_settings`は**audit onlyである**。Claude Codeは`policy_settings`の
-   ConfigChangeに対するblocking decisionを適用しないため、
-   **`policy_settings`のblock成功をAcceptanceの成功条件として要求しない**。
-   `policy_settings`のSecurity Boundaryは、installed Managed Policyの
-   root ownership / expected SHA256 / semantic equality（項目11）である。
-
-   ConfigChange probeの後、Managed Policy dominance（`allowManagedPermissionRulesOnly` /
-   `allowManagedHooksOnly` / `allowManagedMcpServersOnly`）・Bash・Write・sandbox・
-   networkの各protectionが引き続き有効であることを再確認する。
-
-   **このConfigChange AcceptanceがFAILした場合、Business Pipelineを開始しない。**
-9. **Cross-session isolation** — `crossSessionInbound=refuse` / `SendMessage` denied /
-   `ListAgents` denied
-10. **Sandbox / network** — `strictAllowlist=true` / `allowManagedDomainsOnly=true` /
-    `allowLocalBinding=false` / `allowAllUnixSockets=false` /
-    `allowedDomains`のexact setが変わっていないこと
-11. **Managed Policy integrity** — installed Managed Policyがroot ownedで、
-    expected SHA256とrendered policyへのsemantic equalityを満たすこと
-12. **Attachments** — Production v1では使用しないこと
-13. **Secret persistence** — Remote Control URL / QR / token / credentialが
-    repository / log / Raw Evidence / Business Artifact / `runtime_security.json`へ
-    保存されていないこと
-
-**1項目でも確認できない場合はProduction Nightlyへ進まない。**
-
-Managed Policyを差し替えた後は、**Runtime Security PreflightとRemote Control
-Security Acceptanceを再実行し、全件PASSしたときだけBusiness Pipelineを開始する**。
-旧policyに対するPASS記録や旧`runtime_security.json`を、新policyのAcceptance Evidenceと
-して再利用しない。Security AcceptanceのFAILをBusiness Decision（`NO_TRADE` /
-`DATA_UNAVAILABLE`）へ変換しない。
-
-ただしRemote Controlのconnection failure自体をBusiness結果へ変換しない
+Remote Controlのconnection failure自体をBusiness結果へ変換しない
 （`NO_TRADE` / `DATA_UNAVAILABLE`等にしない）。接続できないときはRemote Controlを
 使わずにProduction Nightlyを実施するか、Human判断で停止する。
+
+Remote Control URL / QR / token / credentialを、repository / log / Raw Evidence /
+Business Artifact / `runtime_security.json`へ保存しない。これは手順ではなく恒常的な
+禁止事項である。
+
+Managed Policyを差し替えた後は、**Runtime Security Preflightを再実行し、PASSした
+ときだけBusiness Pipelineを開始する**。旧`runtime_security.json`を新policyの
+Evidenceとして再利用しない。Security FailureをBusiness Decision（`NO_TRADE` /
+`DATA_UNAVAILABLE`）へ変換しない。
 
 ### Runtime Security Preflight
 

@@ -434,8 +434,12 @@ Risk Engine後、Markdownは構造化JSONから再生成する。途中追記、
 py -B -m src.cli render-report --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --output runs/YYYY-MM-DD/recommendation.md
 py -B -m src.cli render-daily-report --market-research runs/YYYY-MM-DD/market_research.json --candidate-pipeline runs/YYYY-MM-DD/candidate_pipeline.json --sources runs/YYYY-MM-DD/sources.json --performance runs/YYYY-MM-DD/performance.json --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json --output runs/YYYY-MM-DD/report.md
 py -B -m src.cli validate-run-artifacts --run-dir runs/YYYY-MM-DD
-py -B -m src.cli record-recommendation --recommendation runs/YYYY-MM-DD/recommendation.json --risk-result runs/YYYY-MM-DD/risk_result.json
 ```
+
+`validate-run-artifacts`がNightlyの最後のcommandである。`record-recommendation`は
+**HUMAN-ONLY**であり、Nightly flowでは実行しない。run directory外の
+`trades/recommendations.csv`へappendする非idempotentな記録操作なので、Runtime Guardの
+`FORBIDDEN_SUBCOMMANDS`に残っている。
 
 ## 最終報告
 

@@ -80,6 +80,162 @@ Human Merge
 handoffであり、repositoryが保持するのは**この形式仕様**である。Implementation
 Completion ReportとReview Evidenceもrepository fileとして保存しない。
 
+## Validation Gate Placement Contract
+
+Validation / Acceptance Gateは、**どこで実行するか**で3つに分類する（MUST）。
+分類を混同しては**ならない（MUST NOT）**。gateの強さは分類で決まるのではなく、
+どのgateが未完了なら次のどの段階へ進めないかで決まる。
+
+| Gate | 実行位置 | 実行者 | 未完了時に進めない先 |
+| --- | --- | --- | --- |
+| **Pre-Commit Gate** | commit前 | Claude Code Development | commit |
+| **Pre-Merge Gate** | commit後 / Human Merge前 | GitHub Actions / Human / ChatGPT | Human Merge |
+| **Pre-Production Gate** | Merge後 / Production rollout前 | Human | Production rollout |
+
+### Pre-Commit Gate
+
+原則として次を置く（MUST）。
+
+```text
+repository-local deterministic tests
+lint / static validation
+schema validation
+diff checks
+candidate generation integrity checks
+Implementer自身がDevelopment環境で実行可能なrequired tests
+```
+
+これらのいずれかがFAILした場合、commitしては**ならない（MUST NOT）**。
+
+### Pre-Merge Gate
+
+原則として次を置く（MUST）。
+
+```text
+GitHub Actions CI
+real-provider compatibility
+manual external integration test
+Human-operated acceptance test
+exact deployed/provider behavior verification
+```
+
+これらは、candidateをcommitして**immutable SHAへ固定した後**に実施してよい（MAY）。
+Evidenceをexact HEAD SHAへ紐付けられる場合は、commit後に実施することを標準とする
+（SHOULD）。固定されていないworking treeに対するexternal gateのEvidenceは、
+何を検証したのか後から特定できない。
+
+external / manual gateが未実施であることだけを理由に、次を禁止しては
+**ならない（MUST NOT）**。
+
+```text
+git add
+commit
+Safe Push
+Draft PR
+```
+
+ただしWork Orderがそのgateを**明示的にPRE-COMMITと指定した**場合は例外であり、
+その指定に従う（MUST）。
+
+Pre-Merge Gateが未実施、または1件でもFAILしている場合は次とする（MUST）。
+
+```text
+Human Merge: BLOCKED
+Production rollout: BLOCKED
+```
+
+### Pre-Production Gate
+
+次を含む（MUST）。
+
+```text
+Production environment acceptance
+Production historical compatibility audit
+Human-only policy deployment / replacement validation
+Production operational readiness
+```
+
+これらをDevelopment Claudeが実行しては**ならない（MUST NOT）**。未完了のまま
+Productionへ進んでは**ならない（MUST NOT）**。
+
+### Exact HEAD Evidence
+
+manual / external / provider compatibility Evidenceには**exact commit SHA**を
+必須とする（MUST）。
+
+```text
+Provider Compatibility Tested HEAD:
+<40-char SHA>
+```
+
+gate実施後にPR HEADへcommitが1つでも追加された場合、以前のEvidenceを新HEADへ
+流用しては**ならない（MUST NOT）**。
+
+```text
+old PC Evidence = INVALID FOR NEW HEAD
+```
+
+新しいHEADに対して、必要なgateを再実施する（MUST）。PR body / PR commentだけの
+変更でGit commit SHAが変わらない場合は、candidate byte変更として扱わない。
+
+### Gate Failure Semantics
+
+external / manual gateがFAILしても、既存commitを履歴から消すことを要求しない
+（MUST NOT）。FAIL時は次の状態とし、修正commitを追加する（MUST）。
+
+```text
+Merge: BLOCKED
+Production: BLOCKED
+```
+
+その後、次を新しいHEADに対して再実施する（MUST）。
+
+```text
+local tests
+→ Safe Push
+→ CI
+→ external/manual gate on new HEAD
+```
+
+Security testやexternal gateを通すために、次を行っては**ならない（MUST NOT）**。
+
+```text
+history rewrite
+force push
+validator relaxation
+Evidence rewrite
+```
+
+### No False PASS
+
+Claude自身が実施できないexternal / manual gateについて、`PASS` / `SUCCESS` /
+`VERIFIED` と報告しては**ならない（MUST NOT）**。Implementation Completion Reportでは
+次のように記す（MUST）。
+
+```text
+Provider Compatibility: NOT VERIFIED BY CLAUDE
+GitHub CI: NOT VERIFIED BY CLAUDE
+```
+
+これらの独立確認はHuman / ChatGPTの責務である（MUST）。
+
+### Gate Placement Is Not an Authority Change
+
+Gate placementの分類は、Security ContractでもFail-Closed Contractでもない。
+この契約は次を一切許可しない（MUST NOT）。
+
+```text
+raw git push
+gh CLI
+force push
+Production operation
+Security relaxation
+Fail-Closed relaxation
+```
+
+Pre-Commit Gateから外れたgateは、**消えるのではなく後段のgateへ移る**。
+[Protected Invariants](#protected-invariants)はこの分類変更の対象外である。
+
 ## Evidence Model
 
 Evidenceは**provenanceの異なる2層**に分離する。両者を同じ概念として扱わない（MUST NOT）。
