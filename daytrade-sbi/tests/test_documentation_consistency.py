@@ -27,12 +27,18 @@ DOCS = {
     "docs/nightly-operation.md": PROJECT_ROOT / "docs/nightly-operation.md",
     "docs/canonical-pipeline.md": CANONICAL_DOC,
     "docs/source-acquisition.md": PROJECT_ROOT / "docs/source-acquisition.md",
+    "docs/claude-provider-compatibility.md": (
+        PROJECT_ROOT / "docs/claude-provider-compatibility.md"
+    ),
     "prompts/nightly_research.md": PROJECT_ROOT / "prompts/nightly_research.md",
     "SKILL.md": REPO_ROOT / ".agents/skills/prepare-daytrade-plan/SKILL.md",
 }
 
-#: The canonical order, exactly as FIX-016 specifies it.
-CANONICAL_STEPS = (
+#: The **Business Canonical Dependency Order** (FIX-016): the business
+#: dependencies -- which artifact needs which -- that every high-level document
+#: repeats. This is the coarse layer of one SSOT, not a competing order: the
+#: Detailed Nightly Execution Sequence below refines it.
+BUSINESS_CANONICAL_DEPENDENCY_ORDER = (
     "snapshot-config",
     "validate-source-matrix",
     "resolve-research-window",
@@ -58,6 +64,47 @@ CANONICAL_STEPS = (
     "build-event-gate",
     "build-ranking",
     "Case A/B/C",
+)
+
+#: DTWO-2026-025. The **Detailed Nightly Execution Sequence**: the complete order
+#: the canonical doc renders. It refines the Business Canonical Dependency Order
+#: above with the validation and reporting stages a nightly actually runs -- it
+#: adds steps, and never reorders a business dependency. The Runtime Guard
+#: contract is audited against this layer.
+DETAILED_NIGHTLY_EXECUTION_SEQUENCE = (
+    "snapshot-config",
+    "validate-source-matrix",
+    "resolve-research-window",
+    "acquire-discovery",
+    "init-candidate-research",
+    "acquire-stage1-sources",
+    "market_data Stage1 reflect",
+    "apply-stage1",
+    "TSE Listing Batch Gate",
+    "plan-stage2-batches",
+    "acquire-stage2-market-sources",
+    "market_data Stage2 reflect",
+    "acquire-actual-turnover",
+    "market_data turnover reflect",
+    "validate-market-research",
+    "validate-market",
+    "audit-official-ohlcv",
+    "screen-market",
+    "build-candidate-pipeline",
+    "build-performance",
+    "render-research",
+    "acquire-event-sources",
+    "Event AI Classification (local only)",
+    "merge-event-source-extraction",
+    "init/complete event-research",
+    "validate-event-research",
+    "build-event-gate",
+    "build-ranking",
+    "Case A/B/C（Selection / Recommendation）",
+    "risk-check",
+    "render-report",
+    "render-daily-report",
+    "validate-run-artifacts",
 )
 
 #: Documents that must spell out the whole canonical order.
@@ -102,28 +149,125 @@ def test_no_document_still_claims_the_agent_fetches_market_data(name, claim):
     assert claim not in _text(name), f"{name} still claims: {claim}"
 
 
+# Layer 1 of the order contract: the business dependencies, as every
+# high-level document repeats them.
 @pytest.mark.parametrize("name", ORDER_DOCS)
-def test_canonical_pipeline_order_is_identical_everywhere(name):
-    """Each step appears, in order, exactly once as an ordered-list entry."""
+def test_business_canonical_dependency_order_is_identical_everywhere(name):
+    """Each business dependency appears, in order, in every document."""
     text = _text(name)
     positions = []
-    for step in CANONICAL_STEPS:
+    for step in BUSINESS_CANONICAL_DEPENDENCY_ORDER:
         index = text.find(step)
-        assert index != -1, f"{name} does not mention pipeline step {step!r}"
+        assert index != -1, f"{name} does not mention business step {step!r}"
         positions.append(index)
     assert positions == sorted(positions), (
-        f"{name} lists the canonical pipeline steps out of order"
+        f"{name} lists the Business Canonical Dependency Order out of order"
     )
 
 
-def test_canonical_doc_lists_exactly_the_25_steps_in_order():
+def _canonical_order_entries() -> list[str]:
+    """The numbered Detailed Nightly Execution Sequence, as rendered.
+
+    Anchored on its own heading and bounded by the next heading, so neither
+    prose nor line numbers are part of the contract -- only the ordered entries.
+    """
     text = CANONICAL_DOC.read_text(encoding="utf-8")
-    section = text.split("## Canonical CLI Pipeline Order", 1)[1]
-    section = section.split("\n##", 1)[0]
-    numbered = re.findall(r"^\s*(\d+)\.\s+(.+?)\s*$", section, flags=re.MULTILINE)
-    assert [int(index) for index, _ in numbered] == list(range(1, 26))
-    rendered = [entry.strip("`") for _, entry in numbered]
-    assert rendered == list(CANONICAL_STEPS)
+    section = text.split("### Detailed Nightly Execution Sequence", 1)[1]
+    section = re.split(r"\n#{2,4} ", section, maxsplit=1)[0]
+    numbered = re.findall(r"^(\d+)\.\s+(.+?)\s*$", section, flags=re.MULTILINE)
+    assert [int(index) for index, _ in numbered] == list(
+        range(1, len(numbered) + 1)
+    ), "the detailed sequence is not numbered contiguously from 1"
+    return [entry.strip("`") for _, entry in numbered]
+
+
+# Layer 2 of the order contract: the exact sequence the nightly executes.
+def test_canonical_doc_renders_the_detailed_nightly_execution_sequence():
+    assert _canonical_order_entries() == list(DETAILED_NIGHTLY_EXECUTION_SEQUENCE)
+
+
+# The two layers have two different lengths, and the canonical document had
+# called the 33-entry list by the 25-entry layer's name. Naming one layer with
+# the other's count is how a reader concludes there is a single 33-step
+# "business" order -- the exact confusion the two-layer contract exists to
+# prevent -- so the counts are pinned to the names.
+BUSINESS_DEPENDENCY_STEP_COUNT = 25
+DETAILED_EXECUTION_STEP_COUNT = 33
+
+
+def test_the_two_layers_have_their_contracted_lengths():
+    assert len(BUSINESS_CANONICAL_DEPENDENCY_ORDER) == BUSINESS_DEPENDENCY_STEP_COUNT
+    assert len(DETAILED_NIGHTLY_EXECUTION_SEQUENCE) == DETAILED_EXECUTION_STEP_COUNT
+    assert len(_canonical_order_entries()) == DETAILED_EXECUTION_STEP_COUNT
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Business Canonical Dependency Order（25 dependency step）",
+        "Detailed Nightly Execution Sequence（33 execution step）",
+    ],
+)
+def test_the_canonical_doc_names_each_layer_with_its_own_count(phrase):
+    assert phrase in _text("docs/canonical-pipeline.md"), phrase
+
+
+def test_no_document_calls_the_business_order_a_33_step_order():
+    """The exact drift: '33 step' attached to the business layer's name."""
+    misnomer = re.compile(r"Business Canonical[^\n]{0,40}33\s*step")
+    for name in sorted(DOCS):
+        found = misnomer.search(_text(name))
+        assert found is None, (
+            f"{name} calls the Business Canonical Dependency Order a 33-step "
+            f"order: {found.group(0)!r}"
+        )
+
+
+def test_the_executor_rendering_note_distinguishes_the_two_layers():
+    """Only the command rendering is executor-specific -- not the order."""
+    section = _section(
+        _text("docs/canonical-pipeline.md"), "### Executor-specific command rendering"
+    )
+    assert "Detailed Nightly Execution Sequence（上記33 step）" in section
+    assert "Business Canonical Dependency Order（25 dependency step）の相対順序も同一" in section
+    assert "commandのrendering" in section
+
+
+# The two layers are one SSOT, so layer 2 must refine layer 1, never contradict
+# it: adding validation and reporting stages may not reorder a business
+# dependency that every other document repeats.
+def _refines(entry: str, step: str) -> bool:
+    """Does this detailed entry render ``step``?
+
+    A prefix alone is not enough: ``validate-market`` is a prefix of
+    ``validate-market-research``, which is a different stage. The entry must
+    either be the step or extend it past a token boundary, the way
+    ``Case A/B/C（Selection / Recommendation）`` extends ``Case A/B/C``.
+    """
+    if entry == step:
+        return True
+    if not entry.startswith(step):
+        return False
+    tail = entry[len(step)]
+    return not (tail.isalnum() or tail in "-_/")
+
+
+def test_the_detailed_sequence_preserves_the_business_dependency_order():
+    order = list(DETAILED_NIGHTLY_EXECUTION_SEQUENCE)
+    positions = []
+    for step in BUSINESS_CANONICAL_DEPENDENCY_ORDER:
+        matches = [
+            index for index, entry in enumerate(order) if _refines(entry, step)
+        ]
+        assert len(matches) == 1, (
+            f"the detailed sequence must refine {step!r} exactly once, "
+            f"found {len(matches)}"
+        )
+        positions.append(matches[0])
+    assert positions == sorted(positions), (
+        "the detailed sequence reorders a business dependency"
+    )
+    assert len(order) >= len(BUSINESS_CANONICAL_DEPENDENCY_ORDER)
 
 
 @pytest.mark.parametrize(
@@ -170,7 +314,7 @@ def test_documented_commands_all_exist_in_the_cli():
     choices = set(parser._subparsers._group_actions[0].choices)  # noqa: SLF001
     documented = {
         step
-        for step in CANONICAL_STEPS
+        for step in BUSINESS_CANONICAL_DEPENDENCY_ORDER
         if re.fullmatch(r"[a-z0-9-]+", step) and step != "market_data"
     }
     missing = sorted(step for step in documented if step not in choices)
@@ -214,7 +358,7 @@ def test_nightly_operation_documents_human_only_provisioning():
         "seccomp",
         "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
         "apparmor_restrict_unprivileged_userns",
-        "2.1.224",
+        "2.1.251",
     ):
         assert required in text
 
@@ -1217,7 +1361,7 @@ def test_remote_control_section_states_the_managed_policy_contract():
         "crossSessionInbound",
         "SendMessage",
         "ListAgents",
-        "2.1.224",
+        "2.1.251",
     ):
         assert token in section, token
 
@@ -1326,225 +1470,197 @@ def test_the_transcript_is_not_treated_as_daytrade_evidence():
     assert "Business Data Contract" in section
 
 
-def test_remote_control_acceptance_gate_precedes_the_production_nightly():
-    """FIX-02: the gate exists, and it sits after the preflight and before the
-    first Production Nightly."""
+def test_remote_control_acceptance_is_two_smoke_probes():
+    """DTWO-2026-025: Remote Control is an input transport, not a boundary.
+
+    The predecessor acceptance made an operator re-verify, by hand and after
+    every policy change, static properties the Preflight had already checked
+    fail-closed before launch -- thirteen items, ten of them Read probes for an
+    allowlist that no longer exists. What actually needs observing is that the
+    remote transport lands inside the same boundary, and two probes show that.
+    """
     section = _section_with_subsections(
         _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
     )
     assert "Production Remote Control Acceptance（Human-only）" in section
-    for step in (
-        "Human merge",
-        "Production full pytest",
-        "Managed Policy --check",
-        "SHA256 attestation",
-        "Runtime Security Preflight",
-        "/status",
-        "/remote-control",
-        "Remote Control Security Acceptance",
-        "offline runtime smoke",
-        "Production Nightly",
-    ):
-        assert step in section, step
-    assert section.index("Runtime Security Preflight") < section.index(
-        "Remote Control Security Acceptance"
-    )
-    assert section.index("Remote Control Security Acceptance") < section.rindex(
-        "Production Nightly"
-    )
+    assert "CLAUDE.md" in section
+    assert "pwd" in section
+    assert "PASS" in section
+    assert "DENY" in section
+    assert "PC-16" in section
 
 
-def test_remote_control_acceptance_lists_every_required_check():
-    """FIX-02: the ten checks a human confirms before trusting the transport."""
+def test_remote_control_acceptance_dropped_the_obsolete_probes():
+    """None of the removed steps may come back as a normal nightly duty."""
     section = _section_with_subsections(
         _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
     )
-    for check in (
-        "Enterprise managed settings",
-        "unauthorized attach",
-        "Runtime Guard negative Bash probe",
-        "Canonical offline CLI probe",
-        "Write protection",
+    for gone in (
+        "Approved Read probe",
+        "Unauthorized Read probe",
         "ConfigChange protection",
-        "crossSessionInbound=refuse",
-        "SendMessage",
-        "ListAgents",
-        "strictAllowlist=true",
-        "allowManagedDomainsOnly=true",
-        "allowLocalBinding=false",
-        "allowAllUnixSockets=false",
-        "allowedDomains",
+        "ConfigChange probe",
+        "Remote Control Security Acceptance",
+        "issuer_domain_registry.yaml",
     ):
-        assert check in section, check
+        assert gone not in section, f"{gone} survived the acceptance simplification"
 
 
-def test_remote_control_acceptance_is_fail_closed_and_human_only():
-    """FIX-02: one unconfirmed item stops the nightly, and Development Claude
-    never performs the acceptance itself."""
+def test_no_document_still_treats_configchange_as_a_nightly_gate():
+    for name in ("docs/nightly-operation.md", "prompts/nightly_research.md"):
+        text = _text(name)
+        assert "ConfigChange" not in text, f"{name} still documents a ConfigChange gate"
+
+
+def test_configchange_observation_moved_to_the_provider_compatibility_doc():
+    """It is a provider observation now, not a Production Nightly gate."""
+    text = _text("docs/claude-provider-compatibility.md")
+    assert "PC-15 CONFIG_CHANGE_OBSERVATION" in text
+    assert "observation only" in text
+    assert "critical gate ではない" in text or "critical gateではない" in text
+
+
+def test_remote_control_failure_is_never_a_business_decision():
     section = _section_with_subsections(
         _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
     )
-    assert "1項目でも確認できない場合はProduction Nightlyへ進まない" in section
-    assert "Development Claudeは" in section
-    assert "DayTrade Production運用へのhandoff" in section
-    # A failed transport is still not a business verdict.
     assert "NO_TRADE" in section
     assert "DATA_UNAVAILABLE" in section
+    assert "Business" in section
 
 
-# ------------------------------ DTWO-2026-024: read + ConfigChange gate ---
-#
-# Two drifts this section pins. The acceptance now probes the Read capability
-# the nightly actually needs -- positively and negatively -- and it measures
-# ConfigChange the way Claude Code defines it: a blocked change must not become
-# effective in the running session. Bytes on disk are not the measurement, and
-# ``policy_settings`` cannot be blocked at all.
-
-
-def test_remote_control_acceptance_probes_the_approved_reads():
-    """TC-09 / AC-12: the canonical instructions, config and run evidence."""
+def test_remote_control_secrets_are_still_never_persisted():
+    """Simplifying the acceptance did not drop the standing prohibition."""
     section = _section_with_subsections(
         _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
     )
-    assert "Approved Read probe" in section
-    for target in (
-        "CLAUDE.md",
-        "AGENTS.md",
-        "config/strategy.yaml",
-        "config/source_matrix.yaml",
-        "docs/canonical-pipeline.md",
-        "prompts/nightly_research.md",
-        "runtime_security.json",
+    for token in ("token", "credential", "Raw Evidence", "runtime_security.json"):
+        assert token in section, token
+
+
+def test_a_replaced_policy_reruns_the_preflight():
+    section = _section_with_subsections(
+        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+    )
+    assert "Runtime Security Preflight" in section
+    assert "再利用しない" in section
+
+
+# ------------------------------- provider compatibility suite (PC-01..16) ---
+
+PC_CASES = (
+    "PC-01 VERSION",
+    "PC-02 TRUSTED_READ",
+    "PC-03 SENSITIVE_READ",
+    "PC-04 NONCANONICAL_BASH",
+    "PC-05 CANONICAL_OFFLINE_CLI",
+    "PC-06 WRITE_EDIT",
+    "PC-07 BUSINESS_ARTIFACT_HAND_EDIT",
+    "PC-08 WEB_TOOLS",
+    "PC-09 AGENT_MCP_CROSS_SESSION",
+    "PC-10 MANAGED_PERMISSION_PRECEDENCE",
+    "PC-11 MANAGED_HOOK_PRECEDENCE",
+    "PC-12 MANAGED_MCP_PRECEDENCE",
+    "PC-13 SANDBOX",
+    "PC-14 NETWORK_ALLOWLIST",
+    "PC-15 CONFIG_CHANGE_OBSERVATION",
+    "PC-16 REMOTE_AUTHORITY_EQUIVALENCE",
+)
+
+
+def test_the_provider_suite_lists_every_case_in_order():
+    text = _text("docs/claude-provider-compatibility.md")
+    positions = []
+    for case in PC_CASES:
+        index = text.find(case)
+        assert index != -1, f"the provider suite is missing {case}"
+        positions.append(index)
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize("case", PC_CASES)
+def test_every_provider_case_states_its_full_protocol(case):
+    """No case may be left as 'check as appropriate'."""
+    text = _text("docs/claude-provider-compatibility.md")
+    start = text.index(case)
+    following = [text.find(other) for other in PC_CASES if text.find(other) > start]
+    end = min(following) if following else text.index("## 報告フォーマット")
+    body = text[start:end]
+    for required in (
+        "Preconditions",
+        "Action",
+        "Expected Result",
+        "Evidence to capture",
+        "PASS condition",
+        "FAIL condition",
     ):
-        assert target in section, target
+        assert required in body, f"{case} does not state {required}"
+    assert "適宜確認" not in body
 
 
-def test_remote_control_acceptance_probes_an_unauthorized_read():
-    """TC-09 / AC-12: the grant is exact, so the negative side is measured too."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
+def test_the_provider_suite_is_development_only_and_exact_versioned():
+    text = _text("docs/claude-provider-compatibility.md")
+    assert "2.1.251" in text
+    assert "Development" in text
+    assert "Production host" in text
+    assert "実行禁止" in text
+    # A case nobody ran blocks the merge, not the commit: the suite is a
+    # pre-merge gate, and Claude's IMPLEMENTATION_BLOCKED is a different state.
+    assert "Human Merge: BLOCKED" in text
+    assert "Production rollout: BLOCKED" in text
+    assert "Claude側の`IMPLEMENTATION_BLOCKED`とは別の状態" in text
+
+
+def test_the_provider_suite_is_not_confused_with_unit_tests():
+    text = _text("docs/claude-provider-compatibility.md")
+    assert "unit" in text
+    assert "mock" in text
+
+
+# ---------------------------------------- the normal operator flow (§18) ---
+
+#: The nine stages a normal production night actually has, in order.
+OPERATOR_FLOW = (
+    "Safe Sync main",
+    "update requirement確認",
+    "Human-only replacement",
+    "Runtime Security Preflight",
+    "Production Claude launch",
+    "/status",
+    "/remote-control",
+    "Remote使用時だけ2件smoke",
+    "$prepare-daytrade-plan",
+)
+
+
+def test_the_normal_operator_flow_is_documented_in_order():
+    """A nightly operator should not have to read a security architecture to
+    find out what to do on an ordinary evening."""
+    text = _text("docs/nightly-operation.md")
+    section = text.split("## 開始方法", 1)[0]
+    assert "通常Operator Flow" in section
+    positions = []
+    for stage in OPERATOR_FLOW:
+        index = section.find(stage)
+        assert index != -1, f"the operator flow does not mention {stage!r}"
+        positions.append(index)
+    assert positions == sorted(positions), "the operator flow stages are out of order"
+
+
+def test_the_operator_flow_appears_before_the_security_architecture():
+    text = _text("docs/nightly-operation.md")
+    assert text.index("通常Operator Flow") < text.index(
+        "## Claude Production Runtime Security"
     )
-    assert "Unauthorized Read probe" in section
-    for denied in (
-        "issuer_domain_registry.yaml",
-        "/etc/claude-code/managed-settings.json",
-        "HOME",
-    ):
-        assert denied in section, denied
-    assert "拒否されたpathの内容を別経路で読み出さない" in section
 
 
-def test_the_read_probe_never_becomes_a_bash_reader():
-    """TC-09 / SC-11.3: reading is the Read tool's job, not a shell's."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for reader in ("cat", "head", "grep", "python -c"):
-        assert reader in section, reader
-    assert "代用しない" in section
-
-
-def test_readable_is_not_writable_in_the_acceptance():
-    """TC-09 / SC-11.2."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "Read可能になったpathがWrite可能になっていないこと" in section
-    assert "event_source_extraction.json" in section
-
-
-def test_configchange_acceptance_measures_the_running_session():
-    """TC-08 / AC-10: effective configuration, not bytes on disk."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "running Production sessionの" in section
-    assert "effective configurationへ反映されないこと" in section
-    for source in ("user_settings", "project_settings", "local_settings", "skills"):
-        assert source in section, source
-
-
-def test_configchange_acceptance_denies_the_disk_bytes_measurement():
-    """TC-08 / AC-10: the old wording is explicitly retired."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "設定fileのdisk上のbytesが変更されないこと" in section
-    assert "保証する契約では**ない**" in section
-    assert "設定fileのdisk上のbytesだけが変わった | それだけではFAILではない" in section
-    assert "UIにblock messageが表示されなかった | それだけではFAILではない" in section
-
-
-def test_configchange_acceptance_fails_only_on_an_effective_change():
-    """TC-08 / AC-10."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert (
-        "block対象のvalid設定変更がrunning sessionで有効になった | **FAIL**" in section
-    )
-    assert "このConfigChange AcceptanceがFAILした場合、Business Pipelineを開始しない" in section
-
-
-def test_policy_settings_configchange_is_documented_as_audit_only():
-    """TC-08 / AC-11: a block nobody can demonstrate is not a success condition."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "`policy_settings`は**audit onlyである**" in section
-    assert (
-        "`policy_settings`のblock成功をAcceptanceの成功条件として要求しない" in section
-    )
-    for boundary in ("root ownership", "SHA256", "semantic equality"):
-        assert boundary in section, boundary
-
-
-def test_protections_are_reconfirmed_after_the_configchange_probe():
-    """TC-08 / AC-10: probing the hook must not leave the boundary assumed."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "ConfigChange probeの後" in section
-    for control in (
-        "allowManagedPermissionRulesOnly",
-        "allowManagedHooksOnly",
-        "allowManagedMcpServersOnly",
-    ):
-        assert control in section, control
-
-
-def test_a_replaced_policy_reruns_the_preflight_and_the_acceptance():
-    """TC-10 / AC-13: the gate is re-entered, never inherited."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert (
-        "Runtime Security PreflightとRemote Control\nSecurity Acceptanceを再実行し、"
-        "全件PASSしたときだけBusiness Pipelineを開始する" in section
-    )
-    assert "新policyのAcceptance Evidenceと\nして再利用しない" in section
-    assert "Security AcceptanceのFAILをBusiness Decision" in section
-
-
-def test_the_acceptance_order_still_ends_at_the_business_pipeline():
-    """TC-10 / AC-13: replacement -> preflight -> acceptance -> nightly.
-
-    Read from the acceptance subsection's own flow block: the surrounding prose
-    names the same steps in whatever order the sentence needs, so only the
-    ordered listing is evidence of the order.
-    """
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"),
-        "#### Production Remote Control Acceptance（Human-only）",
-    )
-    flow = re.search(r"```text\n(.*?)```", section, re.DOTALL)
-    assert flow, "the acceptance flow block disappeared"
-    steps = flow.group(1)
-    replacement = steps.index("Human-only Managed Policy replacement")
-    preflight = steps.index("Runtime Security Preflight")
-    acceptance = steps.index("Remote Control Security Acceptance")
-    nightly = steps.rindex("Production Nightly")
-    assert replacement < preflight < acceptance < nightly
+def test_the_operator_flow_names_the_two_remote_smoke_expectations():
+    text = _text("docs/nightly-operation.md")
+    section = text.split("## 開始方法", 1)[0]
+    assert "CLAUDE.md" in section
+    assert "pwd" in section
+    assert "PASS" in section
+    assert "DENY" in section
 
 
 # ------------------- Production Security Boundary Change Authorization ---
@@ -1740,3 +1856,311 @@ def test_claude_md_carries_the_same_authorization_semantics():
     ):
         assert invariant in text, invariant
     assert "authorizationの" in text and "Human-only" in text
+
+
+# ------------------------------------------- static pipeline audit (§22) ---
+#
+# DTWO-2026-025. The Nightly Prompt and the Runtime Guard are two descriptions
+# of the same boundary, and they had drifted: the prompt ran seven commands the
+# guard did not approve, and one the guard forbids. This audit compares the
+# command tokens themselves -- not paragraph wording, not line numbers -- so
+# either side moving alone fails.
+
+#: Subcommands a normal nightly must never contain, with the reason.
+HUMAN_ONLY_SUBCOMMANDS = {
+    "record-recommendation": "appends to a global CSV outside the run directory",
+    "record-execution": "records a human-confirmed fill",
+    "activate-selection-config": "applies a human-chosen threshold pair",
+    "build-selection-calibration": "calibration, not a nightly stage",
+    "evaluate-selection-thresholds": "calibration, not a nightly stage",
+}
+
+_CLI_INVOCATION = re.compile(r"-m\s+src\.cli\s+([a-z0-9][a-z0-9-]*)")
+
+
+def _load_guard_contract():
+    import importlib.util
+
+    guard_path = PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
+    spec = importlib.util.spec_from_file_location("daytrade_runtime_guard", guard_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prompt_subcommands() -> set[str]:
+    return set(_CLI_INVOCATION.findall(_text("prompts/nightly_research.md")))
+
+
+#: Canonical-order entries that name more than one subcommand in prose.
+CANONICAL_ENTRY_ALIASES = {
+    "init/complete event-research": {
+        "init-event-research",
+        "complete-event-research",
+    },
+}
+
+
+def _canonical_doc_subcommands() -> set[str]:
+    guard = _load_guard_contract()
+    known = guard.APPROVED_SUBCOMMANDS | guard.FORBIDDEN_SUBCOMMANDS
+    found: set[str] = set()
+    for entry in _canonical_order_entries():
+        if entry in CANONICAL_ENTRY_ALIASES:
+            found |= CANONICAL_ENTRY_ALIASES[entry]
+        elif entry in known:
+            found.add(entry)
+    assert found <= known, f"an alias names an unknown subcommand: {found - known}"
+    return found
+
+
+def test_every_nightly_prompt_command_is_approved_by_the_runtime_guard():
+    guard = _load_guard_contract()
+    unclassified = _prompt_subcommands() - guard.APPROVED_SUBCOMMANDS
+    assert not unclassified, (
+        "prompts/nightly_research.md invokes src.cli subcommands the Runtime "
+        f"Guard does not approve: {sorted(unclassified)}"
+    )
+
+
+def test_the_nightly_prompt_contains_no_human_only_command():
+    present = _prompt_subcommands() & set(HUMAN_ONLY_SUBCOMMANDS)
+    assert not present, (
+        "prompts/nightly_research.md invokes a human-only command in the normal "
+        f"flow: {sorted(present)}"
+    )
+
+
+def test_the_canonical_pipeline_contains_no_human_only_command():
+    present = _canonical_doc_subcommands() & set(HUMAN_ONLY_SUBCOMMANDS)
+    assert not present, (
+        f"docs/canonical-pipeline.md lists a human-only command: {sorted(present)}"
+    )
+
+
+def test_record_recommendation_stays_forbidden_everywhere():
+    """The specific regression this audit exists to catch."""
+    guard = _load_guard_contract()
+    assert "record-recommendation" in guard.FORBIDDEN_SUBCOMMANDS
+    assert "record-recommendation" not in guard.APPROVED_SUBCOMMANDS
+    assert "record-recommendation" not in _prompt_subcommands()
+
+
+def test_every_canonical_pipeline_command_is_approved_by_the_runtime_guard():
+    guard = _load_guard_contract()
+    unclassified = _canonical_doc_subcommands() - guard.APPROVED_SUBCOMMANDS
+    assert not unclassified, (
+        "docs/canonical-pipeline.md lists src.cli subcommands the Runtime Guard "
+        f"does not approve: {sorted(unclassified)}"
+    )
+
+
+def test_the_guard_approves_no_command_the_nightly_never_runs():
+    """Drift in the other direction: an approval nothing documents."""
+    guard = _load_guard_contract()
+    documented = (
+        _prompt_subcommands()
+        | _canonical_doc_subcommands()
+        # Verifiers are run by the operator against a finished run rather than
+        # being a numbered pipeline stage, so they are documented elsewhere.
+        | {"verify-production-run", "verify-production-happy-path"}
+    )
+    orphaned = guard.APPROVED_SUBCOMMANDS - documented
+    assert not orphaned, (
+        f"the Runtime Guard approves undocumented subcommands: {sorted(orphaned)}"
+    )
+
+
+# ------------------------------ Validation Gate Placement (VG-01..VG-09) ---
+#
+# DTWO-2026-025 Rev.2. A gate that cannot run before a commit exists -- a real
+# provider on a real host, a CI run, a human acceptance pass -- was being
+# written down as a pre-commit requirement, which makes the contract
+# unsatisfiable and tempts an implementer to claim a PASS nobody observed. The
+# amendment moves those gates to where their evidence can name an immutable
+# SHA, and fixes that moving them does not weaken them.
+
+VALIDATION_GATE_HEADING = "## Validation Gate Placement Contract"
+PRE_COMMIT_HEADING = "### Pre-Commit Gate"
+PRE_MERGE_HEADING = "### Pre-Merge Gate"
+PRE_PRODUCTION_HEADING = "### Pre-Production Gate"
+
+#: The standard development lifecycle, in the order the SSOT draws it.
+STANDARD_LIFECYCLE = ("Tests", "Commit", "Safe Push", "Draft PR", "CI", "Review")
+
+
+def test_vg_01_the_standard_lifecycle_still_tests_before_it_commits():
+    """The amendment moves external gates; it does not move the local ones."""
+    lifecycle = _section(_work_order_doc(), "## Work Order Lifecycle")
+    positions = []
+    for stage in STANDARD_LIFECYCLE:
+        index = lifecycle.find(stage)
+        assert index != -1, f"the lifecycle no longer names {stage!r}"
+        positions.append(index)
+    assert positions == sorted(positions), "the standard lifecycle is out of order"
+
+
+def test_vg_02_the_three_gate_classes_are_defined_in_order():
+    text = _work_order_doc()
+    positions = []
+    for heading in (
+        VALIDATION_GATE_HEADING,
+        PRE_COMMIT_HEADING,
+        PRE_MERGE_HEADING,
+        PRE_PRODUCTION_HEADING,
+    ):
+        assert heading in text, f"the work order SSOT is missing {heading}"
+        positions.append(text.index(heading))
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize(
+    "heading, required",
+    [
+        (
+            PRE_COMMIT_HEADING,
+            ("repository-local deterministic tests", "commitしては"),
+        ),
+        (
+            PRE_MERGE_HEADING,
+            (
+                "GitHub Actions CI",
+                "real-provider compatibility",
+                "Human Merge: BLOCKED",
+            ),
+        ),
+        (
+            PRE_PRODUCTION_HEADING,
+            (
+                "Production historical compatibility audit",
+                "Development Claudeが実行しては",
+            ),
+        ),
+    ],
+)
+def test_vg_02_each_gate_class_states_what_it_holds(heading, required):
+    body = _section(_work_order_doc(), heading)
+    for token in required:
+        assert token in body, f"{heading} does not state {token!r}"
+
+
+def test_vg_03_an_external_gate_is_not_a_pre_commit_requirement_by_default():
+    """The correction itself: commit first, then run what needs a fixed SHA."""
+    body = _section(_work_order_doc(), PRE_MERGE_HEADING)
+    assert "immutable SHAへ固定した後" in body
+    for permitted in ("git add", "commit", "Safe Push", "Draft PR"):
+        assert permitted in body, permitted
+    assert "禁止しては" in body
+    # A work order may still pin a gate to pre-commit explicitly.
+    assert "明示的にPRE-COMMITと指定した" in body
+
+
+def test_vg_04_external_gate_evidence_names_an_exact_commit():
+    body = _section(_work_order_doc(), "### Exact HEAD Evidence")
+    assert "exact commit SHA" in body
+    assert "Provider Compatibility Tested HEAD" in body
+    assert "<40-char SHA>" in body
+
+
+def test_vg_05_evidence_does_not_survive_a_head_change():
+    body = _section(_work_order_doc(), "### Exact HEAD Evidence")
+    assert "old PC Evidence = INVALID FOR NEW HEAD" in body
+    assert "流用しては" in body
+    assert "再実施する" in body
+    # A PR body edit moves no bytes, so it invalidates nothing.
+    assert "commit SHAが変わらない場合" in body
+
+
+def test_vg_05_a_failed_gate_blocks_instead_of_rewriting_history():
+    body = _section(_work_order_doc(), "### Gate Failure Semantics")
+    assert "Merge: BLOCKED" in body
+    assert "Production: BLOCKED" in body
+    assert "修正commitを追加する" in body
+    for forbidden in (
+        "history rewrite",
+        "force push",
+        "validator relaxation",
+        "Evidence rewrite",
+    ):
+        assert forbidden in body, forbidden
+
+
+def test_vg_06_an_unrun_external_gate_is_never_reported_as_a_pass():
+    body = _section(_work_order_doc(), "### No False PASS")
+    for claim in ("PASS", "SUCCESS", "VERIFIED"):
+        assert claim in body, claim
+    assert "Provider Compatibility: NOT VERIFIED BY CLAUDE" in body
+    assert "GitHub CI: NOT VERIFIED BY CLAUDE" in body
+
+
+#: The pre-merge order the provider suite must document, start to finish.
+PC_GATE_ORDER = (
+    "GitHub Actions CI",
+    "exact PR HEAD freeze",
+    "Human PC-01..PC-16",
+    "Architect Final Review",
+    "Human Merge",
+    "Production Human-only rollout",
+)
+
+PC_GATE_HEADING = "## Gate Placement"
+
+
+def _provider_gate_section() -> str:
+    return _section(_text("docs/claude-provider-compatibility.md"), PC_GATE_HEADING)
+
+
+def test_vg_07_the_provider_suite_runs_after_ci_on_a_frozen_head():
+    section = _provider_gate_section()
+    positions = []
+    for stage in PC_GATE_ORDER:
+        index = section.find(stage)
+        assert index != -1, f"the provider gate order omits {stage!r}"
+        positions.append(index)
+    assert positions == sorted(positions), "the provider gate order is wrong"
+    assert "PRE-MERGE / PRE-PRODUCTION GATE" in section
+    assert "PRE-COMMIT GATEではない" in section
+    assert "CI must complete successfully before Human PC starts" in section
+
+
+def test_vg_08_one_failed_or_missing_case_blocks_merge_and_production():
+    section = _provider_gate_section()
+    assert "all 16 cases required" in section
+    assert "one FAIL blocks merge" in section
+    assert "one missing case blocks merge" in section
+    assert "Human Merge: BLOCKED" in section
+    assert "Production rollout: BLOCKED" in section
+    # And what it explicitly does not block.
+    assert "commit / Safe Push / Draft PRのblockerでは" in section
+
+
+def test_vg_08_no_local_substitute_is_accepted_for_the_provider_gate():
+    section = _provider_gate_section()
+    for rule in (
+        "mock tests cannot substitute for a real provider test",
+        "Development local pytest cannot substitute for PC",
+        "Production host is not the Development implementation environment",
+        "Production deployment remains Human-only",
+    ):
+        assert rule in section, rule
+
+
+@pytest.mark.parametrize(
+    "prohibited",
+    [
+        "raw git push",
+        "gh CLI",
+        "force push",
+        "Production operation",
+        "Security relaxation",
+        "Fail-Closed relaxation",
+    ],
+)
+def test_vg_09_the_gate_amendment_grants_no_new_authority(prohibited):
+    """Reclassifying where a gate runs must not become a way to remove one."""
+    body = _section(
+        _work_order_doc(), "### Gate Placement Is Not an Authority Change"
+    )
+    assert prohibited in body, prohibited
+    assert "消えるのではなく後段のgateへ移る" in body
+    assert "Protected Invariants" in body

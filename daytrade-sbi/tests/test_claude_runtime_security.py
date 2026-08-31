@@ -36,37 +36,6 @@ CURRENT_EXPECTED_DOMAINS = (
 
 PRODUCTION_PYTHON = str(Path(sys.executable).resolve())
 
-#: DTWO-2026-024 / AR-01. The exact Production Nightly Read allowlist, spelled
-#: out here as a test expectation so a silently widened or reordered production
-#: namespace fails rather than agreeing with itself.
-AR_01_READ_RELATIVE_PATHS = (
-    ("project", "CLAUDE.md"),
-    ("project", ".agents/skills/prepare-daytrade-plan/SKILL.md"),
-    ("daytrade", "AGENTS.md"),
-    ("daytrade", "TODO.md"),
-    ("daytrade", "config/strategy.yaml"),
-    ("daytrade", "config/source_matrix.yaml"),
-    ("daytrade", "docs/canonical-pipeline.md"),
-    ("daytrade", "docs/nightly-operation.md"),
-    ("daytrade", "prompts/nightly_research.md"),
-    ("daytrade", "runs/**"),
-)
-
-
-def _ar_01_rules(project_root=REPOSITORY_ROOT, daytrade_root=PROJECT_ROOT):
-    roots = {"project": str(project_root), "daytrade": str(daytrade_root)}
-    return tuple(
-        f"Read(//{roots[root].lstrip('/')}/{relative})"
-        for root, relative in AR_01_READ_RELATIVE_PATHS
-    )
-
-
-def _expected_read_rules():
-    return crs.production_read_permission_rules(
-        project_root=REPOSITORY_ROOT, daytrade_root=PROJECT_ROOT
-    )
-
-
 # ------------------------------------------------------------- fixtures ---
 
 
@@ -267,7 +236,6 @@ def test_the_template_is_not_directly_installable_json():
 
 
 def test_rendered_policy_meets_the_managed_contract(rendered):
-    assert rendered["requiredMinimumVersion"] == "2.1.224"
     permissions = rendered["permissions"]
     assert permissions["defaultMode"] == "dontAsk"
     assert permissions["disableBypassPermissionsMode"] == "disable"
@@ -329,15 +297,27 @@ def test_rendered_hooks_use_the_os_managed_guard_in_exec_form(rendered):
     assert entry["command"] == PRODUCTION_PYTHON
     assert entry["args"] == ["-I", "-B", str(crs.MANAGED_GUARD_PATH)]
 
-    config = hooks["ConfigChange"][0]
-    for source in (
-        "user_settings",
-        "project_settings",
-        "local_settings",
-        "skills",
-        "policy_settings",
-    ):
-        assert source in config["matcher"]
+    # PreToolUse is the whole hook contract. A ConfigChange hook could not
+    # block the one source that mattered, so it is gone rather than kept as a
+    # critical-looking acceptance step that proved nothing.
+    assert set(hooks) == {"PreToolUse"}
+
+
+def test_a_policy_carrying_a_config_change_hook_is_rejected(rendered):
+    payload = json.loads(json.dumps(rendered))
+    payload["hooks"]["ConfigChange"] = [{"matcher": "skills", "hooks": []}]
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload,
+            expected_domains=CURRENT_EXPECTED_DOMAINS,
+            expected_project_root=REPOSITORY_ROOT,
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+def test_the_template_declares_no_config_change_hook():
+    text = crs.MANAGED_SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "ConfigChange" not in text
 
 
 def test_the_managed_hook_never_points_at_a_repository_path(rendered):
@@ -427,7 +407,7 @@ def test_a_policy_whose_edit_rule_was_downgraded_is_rejected(rendered):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -439,12 +419,12 @@ def test_a_policy_without_any_edit_rule_is_rejected(rendered):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
 
-# --------------------------------- AR-01 production nightly read rules ---
+# ------------------------------------ production nightly read model ---
 #
 # DTWO-2026-024. The Managed Policy grants the Production session read access to
 # the canonical instructions, the nightly config and the run evidence -- and to
@@ -474,160 +454,112 @@ def test_the_edit_helper_still_delegates_to_the_generic_one():
         ) == crs._absolute_permission_pattern(value)
 
 
-def test_production_read_rules_are_the_exact_ar_01_set_in_order():
-    """TC-02: exact, ordered, ten. Not a set -- order is part of the contract."""
-    rules = crs.production_read_permission_rules(
-        project_root=REPOSITORY_ROOT, daytrade_root=PROJECT_ROOT
-    )
-    assert rules == _ar_01_rules()
-    assert len(rules) == 10
+def test_the_rendered_policy_grants_no_read_allow_rule(rendered):
+    """DTWO-2026-025: Read is not an allowlist any more.
 
-
-def test_production_read_rules_require_absolute_roots():
-    """TC-02: a relative root would render a permission rule nobody reviewed."""
-    with pytest.raises(crs.RuntimeSecurityError):
-        crs.production_read_permission_rules(
-            project_root="relative", daytrade_root=PROJECT_ROOT
-        )
-    with pytest.raises(crs.RuntimeSecurityError):
-        crs.production_read_permission_rules(
-            project_root=REPOSITORY_ROOT, daytrade_root="relative"
-        )
-
-
-def test_the_template_carries_every_read_placeholder():
-    """TC-03: the capability is reviewable in the repository template itself,
-    not appended to the policy at runtime."""
-    text = crs.MANAGED_SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8")
-    for placeholder in crs.PRODUCTION_READ_PLACEHOLDERS:
-        assert f'"Read({placeholder})"' in text, placeholder
-    assert len(crs.PRODUCTION_READ_PLACEHOLDERS) == 10
-
-
-def test_the_rendered_allowlist_is_bash_plus_edit_plus_the_ten_reads(rendered):
-    """TC-03: nothing else acquired an allow rule along the way."""
+    The predecessor contract enumerated ten exact ``Read(...)`` rules and
+    claimed they were the only readable paths. They were not, and a nightly
+    broke on any repository file nobody had thought to list. Read now arrives
+    through ``additionalDirectories``; a ``Read(...)`` allow rule here would
+    mean the false contract had come back.
+    """
     allow = rendered["permissions"]["allow"]
+    assert [rule for rule in allow if rule.startswith("Read")] == []
+
     bash = [rule for rule in allow if rule.startswith("Bash(")]
     edit = [rule for rule in allow if rule.startswith("Edit(")]
-    read = [rule for rule in allow if rule.startswith("Read(")]
-
-    assert len(bash) == 1
-    assert bash[0] == f"Bash({PRODUCTION_PYTHON} -B -m src.cli *)"
+    assert bash == [f"Bash({PRODUCTION_PYTHON} -B -m src.cli *)"]
     assert len(edit) == 1
-    assert tuple(read) == _ar_01_rules()
-    assert len(allow) == len(bash) + len(edit) + len(read)
+    assert len(allow) == 2
 
 
-def test_no_rendered_read_rule_is_blanket_or_single_slash(rendered):
-    """TC-03/TC-04: every granted Read names one reviewed path."""
-    for rule in rendered["permissions"]["allow"]:
-        if not rule.startswith("Read("):
-            continue
-        assert rule.startswith("Read(//")
-        assert not rule.startswith("Read(///")
-        assert rule != "Read(//**)"
+def test_the_rendered_policy_scopes_read_to_one_project_root(rendered):
+    directories = rendered["permissions"]["additionalDirectories"]
+    assert directories == [str(REPOSITORY_ROOT)]
+    assert crs.verify_additional_directories(
+        directories, expected_project_root=REPOSITORY_ROOT
+    ) == str(REPOSITORY_ROOT)
 
 
-def _read_tampered(rendered, mutate):
+def test_the_rendered_policy_denies_the_sensitive_read_paths(rendered):
+    """The two places worth exfiltrating rather than merely reading."""
+    deny = rendered["permissions"]["deny"]
+    assert "Read(//etc/claude-code/**)" in deny
+    assert "Read(~/.claude/**)" in deny
+    assert set(crs.PRODUCTION_READ_DENY_RULES) <= set(deny)
+
+
+@pytest.mark.parametrize("rule", ["Read(//etc/claude-code/**)", "Read(~/.claude/**)"])
+def test_dropping_a_sensitive_read_deny_is_rejected(rendered, rule):
     payload = json.loads(json.dumps(rendered))
-    allow = payload["permissions"]["allow"]
-    payload["permissions"]["allow"] = mutate(
-        [rule for rule in allow if not rule.startswith("Read(")],
-        [rule for rule in allow if rule.startswith("Read(")],
-    )
-    return payload
-
-
-@pytest.mark.parametrize(
-    "mutate,label",
-    [
-        pytest.param(lambda other, read: other + ["Read"], "bare", id="bare-Read"),
-        pytest.param(
-            lambda other, read: other + ["Read(*)"], "star", id="Read-star"
-        ),
-        pytest.param(
-            lambda other, read: other + ["Read(//**)"], "blanket", id="Read-blanket"
-        ),
-        pytest.param(
-            lambda other, read: other
-            + [f"Read(//{str(REPOSITORY_ROOT).lstrip('/')}/**)"],
-            "project-blanket",
-            id="project-root-blanket",
-        ),
-        pytest.param(
-            lambda other, read: other
-            + [f"Read(//{str(PROJECT_ROOT).lstrip('/')}/**)"],
-            "daytrade-blanket",
-            id="daytrade-root-blanket",
-        ),
-        pytest.param(
-            lambda other, read: other
-            + [rule.replace("Read(//", "Read(/") for rule in read],
-            "single-slash",
-            id="single-slash",
-        ),
-        pytest.param(
-            lambda other, read: other
-            + [rule.replace("Read(//", "Read(///") for rule in read],
-            "malformed",
-            id="triple-slash",
-        ),
-        pytest.param(
-            lambda other, read: other + read + ["Read(//etc/shadow)"],
-            "extra",
-            id="extra-arbitrary-Read",
-        ),
-        pytest.param(
-            lambda other, read: other + read[:-1], "missing", id="missing-required-Read"
-        ),
-        pytest.param(
-            lambda other, read: other + [read[1], read[0]] + list(read[2:]),
-            "reordered",
-            id="reordered",
-        ),
-        pytest.param(lambda other, read: other, "none", id="no-Read-at-all"),
-    ],
-)
-def test_a_read_allowlist_that_is_not_exactly_ar_01_is_rejected(
-    rendered, mutate, label
-):
-    """TC-04 / FC-01..FC-04: missing, extra, blanket and malformed all fail."""
-    payload = _read_tampered(rendered, mutate)
+    payload["permissions"]["deny"].remove(rule)
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Read",
+        "Read(*)",
+        "Read(//**)",
+        "Read(//etc/shadow)",
+        "Read(//tmp/anything)",
+    ],
+)
+def test_any_read_allow_rule_is_rejected(rendered, rule):
+    """Including a *narrow* one: the allowlist model itself is what is refused."""
+    payload = json.loads(json.dumps(rendered))
+    payload["permissions"]["allow"].append(rule)
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload,
+            expected_domains=CURRENT_EXPECTED_DOMAINS,
+            expected_project_root=REPOSITORY_ROOT,
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
+
+
+@pytest.mark.parametrize(
+    "value,label",
+    [
+        ([], "empty"),
+        ([str(REPOSITORY_ROOT), "/etc"], "two-entries"),
+        (["relative/path"], "relative"),
+        ([str(PROJECT_ROOT)], "wrong-root"),
+        (["/"], "filesystem-root"),
+        (str(REPOSITORY_ROOT), "bare-string"),
+        (None, "missing"),
+    ],
+)
+def test_a_wrong_additional_directories_entry_is_rejected(rendered, value, label):
+    payload = json.loads(json.dumps(rendered))
+    if value is None:
+        del payload["permissions"]["additionalDirectories"]
+    else:
+        payload["permissions"]["additionalDirectories"] = value
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload,
+            expected_domains=CURRENT_EXPECTED_DOMAINS,
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID", label
 
 
-def test_the_run_evidence_rule_is_the_one_authorized_recursive_read(rendered):
-    """TC-04: ``runs/**`` is AR-01's single deliberate exception, so that the
-    Managed Policy does not have to be replaced once per trading day."""
-    read = [
-        rule for rule in rendered["permissions"]["allow"] if rule.startswith("Read(")
-    ]
-    recursive = [rule for rule in read if rule.endswith("/**)")]
-    assert recursive == [f"Read(//{str(PROJECT_ROOT).lstrip('/')}/runs/**)"]
-
-
-def test_a_read_rule_expectation_is_not_self_derived(rendered):
-    """TC-04: an expectation that merely echoes the policy proves nothing, so
-    the verifier still refuses a widened expectation."""
-    widened = _ar_01_rules()[:-1] + ("Read(//**)",)
-    with pytest.raises(crs.RuntimeSecurityError):
-        crs.verify_read_permission_rules(widened, expected_rules=widened)
-
-
-def test_an_installed_policy_missing_a_read_rule_is_not_accepted(
+def test_an_installed_policy_with_a_read_allow_rule_is_not_accepted(
     managed_root, rendered
 ):
-    """TC-05: a host still on the old, read-less policy is not "close enough"."""
+    """A host still carrying the old ten-rule policy is not close enough."""
     stale = json.loads(json.dumps(rendered))
-    stale["permissions"]["allow"] = [
-        rule for rule in stale["permissions"]["allow"] if not rule.startswith("Read(")
-    ]
+    stale["permissions"]["allow"].append(
+        "Read(//" + str(REPOSITORY_ROOT).lstrip("/") + "/CLAUDE.md)"
+    )
     _install(managed_root, stale)
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_installed_managed_settings(
@@ -638,29 +570,11 @@ def test_an_installed_policy_missing_a_read_rule_is_not_accepted(
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
 
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        pytest.param(lambda rules: rules + ["Read(//etc/shadow)"], id="extra"),
-        pytest.param(lambda rules: rules[:-1], id="missing"),
-        pytest.param(
-            lambda rules: [rules[1], rules[0]] + rules[2:], id="reordered"
-        ),
-        pytest.param(
-            lambda rules: [rule.replace("/CLAUDE.md", "/README.md") for rule in rules],
-            id="different-path",
-        ),
-    ],
-)
-def test_an_installed_policy_with_a_different_read_set_is_not_accepted(
-    managed_root, rendered, mutate
+def test_an_installed_policy_with_a_widened_root_is_not_accepted(
+    managed_root, rendered
 ):
-    """TC-05."""
     installed = json.loads(json.dumps(rendered))
-    allow = installed["permissions"]["allow"]
-    installed["permissions"]["allow"] = [
-        rule for rule in allow if not rule.startswith("Read(")
-    ] + mutate([rule for rule in allow if rule.startswith("Read(")])
+    installed["permissions"]["additionalDirectories"] = ["/"]
     _install(managed_root, installed)
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_installed_managed_settings(
@@ -672,8 +586,8 @@ def test_an_installed_policy_with_a_different_read_set_is_not_accepted(
 
 
 def test_read_access_grants_no_write_access(rendered):
-    """TC-06 / SC-11.2: readable is not writable. The only Edit target is still
-    the event extraction working file."""
+    """Readable is not writable. The only Edit target is still the event
+    extraction working file, and widening Read did not touch that."""
     allow = rendered["permissions"]["allow"]
     edit = [rule for rule in allow if rule.startswith("Edit(")]
     assert edit == [
@@ -691,7 +605,7 @@ def test_read_access_grants_no_write_access(rendered):
 
 
 def test_read_access_adds_no_bash_reader(rendered):
-    """TC-06 / SC-11.3: files are read with the Read tool, never by shelling out."""
+    """Files are read with the Read tool, never by shelling out."""
     bash = [rule for rule in rendered["permissions"]["allow"] if rule.startswith("Bash(")]
     assert bash == [f"Bash({PRODUCTION_PYTHON} -B -m src.cli *)"]
     for reader in ("cat", "head", "tail", "grep", "less", "python -c"):
@@ -699,7 +613,7 @@ def test_read_access_adds_no_bash_reader(rendered):
 
 
 def test_no_machine_specific_read_path_is_hardcoded():
-    """TC-11: the rules are rendered from the roots, never written down."""
+    """The root is rendered from the deployment, never written down."""
     for path in (
         PROJECT_ROOT / "src" / "claude_runtime_security.py",
         crs.MANAGED_SETTINGS_TEMPLATE_PATH,
@@ -708,7 +622,25 @@ def test_no_machine_specific_read_path_is_hardcoded():
         assert str(PROJECT_ROOT) not in text
         assert str(REPOSITORY_ROOT) not in text
         assert "/home/" not in text
-        assert "Read(//" not in text
+
+
+def test_the_removed_read_allowlist_contract_is_gone():
+    """DTWO-2026-025 cleanup: no dead half of the old contract survives."""
+    text = (PROJECT_ROOT / "src" / "claude_runtime_security.py").read_text(
+        encoding="utf-8"
+    )
+    for removed in (
+        "PROJECT_ROOT_READ_PATHS",
+        "DAYTRADE_ROOT_READ_PATHS",
+        "PRODUCTION_READ_RELATIVE_PATHS",
+        "PRODUCTION_READ_PLACEHOLDERS",
+        "production_read_permission_patterns",
+        "production_read_permission_rules",
+        "policy_read_permission_rules",
+        "REQUIRED_MINIMUM_CLAUDE_VERSION",
+    ):
+        assert removed not in text, f"{removed} survived the read re-baseline"
+        assert not hasattr(crs, removed), f"{removed} is still exported"
 
 
 # ------------------------------------------------- managed hardening ---
@@ -733,7 +665,7 @@ def test_a_policy_without_the_new_hardening_flags_is_rejected(rendered, key, mut
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -786,18 +718,50 @@ def test_run_dir_refuses_to_escape_the_runs_root(tmp_path, value):
 # ------------------------------------------------------------- versions ---
 
 
-def test_claude_version_gate_accepts_the_minimum_and_above():
-    """The floor is 2.1.224: crossSessionInbound is only enforceable there."""
-    assert crs.verify_claude_version("2.1.224 (Claude Code)") == (2, 1, 224)
+def test_the_version_gate_accepts_exactly_one_build():
+    """Not a floor. Provider behaviour is only proven on the accepted build."""
+    assert crs.REQUIRED_CLAUDE_VERSION == "2.1.251"
     assert crs.verify_claude_version("2.1.251 (Claude Code)") == (2, 1, 251)
-    assert crs.verify_claude_version("2.2.0") == (2, 2, 0)
 
 
-@pytest.mark.parametrize("text", ["2.1.223", "2.1.219", "2.0.999", "1.9.9"])
-def test_old_claude_versions_are_unsupported(text):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2.1.250",
+        "2.1.252",
+        "2.1.224",
+        "2.2.0",
+        "3.0.0",
+        "1.9.9",
+    ],
+)
+def test_every_other_claude_version_is_unsupported(text):
+    """Newer is exactly as unproven as older, so both are refused."""
     with pytest.raises(crs.RuntimeSecurityError) as excinfo:
         crs.verify_claude_version(text)
     assert excinfo.value.code == "CLAUDE_RUNTIME_VERSION_UNSUPPORTED"
+
+
+def test_the_policy_pins_the_version_from_both_sides(rendered):
+    assert rendered["requiredMinimumVersion"] == "2.1.251"
+    assert rendered["requiredMaximumVersion"] == "2.1.251"
+
+
+@pytest.mark.parametrize("key", ["requiredMinimumVersion", "requiredMaximumVersion"])
+@pytest.mark.parametrize("value", ["2.1.250", "2.1.252", None])
+def test_an_unpinned_policy_version_is_rejected(rendered, key, value):
+    payload = json.loads(json.dumps(rendered))
+    if value is None:
+        del payload[key]
+    else:
+        payload[key] = value
+    with pytest.raises(crs.RuntimeSecurityError) as excinfo:
+        crs.verify_managed_settings_contract(
+            payload,
+            expected_domains=CURRENT_EXPECTED_DOMAINS,
+            expected_project_root=REPOSITORY_ROOT,
+        )
+    assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
 
 @pytest.mark.parametrize("text", ["", "unknown", "vNEXT"])
@@ -1160,7 +1124,7 @@ def _tamper(rendered, mutate):
             "CLAUDE_MANAGED_POLICY_INVALID",
         ),
         (
-            lambda p: p.__setitem__("requiredMinimumVersion", "2.0.0"),
+            lambda p: p.__setitem__("requiredMinimumVersion", "2.1.250"),
             "CLAUDE_MANAGED_POLICY_INVALID",
         ),
         (
@@ -1192,7 +1156,7 @@ def test_every_weakened_managed_policy_is_rejected(rendered, mutate, code):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == code
 
@@ -1326,7 +1290,7 @@ def _document(**overrides):
     kwargs = dict(
         target_date="2026-08-14",
         platform_name="Linux-6.6.0-x86_64",
-        claude_code_version="2.1.224",
+        claude_code_version="2.1.251",
         git_head_sha="0" * 40,
         production_python=PRODUCTION_PYTHON,
         managed_settings_sha256="a" * 64,
@@ -1415,7 +1379,7 @@ def production_world(tmp_path):
         if argv[:2] == ["git", "rev-parse"]:
             return HEAD_SHA + "\n"
         if argv[0] == "claude":
-            return "2.1.224 (Claude Code)\n"
+            return "2.1.251 (Claude Code)\n"
         raise AssertionError(f"unexpected command {argv}")
 
     kwargs = dict(
@@ -1717,7 +1681,7 @@ def _managed_python_paths(payload):
     ]
     hook_commands = [
         hook["command"]
-        for event in ("PreToolUse", "ConfigChange")
+        for event in ("PreToolUse",)
         for entry in payload["hooks"][event]
         for hook in entry["hooks"]
     ]
@@ -1733,7 +1697,7 @@ def test_render_managed_settings_canonicalizes_a_symlinked_python(python_symlink
     )
     bash_rules, hook_commands = _managed_python_paths(payload)
     assert bash_rules == [f"Bash({real} -B -m src.cli *)"]
-    assert hook_commands == [real, real]
+    assert hook_commands == [real]
     assert str(python_symlink["alias"]) not in json.dumps(payload)
 
 
@@ -1772,7 +1736,7 @@ def test_preflight_uses_one_canonical_python_everywhere(production_world, python
 
     bash_rules, hook_commands = _managed_python_paths(payload)
     assert bash_rules == [f"Bash({real} -B -m src.cli *)"]
-    assert hook_commands == [real, real]
+    assert hook_commands == [real]
     assert alias not in json.dumps(payload)
 
 
@@ -2051,7 +2015,7 @@ def test_tc06_a_stale_python_identity_becomes_the_canonical_one(tmp_path):
     canonical = crs.canonical_production_python(PRODUCTION_PYTHON)
     after = json.loads(text)
     assert f"Bash({canonical} -B -m src.cli *)" in after["permissions"]["allow"]
-    for event in ("ConfigChange", "PreToolUse"):
+    for event in ("PreToolUse",):
         commands = json.dumps(after["hooks"][event])
         assert canonical in commands
 
@@ -2666,7 +2630,7 @@ def _valid_remote_control_policy(rendered):
     crs.verify_managed_settings_contract(
         rendered,
         expected_domains=CURRENT_EXPECTED_DOMAINS,
-        expected_read_rules=_expected_read_rules(),
+        expected_project_root=REPOSITORY_ROOT,
     )
     return json.loads(json.dumps(rendered))
 
@@ -2688,7 +2652,7 @@ def test_a_disable_remote_control_key_is_refused_either_way(rendered, value):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -2715,7 +2679,7 @@ def test_remote_control_auto_start_is_refused(rendered, mutate):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -2739,7 +2703,7 @@ def test_cross_session_inbound_must_be_refuse(rendered, value):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -2752,7 +2716,7 @@ def test_a_missing_cross_session_inbound_is_refused(rendered):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 
@@ -2769,7 +2733,7 @@ def test_a_missing_cross_session_deny_rule_is_refused(rendered, rule):
         crs.verify_managed_settings_contract(
             payload,
             expected_domains=CURRENT_EXPECTED_DOMAINS,
-            expected_read_rules=_expected_read_rules(),
+            expected_project_root=REPOSITORY_ROOT,
         )
     assert excinfo.value.code == "CLAUDE_MANAGED_POLICY_INVALID"
 

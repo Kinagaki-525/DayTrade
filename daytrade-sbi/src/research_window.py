@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.contracts import load_json_document
+from src.market import validate_source_ledger
 from src.research import validate_market_research
 
 
@@ -42,8 +43,8 @@ def resolve_research_window(
         target_date,
         previous_trading_day,
     )
-    latest_run = _latest_previous_run(runs_dir, target_date)
-    if latest_run is None:
+    selected = _select_previous_run(runs_dir, target_date, source_matrix)
+    if selected is None:
         window_start = cutoff - timedelta(days=lookback_days)
         return ResolvedResearchWindow(
             target_date=target_date,
@@ -60,7 +61,7 @@ def resolve_research_window(
             },
         )
 
-    payload = _load_valid_previous_market_research(latest_run, source_matrix)
+    previous_run, payload = selected
     previous_cutoff = _parse_datetime(payload["research_cutoff"], "research_cutoff")
     return ResolvedResearchWindow(
         target_date=target_date,
@@ -72,7 +73,7 @@ def resolve_research_window(
             "window_start": previous_cutoff.isoformat(),
             "window_end": cutoff.isoformat(),
             "previous_research_cutoff": previous_cutoff.isoformat(),
-            "previous_run_date": latest_run.name,
+            "previous_run_date": previous_run.name,
             "bootstrap_lookback_days": None,
         },
     )
@@ -118,11 +119,18 @@ def _bootstrap_lookback_days(source_matrix: dict[str, Any]) -> int:
     return lookback_days
 
 
-def _latest_previous_run(runs_dir: Path, target_date: str) -> Path | None:
-    target = _parse_date(target_date, "target_date")
-    candidates: list[tuple[date, Path]] = []
+def _previous_run_candidates(runs_dir: Path, target_date: str) -> list[Path]:
+    """Every prior run directory that could supply a research cutoff, newest first.
+
+    Only ``YYYY-MM-DD`` *directories* strictly older than ``target_date`` are
+    candidates. A non-date child, a file, and the target date itself are not
+    history and are ignored rather than rejected -- ``runs/`` legitimately holds
+    a README, and the target run's own directory usually exists by now.
+    """
     if not runs_dir.exists():
-        return None
+        return []
+    candidates: list[tuple[date, Path]] = []
+    target = _parse_date(target_date, "target_date")
     for child in runs_dir.iterdir():
         if not child.is_dir():
             continue
@@ -130,42 +138,127 @@ def _latest_previous_run(runs_dir: Path, target_date: str) -> Path | None:
             run_date = _parse_date(child.name, f"run directory {child.name}")
         except ValueError:
             continue
-        if run_date < target:
-            candidates.append((run_date, child))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: item[0])[1]
+        if run_date >= target:
+            continue
+        candidates.append((run_date, child))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [run_dir for _, run_dir in candidates]
 
 
-def _load_valid_previous_market_research(
+def _select_previous_run(
+    runs_dir: Path,
+    target_date: str,
+    source_matrix: dict[str, Any],
+) -> tuple[Path, dict[str, Any]] | None:
+    """The newest prior run whose research is complete enough to continue from.
+
+    The newest directory is not automatically the answer. A run can stop before
+    it ever wrote ``market_research.json``, and a run that finished writing one
+    can still have ended ``DISCOVERY_INCOMPLETE`` -- neither establishes a
+    research cutoff, so neither may become the window start. Both are stepped
+    over in favour of an older *complete* run.
+
+    What is never stepped over is corruption. A history entry that exists but
+    fails its canonical validation is a Fail-Closed error, not a reason to
+    silently reach further back: falling through to an older run there would
+    turn a tampered artifact into a successful resolve. Nothing in this scan
+    writes, repairs, or rewrites history.
+
+    Returns ``(run_dir, market_research payload)``, or ``None`` when no eligible
+    history exists (a FIRST_RUN).
+    """
+    for run_dir in _previous_run_candidates(runs_dir, target_date):
+        payload = _eligible_previous_market_research(run_dir, source_matrix)
+        if payload is not None:
+            return run_dir, payload
+    return None
+
+
+def _eligible_previous_market_research(
     run_dir: Path,
     source_matrix: dict[str, Any],
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
+    """Validate one history entry. ``None`` means "valid but not eligible".
+
+    The absence of ``market_research.json`` is the *only* way a directory stops
+    being history. Once that file exists the run is existing historical
+    evidence, and every check from there is Fail-Closed: the Trust Chain is
+    re-verified with this repository's own canonical validators, and a failure
+    raises rather than falling through to an older run. Falling through on a
+    failure would let a tampered artifact be laundered into a successful
+    resolve simply by also corrupting the run that produced it.
+    """
     research_path = run_dir / "market_research.json"
     if not research_path.exists():
-        raise ValueError(
-            f"HISTORY_INVALID: latest previous run {run_dir.name} lacks market_research.json"
-        )
+        # A run that never got as far as writing its research is not history.
+        return None
+
     try:
         payload = load_json_document(research_path, "market_research.schema.json")
     except ValueError as exc:
         raise ValueError(
-            f"HISTORY_INVALID: latest previous run {run_dir.name} has invalid "
+            f"HISTORY_INVALID: previous run {run_dir.name} has invalid "
             f"market_research.json: {exc}"
         ) from exc
 
-    if payload.get("target_date") != run_dir.name:
+    # The research is only trustworthy together with the Source Ledger it cites,
+    # so an absent ledger is an error rather than an absence of history.
+    sources_path = run_dir / "sources.json"
+    if not sources_path.exists():
         raise ValueError(
-            f"HISTORY_INVALID: latest previous run {run_dir.name} target_date does not "
-            "match its directory"
+            f"HISTORY_INVALID: previous run {run_dir.name} lacks the sources.json "
+            "its market_research.json must be validated against"
         )
-    validation = validate_market_research(payload, source_matrix)
+    try:
+        source_payload = load_json_document(sources_path, "sources.schema.json")
+    except ValueError as exc:
+        raise ValueError(
+            f"HISTORY_INVALID: previous run {run_dir.name} has invalid "
+            f"sources.json: {exc}"
+        ) from exc
+
+    for label, actual in (
+        ("market_research.json", payload.get("target_date")),
+        ("sources.json", source_payload.get("target_date")),
+    ):
+        if actual != run_dir.name:
+            raise ValueError(
+                f"HISTORY_INVALID: previous run {run_dir.name} {label} target_date "
+                f"{actual!r} does not match its directory"
+            )
+
+    # Canonical Source Ledger verification -- the same function the acquisition
+    # and validation CLIs use, not a history-specific reimplementation. Passing
+    # no market_data records skips only the market_data-to-ledger membership
+    # check, which has no meaning here; Attempt Value integrity, source page
+    # paths and the source page SHA256 verification all still run, anchored at
+    # this run's directory.
+    ledger = validate_source_ledger(
+        run_dir.name,
+        (),
+        source_payload,
+        source_matrix,
+        run_dir,
+    )
+    if not ledger.valid:
+        raise ValueError(
+            f"HISTORY_INVALID: previous run {run_dir.name} Source Ledger failed "
+            "verification: " + "; ".join(ledger.errors)
+        )
+
+    validation = validate_market_research(payload, source_matrix, source_payload)
     if not validation.valid:
         raise ValueError(
-            f"HISTORY_INVALID: latest previous run {run_dir.name} market_research "
+            f"HISTORY_INVALID: previous run {run_dir.name} market_research "
             "failed validation: "
             + "; ".join(validation.errors)
         )
+
+    # Eligibility is decided only after the whole Trust Chain has passed. A run
+    # that is trustworthy but never completed established no research cutoff,
+    # so the scan looks further back instead of inheriting an incomplete window.
+    if not validation.discovery_complete or payload.get("overall_status") != "COMPLETE":
+        return None
     return payload
 
 
