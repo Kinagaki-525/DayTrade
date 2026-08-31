@@ -1117,3 +1117,114 @@ def test_vg_09_the_gate_amendment_grants_no_new_authority(prohibited):
     assert prohibited in body, prohibited
     assert "消えるのではなく後段のgateへ移る" in body
     assert "Protected Invariants" in body
+
+
+# ------------------------- DTWO-2026-027: HTTP User-Agent prerequisite ---
+#
+# ``src/source_fetch.py`` refuses to fetch without ``DAYTRADE_HTTP_USER_AGENT``
+# -- there is no default, so acquisition never runs under curl's own identity.
+# That refusal is correct and is not what these tests are about.
+#
+# What they are about is that the variable reaches acquisition by *environment
+# inheritance only*, and DTWO-2026-026 removed the launcher preflight that used
+# to notice it was missing. So the operating procedure is now the only place an
+# operator can learn to set it, and an operator who follows a procedure that
+# omits it is guaranteed to stop at the first Discovery fetch -- which is
+# exactly what happened on 2026-09-01.
+
+UA_ENV_VAR = "DAYTRADE_HTTP_USER_AGENT"
+UA_HEADING = "### HTTP User-Agent"
+
+
+def _ua_section() -> str:
+    return _section(_text("docs/nightly-operation.md"), UA_HEADING)
+
+
+def test_dtwo_027_the_nightly_doc_names_the_user_agent_variable():
+    """AC-027-01: the operating procedure alone must be enough."""
+    assert UA_ENV_VAR in _text("docs/nightly-operation.md")
+
+
+def test_dtwo_027_the_user_agent_is_set_before_the_launcher_starts():
+    """AC-027-02: the shell that starts the launcher is the injection point.
+
+    Inheritance is the only path, so a procedure that mentions the variable
+    after the launcher command would describe something that cannot work.
+    """
+    flow = _text("docs/nightly-operation.md").split("## 開始方法", 1)[0]
+    assert UA_ENV_VAR in flow, "the operator flow never mentions the user agent"
+    assert flow.index(UA_ENV_VAR) < flow.index(
+        "scripts/claude-production --target-date"
+    ), "the user agent is documented after the launcher it must precede"
+
+
+def test_dtwo_027_the_section_shows_the_whole_inheritance_chain():
+    """The chain is the explanation: an operator who knows the value travels by
+    inheritance knows why the launching shell is the place to set it."""
+    section = _ua_section()
+    # The rendered chain block, not the surrounding prose -- prose mentions
+    # ``user_agent()`` before the diagram does.
+    chain = [
+        block
+        for block in section.split("```")
+        if block.lstrip().startswith("text") and "Human shell" in block
+    ]
+    assert len(chain) == 1, "the user agent section renders no inheritance chain"
+    positions = []
+    for stage in (
+        "Human shell",
+        "Production Context Launcher",
+        "user_agent()",
+        "curl --user-agent",
+    ):
+        index = chain[0].find(stage)
+        assert index != -1, f"the inheritance chain omits {stage!r}"
+        positions.append(index)
+    assert positions == sorted(positions), "the inheritance chain is out of order"
+    assert f"export {UA_ENV_VAR}" in section
+
+
+def test_dtwo_027_the_user_agent_value_is_never_stored():
+    """AC-027-05: presence is an operational fact; the value is not evidence."""
+    section = _ua_section()
+    assert "repositoryへ保存しない" in section
+    assert "artifact / log / evidence" in section
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        "Launcher自身はUAのpresenceもvalueも検査しない",
+        "Security Gateではなく",
+        "Runtime Security Preflightでもなく",
+        "Canonical CLI Pipeline Orderの新stepでもない",
+    ],
+)
+def test_dtwo_027_the_retired_preflight_is_not_reintroduced_in_prose(required):
+    """AC-027-03 / AC-027-04: DTWO-2026-026 forbids a launcher UA check, so the
+    documentation must not describe one either."""
+    assert required in _ua_section(), required
+
+
+def test_dtwo_027_the_launcher_still_lists_the_user_agent_as_unchecked():
+    """The same fact, stated where a reader looks for what the launcher does."""
+    section = _section(
+        _text("docs/nightly-operation.md"), "### Launcherが確認しないこと"
+    )
+    assert "HTTP User-Agent" in section
+
+
+def test_dtwo_027_no_real_user_agent_string_is_documented():
+    """A concrete value in the docs becomes everyone's shared identity, and a
+    repository-stored one is exactly what the value contract forbids."""
+    text = _text("docs/nightly-operation.md")
+    assert "<human-managed value>" in text
+    for real in ("Mozilla/", "AppleWebKit", "Chrome/", "curl/"):
+        assert real not in text, f"a real User-Agent value is documented: {real}"
+
+
+def test_dtwo_027_development_real_transport_carries_the_same_requirement():
+    """AC-027-06: the requirement follows the transport, not the environment."""
+    section = _ua_section()
+    assert "curl_transport" in section
+    assert "unit test" in section
