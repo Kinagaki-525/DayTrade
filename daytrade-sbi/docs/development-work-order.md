@@ -8,15 +8,18 @@ Development Work Orderは単なるprompt templateではなく、**Development Pr
 である。ChatGPT / Humanが設計を確定してからClaude Codeへ実装を委譲するための正式な
 handoff形式であり、要求・test・実装・PR・reviewのtraceabilityを担保する。
 
-この文書はDevelopment専用である。Production Security Boundaryの**runtime上の正本**は
-OS Managed PolicyとOS Managed Runtime Guardである。
+この文書はDevelopment専用である。DayTradeのSecurity Boundaryの正本は、**Business
+Evidence Integrity**（Raw Evidence / SHA256 / Source Ledger / Physical Request Record /
+Attempt Immutability / deterministic Parser / Trust Chain）と**Trading Safety**
+（Screening / Event Gate / Ranking / Selection / Recommendation / Risk Engine /
+Humanの最終判断）であり、そのどちらもPipelineの内側でfail-closedに動く。
 
-Development Work Orderは、**通常は既存Production Security Boundaryを緩和してはならない**。
-ただしHuman + ArchitectがProduction Security Boundary Changeを明示的に認可した正式
-Work Orderでは、そのWork Orderが列挙する**repository-side source変更に限り**実装してよい。
+Development Work Orderは、**通常は既存Business Security Contractを緩和してはならない**。
+ただしHuman + ArchitectがSecurity Boundary Changeを明示的に認可した正式Work Orderでは、
+そのWork Orderが列挙する**repository-side source変更に限り**実装してよい。
 
-このauthorizationは**installed Production stateへの変更権限を与えない**。Production
-deploy / install / replacement / runtime operationは常にHuman-onlyである。
+このauthorizationは**Production hostのinstalled stateへの変更権限を与えない**。
+Production deploy / install / runtime operationは常にHuman-onlyである。
 
 ## Requirement Language
 
@@ -58,7 +61,7 @@ Claude Development
         ├─ Implementation
         ├─ Tests
         ├─ Commit
-        ├─ Safe Push
+        ├─ Push
         └─ Draft PR
         ▼
 Claude       Implementation Completion Report生成（Layer 1）
@@ -130,19 +133,22 @@ external / manual gateが未実施であることだけを理由に、次を禁�
 ```text
 git add
 commit
-Safe Push
+push
 Draft PR
 ```
 
 ただしWork Orderがそのgateを**明示的にPRE-COMMITと指定した**場合は例外であり、
 その指定に従う（MUST）。
 
-Pre-Merge Gateが未実施、または1件でもFAILしている場合は次とする（MUST）。
+required Pre-Merge Gateが未実施、または1件でもFAILしている場合は次とする（MUST）。
 
 ```text
 Human Merge: BLOCKED
 Production rollout: BLOCKED
 ```
+
+どのgateをrequiredとするか、どの順序で実施するかは、その案件のWork Orderが決める。
+このSSOTはgateの**配置**を定めるのであって、gateの中身や実施順序を一律に固定しない。
 
 ### Pre-Production Gate
 
@@ -151,7 +157,6 @@ Production rollout: BLOCKED
 ```text
 Production environment acceptance
 Production historical compatibility audit
-Human-only policy deployment / replacement validation
 Production operational readiness
 ```
 
@@ -160,11 +165,10 @@ Productionへ進んでは**ならない（MUST NOT）**。
 
 ### Exact HEAD Evidence
 
-manual / external / provider compatibility Evidenceには**exact commit SHA**を
-必須とする（MUST）。
+manual / external gate Evidenceには**exact commit SHA**を必須とする（MUST）。
 
 ```text
-Provider Compatibility Tested HEAD:
+External Gate Tested HEAD:
 <40-char SHA>
 ```
 
@@ -172,7 +176,7 @@ gate実施後にPR HEADへcommitが1つでも追加された場合、以前のEv
 流用しては**ならない（MUST NOT）**。
 
 ```text
-old PC Evidence = INVALID FOR NEW HEAD
+old external-gate Evidence = INVALID FOR NEW HEAD
 ```
 
 新しいHEADに対して、必要なgateを再実施する（MUST）。PR body / PR commentだけの
@@ -192,7 +196,7 @@ Production: BLOCKED
 
 ```text
 local tests
-→ Safe Push
+→ push
 → CI
 → external/manual gate on new HEAD
 ```
@@ -213,7 +217,7 @@ Claude自身が実施できないexternal / manual gateについて、`PASS` / `
 次のように記す（MUST）。
 
 ```text
-Provider Compatibility: NOT VERIFIED BY CLAUDE
+External Gate: NOT VERIFIED BY CLAUDE
 GitHub CI: NOT VERIFIED BY CLAUDE
 ```
 
@@ -378,7 +382,7 @@ MUST:
 - Work OrderのFIXED decisionに従う
 - Scope内で実装する
 - testsを追加・実行する
-- commit / Safe Push / Draft PRを行う
+- commit / push / Draft PRを行う
 - **Implementation Completion Report（Layer 1）を完成形Markdownとして生成し、
   Humanへhandoffする**
 - 自ら確認できない外部状態を `NOT VERIFIED` として返す
@@ -525,12 +529,17 @@ Exact Logical Attempt Immutability
 Trust Chain
 Canonical CLI Pipeline Order
 Production Human-only operation boundary
-Fail-Closed semantics
-Safe Sync / Safe Start / Safe Push authority boundary
+Business Fail-Closed semantics
+Human Merge
 ```
 
 これらはpipelineが主張する事実の裏付けそのものであり、1つのWork Orderの都合で
-交換できる性質のものではない。これら自体を変更する必要が生じた場合は、通常の
+交換できる性質のものではない。
+
+DTWO-2026-026は`Safe Sync / Safe Start / Safe Push authority boundary`をこの一覧から
+**外した**。あれはLocal Operational Governance（Layer C）であって、pipelineが主張する
+事実の裏付けではなかった。Safe wrapperは現在optional legacy compatibility utilityであり、
+通常のraw Gitが標準Development workflowである。これら自体を変更する必要が生じた場合は、通常の
 Security Boundary authorizationでは足りず、**Human + Architectがこの Governance
 Contract 自体を変更対象として発行した別の正式Governance Work Order**を必要とする。
 
@@ -647,12 +656,11 @@ PR Completion EvidenceはAcceptance Criteria単位で結果を返す（MUST）�
 3. 明示認可されていないSecurity relaxationは禁止する
 4. Work Orderとrepository Security Contractが衝突し、上記explicit authorizationに
    よって解決されていない場合は`IMPLEMENTATION_BLOCKED`とする
-5. Sandbox / Runtime Guard / network / MCP / Trust Chain / Raw Evidence /
-   Fail-Closed等は、`Preserved Security Controls`へ記載された契約を維持する
-6. **installed Production Security Boundary**（実機の`/etc`）をDevelopment Claudeが
-   変更しない
+5. Business Network Policy / Trust Chain / Raw Evidence / Business Fail-Closed等は、
+   `Preserved Security Controls`へ記載された契約を維持する
+6. **Production hostのinstalled state**（実機の`/etc`）をDevelopment Claudeが変更しない
 7. Production Human-only commandを実行しない
-8. Productionへのdeployment / policy replacement / runtime operationはHuman-onlyとする
+8. Productionへのrollout / host設定変更 / runtime operationはHuman-onlyとする
 9. **Claude自身がauthorizationを作成・拡張・変更してはならない**
 10. Happy Path成立だけを理由としてSecurityを緩和しては**ならない**
 11. [Protected Invariants](#protected-invariants)はgeneric authorizationでは緩和
@@ -663,9 +671,18 @@ PR Completion EvidenceはAcceptance Criteria単位で結果を返す（MUST）�
 `Authorization: NONE`のWork Orderが上位のrepository policyと衝突する場合、
 **より厳しい既存policyを維持してSTOPする**（MUST）。
 
-Sandbox / raw Git network operationのallowlist / Safe Sync / Safe Start / Safe Push
-Contract / Canonical PipelineのSecurity・Trust Chainは、`Authorized Relaxations`へ
-明示列挙されていない限り変更しない（MUST）。
+Canonical PipelineのSecurity・Trust Chainは、`Authorized Relaxations`へ明示列挙されて
+いない限り変更しない（MUST）。
+
+Development Gitについては次を維持する（MUST）。
+
+```text
+通常のraw Git（fetch / pull / switch / checkout / add / commit / push）: 許可
+git push origin main（mainへの直接push）: 禁止
+force push（--force / --force-with-lease / +refspec）: 禁止
+remote branch削除 / tag push / history rewrite目的のpush: 禁止
+Human Merge: 維持
+```
 
 次をClaudeへ付与しては**ならない（MUST NOT）**。Capability mismatchはEvidence handoffで
 解決し、権限追加では解決しない。
@@ -738,7 +755,7 @@ Work Order なしで Protected Invariant を変更する
 
 これらはSecurityやFail-Closedを守るために必要な停止ではなく、Development Process
 Contractと実際のCapabilityの不一致にすぎない。implementation / tests / commit /
-Safe Push / Draft PR / Report生成が正常完了しているなら、作業は完了である。
+push / Draft PR / Report生成が正常完了しているなら、作業は完了である。
 
 確認不能な外部状態は、虚偽の `PASS` にせず `NOT VERIFIED` としてhandoffする（MUST）。
 Capability mismatchの解決のためにSecurity boundaryを弱めては**ならない（MUST NOT）**。
@@ -977,7 +994,7 @@ Commit前にMUST:
 Staging / Push / PR:
 
 - 明示file pathのみを `git add -- <explicit-path>` する
-- `daytrade-sbi/scripts/claude-safe-push` だけでpushする
+- `git push -u origin claude/<branch>` でpushする。force push と main への直接 push は禁止
 - Draft Pull Requestとして作成し、Humanが明示するまでmergeしない
 
 ## 19. Implementation Completion Report

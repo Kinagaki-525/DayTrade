@@ -27,9 +27,6 @@ DOCS = {
     "docs/nightly-operation.md": PROJECT_ROOT / "docs/nightly-operation.md",
     "docs/canonical-pipeline.md": CANONICAL_DOC,
     "docs/source-acquisition.md": PROJECT_ROOT / "docs/source-acquisition.md",
-    "docs/claude-provider-compatibility.md": (
-        PROJECT_ROOT / "docs/claude-provider-compatibility.md"
-    ),
     "prompts/nightly_research.md": PROJECT_ROOT / "prompts/nightly_research.md",
     "SKILL.md": REPO_ROOT / ".agents/skills/prepare-daytrade-plan/SKILL.md",
 }
@@ -69,8 +66,7 @@ BUSINESS_CANONICAL_DEPENDENCY_ORDER = (
 #: DTWO-2026-025. The **Detailed Nightly Execution Sequence**: the complete order
 #: the canonical doc renders. It refines the Business Canonical Dependency Order
 #: above with the validation and reporting stages a nightly actually runs -- it
-#: adds steps, and never reorders a business dependency. The Runtime Guard
-#: contract is audited against this layer.
+#: adds steps, and never reorders a business dependency.
 DETAILED_NIGHTLY_EXECUTION_SEQUENCE = (
     "snapshot-config",
     "validate-source-matrix",
@@ -136,6 +132,14 @@ def _text(name: str) -> str:
     path = DOCS[name]
     assert path.is_file(), f"{name} is missing at {path}"
     return path.read_text(encoding="utf-8")
+
+
+def _section(text: str, heading: str) -> str:
+    """The body under ``heading``, up to the next heading of any level."""
+    assert heading in text, f"missing section heading: {heading}"
+    body = text[text.index(heading) + len(heading) :]
+    following = re.search(r"^#{1,6} ", body, re.MULTILINE)
+    return body[: following.start()] if following else body
 
 
 def test_every_documented_file_exists():
@@ -321,526 +325,7 @@ def test_documented_commands_all_exist_in_the_cli():
     assert missing == [], f"documented but non-existent CLI command(s): {missing}"
 
 
-# ------------------------------- FIX-R2-004: Claude Runtime Security Gate ---
-
-
-def test_canonical_doc_places_the_runtime_security_gate_before_the_pipeline():
-    text = _text("docs/canonical-pipeline.md")
-    assert "Runtime Security Gate" in text
-    assert "Business Canonical Pipeline" in text
-    assert text.index("Runtime Security Gate  →  Business Canonical Pipeline") > 0
-
-
-@pytest.mark.parametrize(
-    "name", ["docs/canonical-pipeline.md", "docs/nightly-operation.md"]
-)
-def test_docs_name_the_os_managed_policy_as_the_production_boundary(name):
-    text = _text(name)
-    assert "/etc/claude-code/managed-settings.json" in text
-    assert "Defense in Depth" in text or "Development defense only" in text
-
-
-def test_nightly_operation_documents_the_dedicated_production_runtime():
-    text = _text("docs/nightly-operation.md")
-    for required in (
-        "専用",
-        "WSL2",
-        "/etc/daytrade-production-runtime",
-        "DAYTRADE_PRODUCTION_RUNTIME_V1",
-    ):
-        assert required in text
-
-
-def test_nightly_operation_documents_human_only_provisioning():
-    text = _text("docs/nightly-operation.md")
-    for required in (
-        "sudo apt-get install bubblewrap socat",
-        "seccomp",
-        "CLAUDE_SANDBOX_SECCOMP_UNVERIFIED",
-        "apparmor_restrict_unprivileged_userns",
-        "2.1.251",
-    ):
-        assert required in text
-
-
-def test_nightly_operation_documents_the_deployment_and_acceptance_steps():
-    text = _text("docs/nightly-operation.md")
-    for required in (
-        "render-claude-production-policy",
-        "deploy-claude-managed-policy",
-        "claude doctor",
-        "/status",
-        "EXISTING_MANAGED_POLICY_PRESENT",
-        "claude-production",
-        "runtime_security.json",
-    ):
-        assert required in text
-
-
-#: The Policy deployment section, from its heading to the next one. Scoped on
-#: purpose: `py -m pytest` (Windows/PowerShell) and the CI `python` are
-#: legitimate elsewhere in this document, and only the Production procedure is
-#: bound by the Production Python identity contract.
-POLICY_DEPLOYMENT_HEADING = "### Policy deployment（Human）"
-
-#: How the Production Python candidate is discovered, and the shell variable
-#: every later step must reuse so that pytest, render and deploy all name the
-#: same interpreter.
-PRODUCTION_PYTHON_DISCOVERY = 'PRODUCTION_PYTHON="$(command -v python3)"'
-PRODUCTION_PYTHON_VAR = '"$PRODUCTION_PYTHON"'
-
-
-def _section(text: str, heading: str) -> str:
-    """The body under ``heading``, up to the next heading of any level."""
-    assert heading in text, f"missing section heading: {heading}"
-    body = text[text.index(heading) + len(heading) :]
-    following = re.search(r"^#{1,6} ", body, re.MULTILINE)
-    return body[: following.start()] if following else body
-
-
-def test_policy_deployment_uses_one_production_python_identity():
-    """The Production procedure must name ONE interpreter, discovered once.
-
-    Production is a Linux/WSL contract that requires ``python3`` only; a bare
-    ``python`` is not part of it, and documenting one would tell the operator
-    to satisfy the prerequisite with an alias, a symlink or python-is-python3
-    -- none of which the Security Contract knows about. pytest, render and
-    deploy must therefore all reuse the same discovered candidate, so the
-    interpreter that validated the tests is the interpreter the Managed Policy
-    is rendered for.
-    """
-    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
-
-    assert PRODUCTION_PYTHON_DISCOVERY in section, (
-        "the Production Python candidate must be discovered via "
-        f"{PRODUCTION_PYTHON_DISCOVERY}"
-    )
-    assert f"{PRODUCTION_PYTHON_VAR} -B -m pytest" in section, (
-        "the prerequisite pytest must run under the discovered candidate"
-    )
-    for command in ("render-claude-production-policy", "deploy-claude-managed-policy"):
-        invocation = re.search(
-            rf"{re.escape(command)}.*?--production-python\s+(\S+)",
-            section,
-            re.DOTALL,
-        )
-        assert invocation is not None, f"{command} is not documented with a candidate"
-        assert invocation.group(1) == PRODUCTION_PYTHON_VAR, (
-            f"{command} must reuse {PRODUCTION_PYTHON_VAR}, "
-            f"got {invocation.group(1)}"
-        )
-    # Discovered exactly once: a second `command -v python3` would be a second
-    # discovery, which can resolve differently from the one pytest validated.
-    assert section.count("$(command -v python3)") == 1
-
-
-@pytest.mark.parametrize(
-    "drift",
-    ["python -B -m pytest", "python3 -B -m pytest", "py -B -m pytest"],
-)
-def test_policy_deployment_never_documents_a_bare_python_pytest(drift):
-    """Regression guard for the exact drift this fix removes."""
-    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
-    assert drift not in section, (
-        f"Policy deployment documents {drift!r}; Production has no such command "
-        "and the prerequisite must use the discovered candidate"
-    )
-
-
-def test_policy_deployment_never_hardcodes_a_machine_specific_interpreter():
-    """Canonicalization belongs to canonical_production_python(), not to a path
-    typed into a document that is wrong on the next machine."""
-    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
-    hardcoded = re.search(r"/usr(?:/local)?/bin/python[0-9.]*", section)
-    assert hardcoded is None, (
-        f"Policy deployment hardcodes the interpreter path {hardcoded.group(0)!r}"
-        if hardcoded
-        else ""
-    )
-
-
-#: The Production Python dependency bootstrap, provisioned by a human once per
-#: Production runtime. Scoped as its own section so the assertions below bind
-#: the provisioning contract without touching the Windows or CI invocations
-#: documented elsewhere.
-PRODUCTION_BOOTSTRAP_HEADING = "#### Production Python dependency bootstrap（Human専用）"
-
-#: The fixed Production virtualenv, and the interpreter inside it. Fixed on
-#: purpose: the Production Python identity has to be the same path on every
-#: Production runtime, and a per-machine location would make the Managed
-#: Policy's canonical identity machine-specific.
-PRODUCTION_VENV_ROOT = "/opt/daytrade-production-python"
-PRODUCTION_VENV_PYTHON = "/opt/daytrade-production-python/bin/python3"
-
-#: PATH materialization: the Production session must find the venv interpreter
-#: first, so a single `command -v python3` discovers it rather than the system
-#: Python that carries none of the dependencies.
-PRODUCTION_PATH_EXPORT = 'export PATH="/opt/daytrade-production-python/bin:$PATH"'
-
-#: Ways of installing dependencies that Production must never be told to use.
-#: The first two override PEP 668 on an externally-managed system Python; the
-#: rest put dependencies somewhere the Production interpreter's identity does
-#: not account for.
-FORBIDDEN_BOOTSTRAP_INSTALLS = (
-    "--break-system-packages",
-    "pip install --user",
-    "-m pip install --user",
-    "--target",
-    "PYTHONPATH=",
-)
-
-#: Workarounds for a missing bare `python`. Production requires python3 only.
-FORBIDDEN_PYTHON_WORKAROUNDS = (
-    "python-is-python3",
-    "ln -s",
-    "alias python",
-)
-
-
-def _canonical_python_major_minor() -> str:
-    version = (PROJECT_ROOT / ".python-version").read_text(encoding="utf-8").strip()
-    major, minor, *_ = version.split(".")
-    return f"{major}.{minor}"
-
-
-def _commands(section: str) -> str:
-    """Every shell command in a section, with line continuations joined.
-
-    Deliberately excludes prose: a document that *forbids* a construct has to
-    be able to name it, so the prohibitions below are asserted against what the
-    operator would actually run, not against every mention of the string.
-    """
-    blocks = re.findall(r"```(?:bash|sh|shell)?\n(.*?)```", section, re.DOTALL)
-    return "\n".join(blocks).replace("\\\n", " ")
-
-
-def test_production_bootstrap_section_exists():
-    text = _text("docs/nightly-operation.md")
-    assert PRODUCTION_BOOTSTRAP_HEADING in text, (
-        "Production has no documented way to provision its Python dependencies"
-    )
-
-
-def test_production_bootstrap_uses_a_fixed_copy_based_root_owned_venv():
-    """The venv must be created with --copies, not with symlinks.
-
-    canonical_production_python() resolves symlinks. A symlink-based venv's
-    python3 therefore canonicalizes to the *base* interpreter, outside the
-    venv -- so the Managed Policy identity and the interpreter that actually
-    carries the dependencies would come apart. --copies makes the venv
-    interpreter a regular file that survives canonicalization as itself.
-    """
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert PRODUCTION_VENV_ROOT in section
-    assert PRODUCTION_VENV_PYTHON in section
-    venv_command = re.search(r"[^\n]*-m venv[^\n]*", _commands(section))
-    assert venv_command is not None, "the venv creation command is not documented"
-    assert "--copies" in venv_command.group(0), (
-        "the Production venv must be created with --copies: "
-        f"{venv_command.group(0)!r}"
-    )
-
-
-def test_production_bootstrap_documents_the_matching_venv_os_package():
-    """The apt prerequisite must track the repository's canonical version."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    expected = f"python{_canonical_python_major_minor()}-venv"
-    assert expected in section, (
-        f"the documented venv OS package does not match .python-version "
-        f"(expected {expected})"
-    )
-
-
-def test_production_bootstrap_installs_only_the_dev_requirements_manifest():
-    """requirements-dev.txt already includes -r requirements.txt.
-
-    Installing both would pin the same manifest twice and invite them to drift
-    apart in the operator's hands.
-    """
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert "requirements-dev.txt" in section
-    installs = re.findall(r"-m pip install[^\n]*", _commands(section))
-    assert installs, "no dependency install command is documented"
-    for install in installs:
-        assert "requirements-dev.txt" in install, (
-            f"a non-canonical manifest is installed: {install!r}"
-        )
-
-
-def test_production_bootstrap_installs_through_the_venv_interpreter():
-    """Never through the system Python: that is the PEP 668 violation."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    for line in _commands(section).splitlines():
-        if "-m pip install" not in line:
-            continue
-        assert PRODUCTION_VENV_PYTHON in line, (
-            f"dependencies are installed outside the Production venv: {line.strip()!r}"
-        )
-
-
-@pytest.mark.parametrize("forbidden", FORBIDDEN_BOOTSTRAP_INSTALLS)
-def test_production_bootstrap_never_overrides_the_managed_system_python(forbidden):
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert forbidden not in _commands(section), (
-        f"Production bootstrap runs {forbidden!r}, which installs outside "
-        "the Production venv identity"
-    )
-
-
-@pytest.mark.parametrize("forbidden", FORBIDDEN_PYTHON_WORKAROUNDS)
-def test_production_bootstrap_never_requires_a_bare_python_workaround(forbidden):
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert forbidden not in _commands(section), (
-        f"Production bootstrap runs {forbidden!r}; Production needs python3 only"
-    )
-
-
-def test_production_bootstrap_is_fail_closed_on_an_existing_venv():
-    """An existing venv is stopped on, never silently reused or wiped."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert "--clear" not in _commands(section), (
-        "a --clear would destroy an existing environment"
-    )
-    assert "STOP" in section
-
-
-def test_production_bootstrap_verifies_the_production_python_identity():
-    """The candidate must be checked against the repository's own resolver."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert "canonical_production_python" in section
-    assert "pip check" in section
-    assert ".python-version" in section
-
-
-def test_policy_deployment_materializes_the_production_python_path_first():
-    """PATH first, then one discovery: otherwise `command -v python3` finds the
-    system Python, which carries none of the Production dependencies."""
-    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
-    assert PRODUCTION_PATH_EXPORT in section
-    assert section.index(PRODUCTION_PATH_EXPORT) < section.index(
-        PRODUCTION_PYTHON_DISCOVERY
-    ), "PATH must be materialized before the Production Python is discovered"
-    assert PRODUCTION_VENV_PYTHON in section, (
-        "the expected candidate value is not documented"
-    )
-
-
-@pytest.mark.parametrize(
-    "script,prefix",
-    [
-        ("render-claude-production-policy", '"$PRODUCTION_PYTHON" scripts/'),
-        ("deploy-claude-managed-policy", 'sudo "$PRODUCTION_PYTHON" scripts/'),
-    ],
-)
-def test_policy_scripts_run_under_the_production_python(script, prefix):
-    """The scripts are launched by the Production interpreter itself, not by
-    their shebang: under sudo's secure_path a shebang lookup can select a
-    different python3 than the one whose dependencies were validated."""
-    section = _section(_text("docs/nightly-operation.md"), POLICY_DEPLOYMENT_HEADING)
-    assert f"{prefix}{script}" in section, (
-        f"{script} must be launched as {prefix}{script}"
-    )
-
-
-#: Every Production start goes through this section, so it -- not only the
-#: one-off Policy deployment -- has to materialize the Production Python.
-PRODUCTION_ENTRY_HEADING = "### Production Entry Contract"
-
-#: The exact-path assertion an operator runs, rather than eyeballing a printed
-#: path against a documented one.
-PRODUCTION_PYTHON_FIXED_PATH_TEST = (
-    'test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"'
-)
-
-
-def test_production_entry_materializes_the_production_python_every_time():
-    """A fresh shell must not rediscover the system Python.
-
-    claude-production resolves its candidate with which("python3") when
-    DAYTRADE_PRODUCTION_PYTHON is unset, so a session started without the venv
-    on PATH would run under /usr/bin/python3 -- an identity the Managed Policy
-    was never rendered for. Putting the venv first on PATH is what makes the
-    launcher's own lookup resolve to the same interpreter.
-    """
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
-    commands = _commands(section)
-    assert PRODUCTION_PATH_EXPORT in commands
-    assert PRODUCTION_PYTHON_DISCOVERY in commands
-    assert PRODUCTION_PYTHON_FIXED_PATH_TEST in commands
-    assert 'test ! -L "$PRODUCTION_PYTHON"' in commands
-
-
-@pytest.mark.parametrize("flags", ["--preflight-only", "--target-date"])
-def test_production_entry_launches_the_launcher_under_the_production_python(flags):
-    """Both the preflight and the real Nightly start run the launcher with the
-    Production interpreter itself, not through its shebang."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
-    commands = _commands(section)
-    launches = [
-        block
-        for block in re.findall(
-            r'"\$PRODUCTION_PYTHON" scripts/claude-production[^\n]*(?:\\\n[^\n]*)*',
-            commands,
-        )
-        if flags in block
-    ]
-    assert launches, (
-        f"the Production entry command carrying {flags} is not launched as "
-        '"$PRODUCTION_PYTHON" scripts/claude-production'
-    )
-
-
-def test_production_entry_never_documents_a_bare_launcher_command():
-    """A bare `scripts/claude-production ...` would rely on the shebang."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
-    for line in _commands(section).splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("scripts/claude-production"):
-            continue
-        raise AssertionError(
-            f"the Production entry documents a bare launcher command: {stripped!r}"
-        )
-
-
-def test_production_entry_never_hardcodes_the_system_interpreter():
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
-    hardcoded = re.search(r"/usr(?:/local)?/bin/python[0-9.]*", _commands(section))
-    assert hardcoded is None, (
-        "the Production entry hardcodes the system interpreter: "
-        f"{hardcoded.group(0) if hardcoded else ''!r}"
-    )
-
-
-@pytest.mark.parametrize("forbidden", FORBIDDEN_PYTHON_WORKAROUNDS)
-def test_production_entry_never_requires_a_bare_python_workaround(forbidden):
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_ENTRY_HEADING)
-    assert forbidden not in _commands(section)
-
-
-# --------------------------- exact, runnable bootstrap commands (PR #17) ---
-
-
-def test_production_bootstrap_commands_carry_no_placeholders():
-    """An operator must be able to paste the commands and run them."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    commands = _commands(section)
-    placeholder = re.search(r"<[a-z][a-z0-9 _-]*>", commands)
-    assert placeholder is None, (
-        f"the bootstrap commands carry the placeholder {placeholder.group(0)!r}"
-        if placeholder
-        else ""
-    )
-    assert '"$PWD/requirements-dev.txt"' in commands, (
-        "the dependency manifest must be resolved from the documented CWD"
-    )
-
-
-def test_production_bootstrap_uses_one_base_python_for_check_and_venv():
-    """The interpreter whose version was checked is the one that builds the
-    venv -- a second bare `python3` could resolve elsewhere."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    commands = _commands(section)
-    assert 'BASE_PYTHON="$(command -v python3)"' in commands
-    assert 'sudo "$BASE_PYTHON" -m venv' in commands
-    assert not re.search(r"sudo python3(?:\.[0-9.]+)? -m venv", commands), (
-        "the venv is created by a rediscovered python3 rather than $BASE_PYTHON"
-    )
-
-
-def test_production_bootstrap_compares_versions_by_shell_test():
-    """Version agreement is asserted by the shell, not by the operator's eye."""
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    commands = _commands(section)
-    assert 'EXPECTED_PYTHON_VERSION="$(cat .python-version)"' in commands
-    compared = {
-        variable
-        for body in re.findall(
-            r'test "\$\((.*?)\)" = "\$EXPECTED_PYTHON_VERSION"', commands, re.DOTALL
-        )
-        for variable in ("$BASE_PYTHON", "$PRODUCTION_PYTHON")
-        if variable in body
-    }
-    assert compared == {"$BASE_PYTHON", "$PRODUCTION_PYTHON"}, (
-        "both the base interpreter and the Production venv interpreter must be "
-        f"compared against .python-version; compared: {sorted(compared)}"
-    )
-
-
-def test_production_bootstrap_asserts_the_canonical_identity_by_shell_test():
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    commands = _commands(section)
-    assert PRODUCTION_PYTHON_FIXED_PATH_TEST in commands
-    assert 'CANONICAL_PRODUCTION_PYTHON="$(' in commands
-    assert (
-        'test "$CANONICAL_PRODUCTION_PYTHON" = "$PRODUCTION_PYTHON"' in commands
-    ), "the canonical resolver result must be compared, not printed for review"
-
-
-def test_production_bootstrap_runs_pytest_under_the_production_python():
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert '"$PRODUCTION_PYTHON" -B -m pytest' in _commands(section)
-
-
-def test_production_bootstrap_states_its_checkout_and_cwd_prerequisite():
-    section = _section(_text("docs/nightly-operation.md"), PRODUCTION_BOOTSTRAP_HEADING)
-    assert "Reviewed HEAD" in section
-    assert "daytrade-sbi" in section
-
-
-def test_nightly_operation_documents_the_human_seccomp_attestation_marker():
-    text = _text("docs/nightly-operation.md")
-    for required in (
-        "/etc/daytrade-seccomp-verified",
-        "DAYTRADE_SECCOMP_VERIFIED_V2",
-        "/sandbox",
-        "uid 0",
-        "sandbox_seccomp",
-    ):
-        assert required in text
-    assert "機械的に判定できない" not in text
-
-
-def test_nightly_operation_documents_the_target_date_gate():
-    text = _text("docs/nightly-operation.md")
-    assert "CLAUDE_TARGET_DATE_INVALID" in text
-
-
-def test_nightly_operation_defers_real_network_smoke_to_the_next_fix():
-    text = _text("docs/nightly-operation.md")
-    assert "FIX-R2-005" in text
-
-
-def test_nightly_operation_forbids_recording_the_user_agent_value():
-    text = _text("docs/nightly-operation.md")
-    assert "http_user_agent_present" in text
-    assert "credential" in text
-
-
-def test_claude_md_states_the_production_runtime_security_rules():
-    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    for required in (
-        "/etc/claude-code/managed-settings.json",
-        "event_source_extraction.json",
-        "deploy-claude-managed-policy",
-        "sudo",
-    ):
-        assert required in text
-
-
-def test_every_new_runtime_security_file_exists():
-    expected = [
-        PROJECT_ROOT / "src" / "claude_runtime_security.py",
-        PROJECT_ROOT / "schemas" / "runtime_security.schema.json",
-        PROJECT_ROOT / "ops" / "claude" / "managed-settings.template.json",
-        PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py",
-        PROJECT_ROOT / "scripts" / "render-claude-production-policy",
-        PROJECT_ROOT / "scripts" / "deploy-claude-managed-policy",
-        PROJECT_ROOT / "scripts" / "claude-production",
-        PROJECT_ROOT / "tests" / "test_claude_runtime_security.py",
-        PROJECT_ROOT / "tests" / "test_claude_runtime_guard.py",
-    ]
-    missing = [str(path) for path in expected if not path.is_file()]
-    assert missing == []
+# ------------------------------- DTWO-2026-026: the guard that remains ---
 
 
 def test_the_project_network_guard_is_not_deleted():
@@ -926,189 +411,6 @@ def test_network_audit_ssot_is_the_physical_request_record():
     ), "src/source_acquisition.py no longer names the Request Record as the SSOT"
 
 
-# ------------------------------- FIX-PRD-005: production path contract ---
-#
-# The Runtime Acceptance failure was a documentation failure: the operating
-# procedure showed logical relative paths (`config/source_matrix.yaml`) and
-# said nothing about the guard's absolute-path contract, so a production
-# operator pasted them into a Bash call and was correctly denied. The guard
-# is right; the procedure was incomplete. These tests pin the *procedure*,
-# and pin that the guard's denials were not softened to compensate.
-
-#: The two contract names every agent-facing production document must carry,
-#: so that the Skill, the prompt and the operations doc point at one rule.
-PRODUCTION_CONTRACT_DOCS = (
-    "docs/nightly-operation.md",
-    "docs/canonical-pipeline.md",
-    "prompts/nightly_research.md",
-    "SKILL.md",
-)
-
-
-@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
-def test_production_docs_name_both_command_materialisation_contracts(name):
-    text = _text(name)
-    assert "Production Path Materialization Contract" in text, name
-    assert "1 Bash call = 1 canonical CLI command" in text, name
-
-
-#: The documents a production agent actually renders commands from. The
-#: canonical-pipeline doc names the contract but stays the pipeline-order
-#: SSOT, so it is not asked to repeat the syntax detail.
-COMMAND_RENDERING_DOCS = (
-    "docs/nightly-operation.md",
-    "prompts/nightly_research.md",
-    "SKILL.md",
-)
-
-
-@pytest.mark.parametrize("name", COMMAND_RENDERING_DOCS)
-def test_production_docs_forbid_every_unexpanded_path_form(name):
-    """A production command string is inspected before any shell expands it,
-    so each of these forms has to be called out as unusable, not just
-    'use absolute paths'."""
-    text = _text(name)
-    for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(pwd)"):
-        assert form in text, f"{name} does not mention the {form} form"
-
-
-def test_nightly_operation_states_the_materialisation_sources():
-    """Where the absolute paths come from -- the launcher's cwd and the run
-    directory -- rather than a hardcoded machine path."""
-    text = _text("docs/nightly-operation.md")
-    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
-    assert "CLAUDE_PRODUCTION_BASH_DENIED" in text
-    assert "current working directory" in text
-    assert "runtime_security.json" in text
-    assert '; echo "EXIT_CODE=$?"' in text
-
-
-def test_no_document_hardcodes_the_operators_daytrade_root():
-    """The materialised path is derived at runtime; a machine-specific root
-    baked into a document is exactly what makes the contract wrong on the
-    next machine."""
-    hardcoded = "/home/daytrade/DayTrade"
-    for name in DOCS:
-        assert hardcoded not in _text(name), f"{name} hardcodes {hardcoded}"
-
-
-def test_skill_defers_to_the_operations_doc_for_the_production_contract():
-    text = _text("SKILL.md")
-    assert "scripts/claude-production" in text
-    assert "daytrade-sbi/docs/nightly-operation.md" in text
-    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
-
-
-def test_claude_md_states_the_absolute_path_and_single_command_contract():
-    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "Production Path Materialization Contract" in text
-    assert "1 Bash call = 1 canonical CLI command" in text
-    assert "CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN" in text
-
-
-def test_the_runtime_guard_still_denies_relative_paths_and_metacharacters():
-    """The documented fix must not have been implemented by relaxing the
-    guard. Pinned against the guard source itself, not its docs."""
-    guard = (PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py").read_text(
-        encoding="utf-8"
-    )
-    assert "must be an absolute path in production" in guard
-    assert "if not candidate.is_absolute():" in guard
-    for meta in (";", "&&", "||", "|", "$(", "`", ">", "<"):
-        assert f'"{meta}"' in guard, f"the guard no longer lists {meta!r} as a metacharacter"
-
-
-# --------------------------------------------------------------------------
-# PR #9 review: a documented production example that the guard would deny is
-# worse than no example -- the operator pastes it, gets CLAUDE_PRODUCTION_*,
-# and cannot tell whether the doc or the guard is wrong. So the flag set in
-# the build-ranking example is pinned against the guard's own SUBCOMMAND_FLAGS
-# rather than against a second hand-maintained list.
-
-
-def _guard_module():
-    """Import the runtime guard as a module so its contract tables are the
-    single source of truth for these documentation assertions."""
-    import importlib.util
-
-    guard_path = PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
-    spec = importlib.util.spec_from_file_location(
-        "daytrade_runtime_guard_docs_ssot", guard_path
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _production_build_ranking_examples(name):
-    """Every documented production build-ranking command line, i.e. the ones
-    rendered as '<production python> -B -m src.cli build-ranking ...'."""
-    return [
-        line.strip()
-        for line in _text(name).splitlines()
-        if line.strip().startswith("<production python>")
-        and " -m src.cli build-ranking " in line
-    ]
-
-
-def test_nightly_operation_shows_a_production_build_ranking_example():
-    assert _production_build_ranking_examples("docs/nightly-operation.md")
-
-
-def test_the_production_build_ranking_example_matches_the_guard_contract():
-    """--ranking is an input of build-selection, not of build-ranking; the
-    guard denies it with CLAUDE_PRODUCTION_NOT_CANONICAL. The example must be
-    a complete, pasteable command, so no ellipsis either."""
-    allowed = _guard_module().SUBCOMMAND_FLAGS["build-ranking"]
-    examples = _production_build_ranking_examples("docs/nightly-operation.md")
-    for example in examples:
-        assert "--ranking " not in example, example
-        assert "--output " in example, example
-        assert "..." not in example, example
-        flags = {token for token in example.split() if token.startswith("--")}
-        assert flags == set(allowed), example
-
-
-def test_the_production_build_ranking_example_is_one_materialised_command():
-    """Materialising the documented placeholders must yield exactly what the
-    guard accepts: one line, absolute paths only, no shell expansion and no
-    metacharacter left to expand."""
-    for example in _production_build_ranking_examples("docs/nightly-operation.md"):
-        materialised = (
-            example.replace("<production python>", "/opt/daytrade/bin/python3")
-            .replace("<DAYTRADE_ROOT>", "/srv/daytrade-sbi")
-            .replace("<TARGET_DATE>", "2026-08-14")
-        )
-        assert "<" not in materialised and ">" not in materialised, materialised
-        for form in ("$DAYTRADE_ROOT", "${DAYTRADE_ROOT}", "$DAYTRADE_RUN_DIR", "$(", "`"):
-            assert form not in materialised, f"{form} survives in {materialised}"
-        for meta in (";", "&&", "||", "|"):
-            assert meta not in materialised, f"{meta} survives in {materialised}"
-        tokens = materialised.split()
-        assert tokens[:4] == [
-            "/opt/daytrade/bin/python3",
-            "-B",
-            "-m",
-            "src.cli",
-        ], materialised
-        values = [token for token in tokens[5:] if not token.startswith("--")]
-        assert values, materialised
-        for value in values:
-            assert value.startswith("/srv/daytrade-sbi/"), value
-            for relative in ("./", "../", "~/"):
-                assert relative not in value, value
-
-
-@pytest.mark.parametrize("name", PRODUCTION_CONTRACT_DOCS)
-def test_production_docs_never_equate_a_bash_call_with_a_pipeline_step(name):
-    """'1 Bash call = 1 stage' is wrong: one canonical-pipeline number can
-    hold several canonical CLI commands (e.g. init/complete event-research),
-    so the contract is per command, not per stage."""
-    text = _text(name)
-    for wrong in ("1 Bash call = 1 stage", "1 Bash call = 1 Stage"):
-        assert wrong not in text, name
-
-
 # --------------------------------------------------------------- FIX-PR13 ---
 #
 # The Production Path Materialization Contract tells the agent to use the
@@ -1119,7 +421,6 @@ def test_production_docs_never_equate_a_bash_call_with_a_pipeline_step(name):
 
 
 ACQUIRE_OUTPUT_CONTRACT_DOCS = (
-    "docs/nightly-operation.md",
     "docs/source-acquisition.md",
     "prompts/nightly_research.md",
     # The Skill carries the Production Runtime Profile's own "use the CLI's
@@ -1265,377 +566,20 @@ def test_no_document_shows_an_acquire_output_into_a_business_artifact(name):
             continue
         assert "/working/" in line, f"{name}: unsafe acquire --output example: {line}"
 
-# ------------------------- DTWO-2026-021: policy lifecycle and prerequisites ---
+# ---------------------------------------- the normal operator flow (§21) ---
 
-POLICY_REPLACEMENT_HEADING = "### Policy replacement（Human専用）"
-
-
-def test_policy_replacement_is_documented_as_a_separate_human_only_operation():
-    """Installing and replacing are different operations with different risks."""
-    section = _section(_text("docs/nightly-operation.md"), POLICY_REPLACEMENT_HEADING)
-    assert "replace-claude-managed-policy" in section
-    assert "EXISTING_MANAGED_POLICY_PRESENT" in section
-    assert "--expected-installed-sha256" in section
-    assert "--expected-rendered-sha256" in section
-    assert "--check" in section
-    # The installer's refusal must not be described as something to work around.
-    assert "--force" not in _commands(section)
-
-
-def test_policy_replacement_documents_the_fail_closed_conditions():
-    section = _section(_text("docs/nightly-operation.md"), POLICY_REPLACEMENT_HEADING)
-    for required in (
-        "compare-and-swap",
-        "os.replace",
-        "Runtime Guard",
-        "Human inspection required",
-    ):
-        assert required in section, required
-    assert "手で編集しない" in section
-
-
-def test_apparmor_is_documented_separately_for_native_linux_and_wsl():
-    """TC-12: WSL has no such sysctl; that is not a licence to weaken anything."""
-    text = _text("docs/nightly-operation.md")
-    assert "kernel.apparmor_restrict_unprivileged_userns" in text
-    assert "NOT APPLICABLE" in text
-    assert "WSL2" in text
-    # The absent sysctl must never be created, nor kernel security disabled.
-    assert "sysctl`を新規作成しない" in text
-    assert "kernel security設定を無効化しない" in text
-    # Seccomp V2 stays mandatory on WSL.
-    assert "DAYTRADE_SECCOMP_VERIFIED_V2" in text
-
-
-def test_no_document_instructs_changing_the_apparmor_sysctl():
-    for name in DOCS:
-        text = _text(name)
-        for forbidden in (
-            "sysctl -w kernel.apparmor",
-            "sysctl --write kernel.apparmor",
-        ):
-            assert forbidden not in text, f"{name} instructs changing the sysctl"
-
-
-def test_http_user_agent_presence_checkpoint_precedes_preflight():
-    """TC-13: presence only -- never a default, never the value itself."""
-    section = _section(
-        _text("docs/nightly-operation.md"), "### Production Entry Contract"
-    )
-    assert 'test -n "$DAYTRADE_HTTP_USER_AGENT"' in section
-    assert "CLAUDE_HTTP_USER_AGENT_MISSING" in section
-    assert "default" in section
-    assert "値そのものをこのdocumentやrepository artifactへ書かない" in section
-
-
-# --------------------------- DTWO-2026-830: Production Remote Control ---
-
-REMOTE_CONTROL_HEADING = "### Production Remote Control（Human専用）"
-
-
-def _section_with_subsections(text: str, heading: str) -> str:
-    """The body under ``heading``, including its own subsections.
-
-    Only the Remote Control tests below use this. ``_section`` stops at the
-    next heading of any level, which is the right scope for every other
-    documentation test and must stay that way; the Remote Control section is
-    the one that organises itself with ``####`` subheadings, so it needs a
-    reader that stops only at the next heading of the same or higher level.
-    """
-    assert heading in text, f"missing section heading: {heading}"
-    level = len(heading) - len(heading.lstrip("#"))
-    body = text[text.index(heading) + len(heading) :]
-    following = re.search(rf"^#{{1,{level}}} ", body, re.MULTILINE)
-    return body[: following.start()] if following else body
-
-
-def test_remote_control_section_states_the_managed_policy_contract():
-    """The four keys the policy pins, named where an operator will read them."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for token in (
-        "/remote-control",
-        "disableRemoteControl",
-        "remoteControlAtStartup",
-        "crossSessionInbound",
-        "SendMessage",
-        "ListAgents",
-        "2.1.251",
-    ):
-        assert token in section, token
-
-
-def test_remote_control_activation_follows_preflight_and_status():
-    """Activation is a human step in an already-verified session."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for step in (
-        "scripts/claude-production",
-        "Runtime Security Preflight",
-        "/status",
-        "Enterprise managed settings",
-    ):
-        assert step in section, step
-    assert section.index("Runtime Security Preflight") < section.index(
-        "/remote-control"
-    )
-
-
-def test_remote_control_prohibits_the_launcher_and_server_start_modes():
-    """The transport must never be started for the human."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for prohibited in (
-        "claude remote-control",
-        "claude --remote-control",
-        "remoteControlAtStartup=true",
-    ):
-        assert prohibited in section, prohibited
-    assert "Launcherから自動でRemote Controlを開始しない" in section
-
-
-def test_remote_control_does_not_widen_the_business_network_allowlist():
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "Anthropic hostを追加しない" in section
-    for control in (
-        "strictAllowlist",
-        "allowManagedDomainsOnly",
-        "allowLocalBinding",
-        "allowAllUnixSockets",
-        "allowedDomains",
-    ):
-        assert control in section, control
-
-
-def test_remote_control_forbids_attachments_and_stored_secrets():
-    """AC-13/AC-14."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "attachment" in section
-    assert "Production v1" in section
-    for secret in ("session URL", "QR", "token", "credential"):
-        assert secret in section, secret
-    assert "runtime_security.json" in section
-    assert "Raw Evidence" in section
-
-
-def test_remote_control_failure_is_not_a_business_result():
-    """AC-15: a transport that did not connect decides nothing about a trade."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for verdict in ("NO_TRADE", "DATA_UNAVAILABLE", "TRADE", "REJECTED"):
-        assert verdict in section, verdict
-    assert "Business Pipelineの結果では" in section
-
-
-def test_remote_control_incident_path_uses_the_reviewed_replacement_lifecycle():
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "reviewed replacement" in section
-    assert "Production Policyを直接編集しない" in section
-
-
-def test_remote_control_documents_the_transcript_data_flow():
-    """FIX-01: enabling the transport adds a data flow, and the operator has to
-    accept it knowingly rather than discover it afterwards."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "session transcriptがAnthropic serversへ保存される" in section
-    for content in ("Human messages", "Claude responses", "tool activity"):
-        assert content in section, content
-    assert "executionはlocal Production machineに残る" in section
-    assert "filesystem accessもlocal Production machineに残る" in section
-    assert "Zero Data Retention" in section
-    assert "有効化前にHumanが" in section
-
-
-def test_the_transcript_is_not_treated_as_daytrade_evidence():
-    """FIX-01: a server-side transcript is not Raw Evidence and not part of the
-    Trust Chain, and nothing here reproduces it in the repository."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "Raw Evidenceとして扱わない" in section
-    assert "Trust Chain" in section
-    assert "再現・保存もしない" in section
-    assert "Business Data Contract" in section
-
-
-def test_remote_control_acceptance_is_two_smoke_probes():
-    """DTWO-2026-025: Remote Control is an input transport, not a boundary.
-
-    The predecessor acceptance made an operator re-verify, by hand and after
-    every policy change, static properties the Preflight had already checked
-    fail-closed before launch -- thirteen items, ten of them Read probes for an
-    allowlist that no longer exists. What actually needs observing is that the
-    remote transport lands inside the same boundary, and two probes show that.
-    """
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "Production Remote Control Acceptance（Human-only）" in section
-    assert "CLAUDE.md" in section
-    assert "pwd" in section
-    assert "PASS" in section
-    assert "DENY" in section
-    assert "PC-16" in section
-
-
-def test_remote_control_acceptance_dropped_the_obsolete_probes():
-    """None of the removed steps may come back as a normal nightly duty."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for gone in (
-        "Approved Read probe",
-        "Unauthorized Read probe",
-        "ConfigChange protection",
-        "ConfigChange probe",
-        "Remote Control Security Acceptance",
-        "issuer_domain_registry.yaml",
-    ):
-        assert gone not in section, f"{gone} survived the acceptance simplification"
-
-
-def test_no_document_still_treats_configchange_as_a_nightly_gate():
-    for name in ("docs/nightly-operation.md", "prompts/nightly_research.md"):
-        text = _text(name)
-        assert "ConfigChange" not in text, f"{name} still documents a ConfigChange gate"
-
-
-def test_configchange_observation_moved_to_the_provider_compatibility_doc():
-    """It is a provider observation now, not a Production Nightly gate."""
-    text = _text("docs/claude-provider-compatibility.md")
-    assert "PC-15 CONFIG_CHANGE_OBSERVATION" in text
-    assert "observation only" in text
-    assert "critical gate ではない" in text or "critical gateではない" in text
-
-
-def test_remote_control_failure_is_never_a_business_decision():
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "NO_TRADE" in section
-    assert "DATA_UNAVAILABLE" in section
-    assert "Business" in section
-
-
-def test_remote_control_secrets_are_still_never_persisted():
-    """Simplifying the acceptance did not drop the standing prohibition."""
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    for token in ("token", "credential", "Raw Evidence", "runtime_security.json"):
-        assert token in section, token
-
-
-def test_a_replaced_policy_reruns_the_preflight():
-    section = _section_with_subsections(
-        _text("docs/nightly-operation.md"), REMOTE_CONTROL_HEADING
-    )
-    assert "Runtime Security Preflight" in section
-    assert "再利用しない" in section
-
-
-# ------------------------------- provider compatibility suite (PC-01..16) ---
-
-PC_CASES = (
-    "PC-01 VERSION",
-    "PC-02 TRUSTED_READ",
-    "PC-03 SENSITIVE_READ",
-    "PC-04 NONCANONICAL_BASH",
-    "PC-05 CANONICAL_OFFLINE_CLI",
-    "PC-06 WRITE_EDIT",
-    "PC-07 BUSINESS_ARTIFACT_HAND_EDIT",
-    "PC-08 WEB_TOOLS",
-    "PC-09 AGENT_MCP_CROSS_SESSION",
-    "PC-10 MANAGED_PERMISSION_PRECEDENCE",
-    "PC-11 MANAGED_HOOK_PRECEDENCE",
-    "PC-12 MANAGED_MCP_PRECEDENCE",
-    "PC-13 SANDBOX",
-    "PC-14 NETWORK_ALLOWLIST",
-    "PC-15 CONFIG_CHANGE_OBSERVATION",
-    "PC-16 REMOTE_AUTHORITY_EQUIVALENCE",
-)
-
-
-def test_the_provider_suite_lists_every_case_in_order():
-    text = _text("docs/claude-provider-compatibility.md")
-    positions = []
-    for case in PC_CASES:
-        index = text.find(case)
-        assert index != -1, f"the provider suite is missing {case}"
-        positions.append(index)
-    assert positions == sorted(positions)
-
-
-@pytest.mark.parametrize("case", PC_CASES)
-def test_every_provider_case_states_its_full_protocol(case):
-    """No case may be left as 'check as appropriate'."""
-    text = _text("docs/claude-provider-compatibility.md")
-    start = text.index(case)
-    following = [text.find(other) for other in PC_CASES if text.find(other) > start]
-    end = min(following) if following else text.index("## 報告フォーマット")
-    body = text[start:end]
-    for required in (
-        "Preconditions",
-        "Action",
-        "Expected Result",
-        "Evidence to capture",
-        "PASS condition",
-        "FAIL condition",
-    ):
-        assert required in body, f"{case} does not state {required}"
-    assert "適宜確認" not in body
-
-
-def test_the_provider_suite_is_development_only_and_exact_versioned():
-    text = _text("docs/claude-provider-compatibility.md")
-    assert "2.1.251" in text
-    assert "Development" in text
-    assert "Production host" in text
-    assert "実行禁止" in text
-    # A case nobody ran blocks the merge, not the commit: the suite is a
-    # pre-merge gate, and Claude's IMPLEMENTATION_BLOCKED is a different state.
-    assert "Human Merge: BLOCKED" in text
-    assert "Production rollout: BLOCKED" in text
-    assert "Claude側の`IMPLEMENTATION_BLOCKED`とは別の状態" in text
-
-
-def test_the_provider_suite_is_not_confused_with_unit_tests():
-    text = _text("docs/claude-provider-compatibility.md")
-    assert "unit" in text
-    assert "mock" in text
-
-
-# ---------------------------------------- the normal operator flow (§18) ---
-
-#: The nine stages a normal production night actually has, in order.
+#: The three stages a normal production night has, in order.
 OPERATOR_FLOW = (
-    "Safe Sync main",
-    "update requirement確認",
-    "Human-only replacement",
-    "Runtime Security Preflight",
-    "Production Claude launch",
-    "/status",
-    "/remote-control",
-    "Remote使用時だけ2件smoke",
+    "通常のGit同期",
+    "scripts/claude-production --target-date",
     "$prepare-daytrade-plan",
 )
 
 
 def test_the_normal_operator_flow_is_documented_in_order():
-    """A nightly operator should not have to read a security architecture to
-    find out what to do on an ordinary evening."""
+    """An operator should not have to read a security architecture to find out
+    what to do on an ordinary evening -- and after DTWO-2026-026 there is no
+    security architecture in front of the pipeline to read."""
     text = _text("docs/nightly-operation.md")
     section = text.split("## 開始方法", 1)[0]
     assert "通常Operator Flow" in section
@@ -1647,20 +591,48 @@ def test_the_normal_operator_flow_is_documented_in_order():
     assert positions == sorted(positions), "the operator flow stages are out of order"
 
 
-def test_the_operator_flow_appears_before_the_security_architecture():
-    text = _text("docs/nightly-operation.md")
-    assert text.index("通常Operator Flow") < text.index(
-        "## Claude Production Runtime Security"
-    )
-
-
-def test_the_operator_flow_names_the_two_remote_smoke_expectations():
+def test_the_operator_flow_has_no_security_gate_in_front_of_the_pipeline():
+    """AC-23: the retired nightly checkpoints are gone from the flow."""
     text = _text("docs/nightly-operation.md")
     section = text.split("## 開始方法", 1)[0]
-    assert "CLAUDE.md" in section
-    assert "pwd" in section
-    assert "PASS" in section
-    assert "DENY" in section
+    for retired in (
+        "Runtime Security Preflight",
+        "/status",
+        "Managed Policy",
+        "Remote Control",
+        "smoke",
+    ):
+        assert retired not in section, f"{retired} survived in the operator flow"
+
+
+def test_a_launcher_failure_is_never_a_business_decision():
+    section = _section(_text("docs/nightly-operation.md"), "### 起動を拒否する条件")
+    assert "Business decision" in section
+    assert "NO_TRADE" in section
+    assert "DATA_UNAVAILABLE" in section
+
+
+def test_the_launcher_is_documented_as_not_a_security_gate():
+    section = _section(
+        _text("docs/nightly-operation.md"), "## Production Context Launcher"
+    )
+    assert "Security Gateではない" in section
+
+
+def test_the_retired_runtime_security_checks_are_documented_as_retired():
+    """AC-03: what the launcher no longer looks at, said out loud."""
+    text = _text("docs/nightly-operation.md")
+    section = _section(text, "### Launcherが確認しないこと")
+    for retired in (
+        "/etc",
+        "Managed Policy",
+        "Runtime Guard",
+        "exact version",
+        "seccomp",
+        "Remote Control",
+        "runtime_security.json",
+    ):
+        assert retired in section, retired
 
 
 # ------------------- Production Security Boundary Change Authorization ---
@@ -1683,7 +655,7 @@ def test_tc_gov_01_a_work_order_without_authorization_may_not_relax_security():
     assert "Production Security Boundary Change Authorization" in text
     assert "NONE" in text
     assert "HUMAN + ARCHITECT EXPLICIT" in text
-    assert "通常は既存Production Security Boundaryを緩和してはならない" in text
+    assert "通常は既存Business Security Contractを緩和してはならない" in text
     assert "repository-side source変更に限り" in text
 
 
@@ -1702,12 +674,12 @@ def test_tc_gov_02_authorization_is_an_exact_file_and_relaxation_intersection():
     assert "曖昧な列挙は無効" in text or "曖昧な記述は無効" in text
 
 
-def test_tc_gov_07_installed_production_state_is_never_reachable():
-    """AC-GOV-01/AC-GOV-05: repository source is not /etc, authorized or not."""
+def test_tc_gov_07_the_production_host_is_never_reachable():
+    """AC-GOV-01/AC-GOV-05: repository source is not the Production host."""
     text = _work_order_doc()
-    assert "installed Production stateへの変更権限を与えない" in text
+    assert "Production hostのinstalled stateへの変更権限を与えない" in text
     assert "Human-onlyである" in text
-    assert "installed Production Security Boundary" in text
+    assert "Production hostのinstalled state" in text
 
 
 def test_ac_gov_04_claude_cannot_authorize_itself():
@@ -1841,30 +813,26 @@ def test_tc_gov_06_authorization_is_not_retroactive():
     assert "retroactive approval" in section
 
 
-def test_claude_md_carries_the_same_authorization_semantics():
-    """AC-GOV-08: the two governance documents must not disagree."""
+def test_claude_md_defers_to_the_work_order_ssot_without_duplicating_it():
+    """AC-GOV-08: one governance SSOT, pointed at rather than copied.
+
+    Two copies of a contract are two contracts, and the second one is always
+    the stale one. CLAUDE.md keeps the rules Claude must not need to look up --
+    no self-authorisation, no false PASS -- and sends the rest to the SSOT.
+    """
     text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "non-retroactive" in text
-    assert "intersectionだけ" in text
-    assert "generic authorizationだけでは緩和できない" in text
-    for invariant in (
-        "Fail-Closed semantics",
-        "Raw Evidence integrity",
-        "Trust Chain",
-        "Canonical CLI Pipeline Order",
-        "Safe Sync / Safe Start / Safe Push authority boundary",
-    ):
-        assert invariant in text, invariant
-    assert "authorizationの" in text and "Human-only" in text
+    assert "daytrade-sbi/docs/development-work-order.md" in text
+    assert "このファイルへ複製しない" in text
+    assert "Claude自身がWork Orderへauthorizationを追加" in text
+    assert "NOT VERIFIED BY CLAUDE" in text
 
 
 # ------------------------------------------- static pipeline audit (§22) ---
 #
-# DTWO-2026-025. The Nightly Prompt and the Runtime Guard are two descriptions
-# of the same boundary, and they had drifted: the prompt ran seven commands the
-# guard did not approve, and one the guard forbids. This audit compares the
-# command tokens themselves -- not paragraph wording, not line numbers -- so
-# either side moving alone fails.
+# The Nightly Prompt and the canonical document are two descriptions of the
+# same pipeline, and they had drifted. This audit compares the command tokens
+# themselves -- not paragraph wording, not line numbers -- so either side
+# moving alone fails.
 
 #: Subcommands a normal nightly must never contain, with the reason.
 HUMAN_ONLY_SUBCOMMANDS = {
@@ -1876,16 +844,6 @@ HUMAN_ONLY_SUBCOMMANDS = {
 }
 
 _CLI_INVOCATION = re.compile(r"-m\s+src\.cli\s+([a-z0-9][a-z0-9-]*)")
-
-
-def _load_guard_contract():
-    import importlib.util
-
-    guard_path = PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
-    spec = importlib.util.spec_from_file_location("daytrade_runtime_guard", guard_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _prompt_subcommands() -> set[str]:
@@ -1901,9 +859,14 @@ CANONICAL_ENTRY_ALIASES = {
 }
 
 
+def _cli_subcommands() -> set[str]:
+    from src import cli
+
+    return set(cli.build_parser()._subparsers._group_actions[0].choices)  # noqa: SLF001
+
+
 def _canonical_doc_subcommands() -> set[str]:
-    guard = _load_guard_contract()
-    known = guard.APPROVED_SUBCOMMANDS | guard.FORBIDDEN_SUBCOMMANDS
+    known = _cli_subcommands()
     found: set[str] = set()
     for entry in _canonical_order_entries():
         if entry in CANONICAL_ENTRY_ALIASES:
@@ -1914,12 +877,11 @@ def _canonical_doc_subcommands() -> set[str]:
     return found
 
 
-def test_every_nightly_prompt_command_is_approved_by_the_runtime_guard():
-    guard = _load_guard_contract()
-    unclassified = _prompt_subcommands() - guard.APPROVED_SUBCOMMANDS
-    assert not unclassified, (
-        "prompts/nightly_research.md invokes src.cli subcommands the Runtime "
-        f"Guard does not approve: {sorted(unclassified)}"
+def test_every_nightly_prompt_command_is_a_real_cli_subcommand():
+    unknown = _prompt_subcommands() - _cli_subcommands()
+    assert not unknown, (
+        "prompts/nightly_research.md invokes src.cli subcommands that do not "
+        f"exist: {sorted(unknown)}"
     )
 
 
@@ -1938,36 +900,17 @@ def test_the_canonical_pipeline_contains_no_human_only_command():
     )
 
 
-def test_record_recommendation_stays_forbidden_everywhere():
+def test_record_recommendation_stays_out_of_the_nightly():
     """The specific regression this audit exists to catch."""
-    guard = _load_guard_contract()
-    assert "record-recommendation" in guard.FORBIDDEN_SUBCOMMANDS
-    assert "record-recommendation" not in guard.APPROVED_SUBCOMMANDS
+    assert "record-recommendation" in HUMAN_ONLY_SUBCOMMANDS
     assert "record-recommendation" not in _prompt_subcommands()
+    assert "record-recommendation" not in _canonical_doc_subcommands()
 
 
-def test_every_canonical_pipeline_command_is_approved_by_the_runtime_guard():
-    guard = _load_guard_contract()
-    unclassified = _canonical_doc_subcommands() - guard.APPROVED_SUBCOMMANDS
-    assert not unclassified, (
-        "docs/canonical-pipeline.md lists src.cli subcommands the Runtime Guard "
-        f"does not approve: {sorted(unclassified)}"
-    )
-
-
-def test_the_guard_approves_no_command_the_nightly_never_runs():
-    """Drift in the other direction: an approval nothing documents."""
-    guard = _load_guard_contract()
-    documented = (
-        _prompt_subcommands()
-        | _canonical_doc_subcommands()
-        # Verifiers are run by the operator against a finished run rather than
-        # being a numbered pipeline stage, so they are documented elsewhere.
-        | {"verify-production-run", "verify-production-happy-path"}
-    )
-    orphaned = guard.APPROVED_SUBCOMMANDS - documented
-    assert not orphaned, (
-        f"the Runtime Guard approves undocumented subcommands: {sorted(orphaned)}"
+def test_every_canonical_pipeline_command_exists_in_the_cli():
+    unknown = _canonical_doc_subcommands() - _cli_subcommands()
+    assert not unknown, (
+        f"docs/canonical-pipeline.md lists unknown subcommands: {sorted(unknown)}"
     )
 
 
@@ -1986,7 +929,7 @@ PRE_MERGE_HEADING = "### Pre-Merge Gate"
 PRE_PRODUCTION_HEADING = "### Pre-Production Gate"
 
 #: The standard development lifecycle, in the order the SSOT draws it.
-STANDARD_LIFECYCLE = ("Tests", "Commit", "Safe Push", "Draft PR", "CI", "Review")
+STANDARD_LIFECYCLE = ("Tests", "Commit", "Push", "Draft PR", "CI", "Review")
 
 
 def test_vg_01_the_standard_lifecycle_still_tests_before_it_commits():
@@ -2048,7 +991,7 @@ def test_vg_03_an_external_gate_is_not_a_pre_commit_requirement_by_default():
     """The correction itself: commit first, then run what needs a fixed SHA."""
     body = _section(_work_order_doc(), PRE_MERGE_HEADING)
     assert "immutable SHAへ固定した後" in body
-    for permitted in ("git add", "commit", "Safe Push", "Draft PR"):
+    for permitted in ("git add", "commit", "push", "Draft PR"):
         assert permitted in body, permitted
     assert "禁止しては" in body
     # A work order may still pin a gate to pre-commit explicitly.
@@ -2058,13 +1001,13 @@ def test_vg_03_an_external_gate_is_not_a_pre_commit_requirement_by_default():
 def test_vg_04_external_gate_evidence_names_an_exact_commit():
     body = _section(_work_order_doc(), "### Exact HEAD Evidence")
     assert "exact commit SHA" in body
-    assert "Provider Compatibility Tested HEAD" in body
+    assert "External Gate Tested HEAD" in body
     assert "<40-char SHA>" in body
 
 
 def test_vg_05_evidence_does_not_survive_a_head_change():
     body = _section(_work_order_doc(), "### Exact HEAD Evidence")
-    assert "old PC Evidence = INVALID FOR NEW HEAD" in body
+    assert "old external-gate Evidence = INVALID FOR NEW HEAD" in body
     assert "流用しては" in body
     assert "再実施する" in body
     # A PR body edit moves no bytes, so it invalidates nothing.
@@ -2089,60 +1032,70 @@ def test_vg_06_an_unrun_external_gate_is_never_reported_as_a_pass():
     body = _section(_work_order_doc(), "### No False PASS")
     for claim in ("PASS", "SUCCESS", "VERIFIED"):
         assert claim in body, claim
-    assert "Provider Compatibility: NOT VERIFIED BY CLAUDE" in body
+    assert "External Gate: NOT VERIFIED BY CLAUDE" in body
     assert "GitHub CI: NOT VERIFIED BY CLAUDE" in body
 
 
-#: The pre-merge order the provider suite must document, start to finish.
-PC_GATE_ORDER = (
-    "GitHub Actions CI",
-    "exact PR HEAD freeze",
-    "Human PC-01..PC-16",
-    "Architect Final Review",
-    "Human Merge",
-    "Production Human-only rollout",
-)
+def test_vg_07_an_unmet_pre_merge_gate_blocks_the_merge_and_production():
+    """The blocking semantics, which are the contract.
 
-PC_GATE_HEADING = "## Gate Placement"
-
-
-def _provider_gate_section() -> str:
-    return _section(_text("docs/claude-provider-compatibility.md"), PC_GATE_HEADING)
-
-
-def test_vg_07_the_provider_suite_runs_after_ci_on_a_frozen_head():
-    section = _provider_gate_section()
-    positions = []
-    for stage in PC_GATE_ORDER:
-        index = section.find(stage)
-        assert index != -1, f"the provider gate order omits {stage!r}"
-        positions.append(index)
-    assert positions == sorted(positions), "the provider gate order is wrong"
-    assert "PRE-MERGE / PRE-PRODUCTION GATE" in section
-    assert "PRE-COMMIT GATEではない" in section
-    assert "CI must complete successfully before Human PC starts" in section
-
-
-def test_vg_08_one_failed_or_missing_case_blocks_merge_and_production():
-    section = _provider_gate_section()
-    assert "all 16 cases required" in section
-    assert "one FAIL blocks merge" in section
-    assert "one missing case blocks merge" in section
+    *Which* gates a piece of work requires, and in what order, is the Work
+    Order's decision -- this SSOT places gates, it does not enumerate them.
+    What it does fix is the consequence: a required pre-merge gate that has not
+    passed stops the merge and stops the rollout.
+    """
+    section = _section(_work_order_doc(), PRE_MERGE_HEADING)
+    assert "required Pre-Merge Gateが未実施、または1件でもFAIL" in section
     assert "Human Merge: BLOCKED" in section
     assert "Production rollout: BLOCKED" in section
-    # And what it explicitly does not block.
-    assert "commit / Safe Push / Draft PRのblockerでは" in section
 
 
-def test_vg_08_no_local_substitute_is_accepted_for_the_provider_gate():
-    section = _provider_gate_section()
-    for rule in (
-        "mock tests cannot substitute for a real provider test",
-        "Development local pytest cannot substitute for PC",
-        "Production host is not the Development implementation environment",
-        "Production deployment remains Human-only",
+def test_vg_07_the_ssot_does_not_fix_a_gate_order_of_its_own():
+    """RC-04: gate placement is not a licence to legislate gate content.
+
+    A fixed order written here would apply to every future Work Order, which is
+    a governance change no Work Order authorised.
+    """
+    section = _section(_work_order_doc(), PRE_MERGE_HEADING)
+    assert "実施順序を一律に固定しない" in section
+    assert "その案件のWork Orderが決める" in section
+
+
+#: Mandatory Production checkpoints DTWO-2026-026 retired. Each is checked
+#: only inside the Pre-Production Gate section: the words may legitimately
+#: appear elsewhere in the repository as history, or as the Archive v1 legacy
+#: read contract, and a test that failed on those would be forcing the
+#: documentation to forget why the change happened.
+RETIRED_PRODUCTION_CHECKPOINTS = (
+    "Human-only policy deployment / replacement validation",
+    "Managed Policy deployment",
+    "Managed Policy replacement",
+    "Runtime Guard deployment",
+    "seccomp attestation",
+    "exact Claude provider version",
+    "Provider Compatibility Suite",
+)
+
+
+@pytest.mark.parametrize("retired", RETIRED_PRODUCTION_CHECKPOINTS)
+def test_rc_01_no_retired_lifecycle_returns_as_a_production_gate(retired):
+    """RC-01 / RC-02: the Pre-Production Gate lists what Production still
+    requires, so a retired mandatory lifecycle reappearing there is the
+    regression -- not a mention of it anywhere else."""
+    section = _section(_work_order_doc(), PRE_PRODUCTION_HEADING)
+    assert retired not in section, retired
+
+
+def test_rc_01_the_pre_production_gate_keeps_its_three_remaining_items():
+    """Removing the retired one must not quietly remove the others."""
+    section = _section(_work_order_doc(), PRE_PRODUCTION_HEADING)
+    for kept in (
+        "Production environment acceptance",
+        "Production historical compatibility audit",
+        "Production operational readiness",
     ):
-        assert rule in section, rule
+        assert kept in section, kept
+    assert "Development Claudeが実行しては" in section
 
 
 @pytest.mark.parametrize(

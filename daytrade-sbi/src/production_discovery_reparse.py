@@ -47,7 +47,7 @@ What it must never do (contract, enforced by the code below and by
   reparse to a full TOP50.
 
 It is HUMAN-ONLY. It is not a canonical ``src.cli`` subcommand, so it cannot
-appear in the Production Managed Policy's ``APPROVED_SUBCOMMANDS``, and a
+appear in the Canonical CLI Pipeline Order, and a
 coding agent must never run it. Production Claude stops and hands the run
 back to a human instead.
 
@@ -71,15 +71,15 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from src.claude_runtime_security import (
+from src.contracts import load_json_document, validate_json_document
+from src.file_io import atomic_write_text
+from src.production_context import (
     PROTECTED_TREE_PREFIXES,
-    RuntimeSecurityError,
+    ProductionContextError,
     resolve_run_dir,
     validate_target_date,
     verify_source_tree_clean,
 )
-from src.contracts import load_json_document, validate_json_document
-from src.file_io import atomic_write_text
 from src.request_budget import (
     RequestBudgetError,
     load_request_record,
@@ -289,7 +289,7 @@ def default_run_command(argv: list[str], cwd: Path) -> str:
 def _validated_target_date(value: str) -> str:
     try:
         return validate_target_date(value)
-    except RuntimeSecurityError as error:
+    except ProductionContextError as error:
         raise _fail(
             "PRODUCTION_DISCOVERY_REPARSE_TARGET_DATE_INVALID", error.message
         ) from None
@@ -298,7 +298,7 @@ def _validated_target_date(value: str) -> str:
 def _resolve_run_dir(daytrade_root: Path, target_date: str) -> Path:
     try:
         run_dir = resolve_run_dir(daytrade_root, target_date)
-    except RuntimeSecurityError as error:
+    except ProductionContextError as error:
         raise _fail(
             "PRODUCTION_DISCOVERY_REPARSE_TARGET_DATE_INVALID", error.message
         ) from None
@@ -351,7 +351,7 @@ def _verify_local_git_state(
     porcelain = run_command(["git", "status", "--porcelain"], repository_root)
     try:
         verify_source_tree_clean(porcelain)
-    except RuntimeSecurityError as error:
+    except ProductionContextError as error:
         raise _fail(
             "PRODUCTION_DISCOVERY_REPARSE_SOURCE_TREE_DIRTY", error.message
         ) from None
@@ -1354,7 +1354,7 @@ def reparse_main(argv: list[str] | None = None, **overrides: Any) -> int:
         result = reparse_production_discovery(args.target_date, **overrides)
     except (
         ProductionDiscoveryReparseError,
-        RuntimeSecurityError,
+        ProductionContextError,
         StageWiringError,
         ValueError,
         OSError,

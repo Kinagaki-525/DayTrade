@@ -32,25 +32,25 @@ runs/YYYY-MM-DD/
 
 ## `working/` は Non-Business Sidecar
 
-現在`working/`に入るのは`runtime_security.json`（Production LauncherのRuntime
-Security Attestation）と`event_source_extraction.json`（Event AI Classificationの
-local作業出力）ですが、この2つに固定された契約ではありません。
+現在`working/`に入るのは`event_source_extraction.json`（Event AI Classificationの
+local作業出力）と、Human専用recoveryが残す
+`production_discovery_reparse/<git_head_sha>.json`ですが、この2つに固定された
+契約ではありません。
 
 どちらもcanonical `src.cli` stageの成果物ではなく、`config_sha256`も
 `strategy_version`も持たず、どのTrust Chainにも属しません。Business Artifactとしては
 扱わないため、`src/contracts.py`の`validate_run_artifact_allowlist`は`working/`を
-**丸ごとskipし、内部を列挙しません**。将来ここへ新しいRuntime Security Evidenceが
-追加されても、それだけを理由にBusiness Runを`INVALID_RUN`にしてはならないためです。
-中身の検証はProduction Archive側の責務です。
+**丸ごとskipし、内部を列挙しません**。将来ここへ新しいsidecarが追加されても、
+それだけを理由にBusiness Runを`INVALID_RUN`にしてはならないためです。
 
 identityだけはfail-closedで、`working`という名のregular file、`working`という名の
 symlink（辿りません）、`working2`のような別directoryはいずれも予期しないartifactです。
 
 ## 日付Runはgit管理しません
 
-`runs/YYYY-MM-DD/`は`.gitignore`されています。次回のRuntime Security Preflightが
-`git_clean`を要求するためであり、また生のSource PageやNetwork Request記録を
-GitHubへ流さないためです。このREADMEは追跡対象のまま残ります。
+`runs/YYYY-MM-DD/`は`.gitignore`されています。次回起動時のtracked clean判定を
+通すためであり、また生のSource PageやNetwork Request記録をGitHubへ流さない
+ためです。このREADMEは追跡対象のまま残ります。
 
 証跡の永続化は、リポジトリ外に置かれSHA256 manifestで封をされたArchiveが担います。
 手順と契約は[docs/production-run-archive.md](../docs/production-run-archive.md)が正本です。

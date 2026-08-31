@@ -11,7 +11,7 @@ The Operational Run is read-only source: nothing under ``runs/<target-date>/``
 is written, renamed, re-serialised or deleted. There is no ``--force``, no
 retention, no deletion and no network access anywhere in this path.
 
-Not a Managed-Policy-approved command: Production Claude cannot run this. A
+Not a ``src.cli`` subcommand, so never a pipeline stage. A
 coding agent must not run it either -- a human archives a run.
 
 Exit codes: 0 = ARCHIVED / ALREADY_ARCHIVED, 2 = contract violation.

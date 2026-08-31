@@ -1,14 +1,14 @@
-# Production Run Archive Contract v1
+# Production Run Archive Contract
 
 Production Nightly Runの証跡は`runs/<target-date>/`に残ります。しかしこのディレクトリは
 **Operational**です。
 
-- 次回のRuntime Security Preflightは`git_clean`を要求するため、`runs/YYYY-MM-DD/`は
+- 次回起動時のtracked clean判定を通すため、`runs/YYYY-MM-DD/`は
   git ignoreされている（[`.gitignore`](../.gitignore)）
 - Pipelineが途中で停止すると半端な状態で残る
 - Humanが整理・削除でき、そうすると「その夜に実際に何が起きたか」の唯一の記録が消える
 
-Production Run Archive Contract v1は、この`runs/<target-date>/`を**byte-exactにcopyし、
+Production Run Archiveは、この`runs/<target-date>/`を**byte-exactにcopyし、
 SHA256 manifestで封をした複製**をリポジトリ外へ作ります。実装は
 [`src/production_archive.py`](../src/production_archive.py)、契約testは
 [`tests/test_production_archive.py`](../tests/test_production_archive.py)です。
@@ -22,9 +22,8 @@ SHA256 manifestで封をした複製**をリポジトリ外へ作ります。実
 - **backupではない**。Archiveは**同一マシン**の上にある。disk故障・盗難・
   filesystem破壊は防げない。off-site backupが必要ならそれは別の運用であり、
   この契約はそれを代替しない
-- **Production Claudeから到達できるものではない**。2つのentry pointはどちらも
-  Human専用scriptで、canonical `src.cli` subcommandではないため、
-  Production Managed Policyのexec-form allowlist（`APPROVED_SUBCOMMANDS`）に
+- **Nightly pipelineの一部ではない**。2つのentry pointはどちらもHuman専用scriptで、
+  canonical `src.cli` subcommandではないため、Canonical CLI Pipeline Orderに
   載ることが構造的にできない
 - **retention機構ではない**。古いArchiveを消す機能は無い。削除はHumanが行う
 
@@ -103,12 +102,28 @@ manifestとdigestの**両方**を書き換えられる主体に対するcryptogr
 Local Archiveは外部署名でもWORM storageでもoff-site witnessでもありません。
 それらが必要なら、この契約の外に別途用意する運用であり、この契約は代替しません。
 
+### Manifest generation
+
+| `schema_version` | 用途 |
+| --- | --- |
+| **2**（現行） | 新規Archiveはすべてこれ。完全性はBusiness Verificationだけで決まる |
+| **1**（historical read-only） | DTWO-2026-026以前に封をしたArchive。Runtime Security Attestationが`archive_status`に効いていた |
+
+v1 Archiveは**書き換えません**。migrationも再sealもせず、封をされた当時の契約
+（manifest schema・manifest SHA・file hash・Runtime Security Evidenceの一致）で
+そのまま検証します。`schema_version`がどちらでもない値なら
+`PRODUCTION_ARCHIVE_MANIFEST_INVALID`です。
+
 ### `archive_status`
 
-| 値 | 意味 |
+| 値 | 意味（v2） |
 | --- | --- |
-| `COMPLETE_VERIFIED` | Business Verificationが`VERIFIED_*`のいずれか **かつ** Runtime Security Attestationが`VALID` |
-| `INCOMPLETE` | それ以外（Business INVALID_RUN、Attestation欠落・破損・日付不一致） |
+| `COMPLETE_VERIFIED` | Business Verificationが`VERIFIED_*`のいずれか |
+| `INCOMPLETE` | それ以外（Business `INVALID_RUN`） |
+
+v2 manifestに`runtime_security`と`source.runtime_security_git_head_sha`はありません。
+localのClaude実行環境がどう構成されていたかは、その夜の市場Evidenceと売買判断が
+成立しているかどうかとは別軸だからです。
 
 `archive_status`はArchiveの妥当性ではなく、**Archiveされた夜の状態**を表します。
 `INCOMPLETE`なArchiveも完全に妥当なArchiveであり、`verify-production-archive`は
@@ -117,12 +132,11 @@ byte整合性だけで判定します。
 ## `working/` Non-Business Sidecar
 
 `runs/<date>/working/`は**Non-Business Sidecar**です。現在ここに入るのは
-`runtime_security.json`（Production LauncherのRuntime Security Attestation）、
-`event_source_extraction.json`（Event AI Classificationのlocal作業出力）、および
+`event_source_extraction.json`（Event AI Classificationのlocal作業出力）と
 `production_discovery_reparse/<git_head_sha>.json`（Human専用の
 `scripts/reparse-production-discovery`が残すRecovery Evidence。
 [source-acquisition.md](source-acquisition.md)参照）ですが、
-**この3つに固定された契約ではありません**。
+**この2つに固定された契約ではありません**。
 
 Recovery Evidenceも他のsidecarと同じ扱いです。Business Artifactではないので
 `RUN_ARTIFACT_ALLOWLIST`へは入れませんし、Business Verifierが`working/`の内部を
@@ -133,8 +147,7 @@ Business Artifactとして検査するようにも変更しません。`working/
 `strategy_version`を持たず、どのTrust Chainにも属しません。したがって
 Business Artifactの`RUN_ARTIFACT_ALLOWLIST`へ入れることはできません。
 一方でこれを「予期しないartifact」として扱うことも誤りで、そうすると
-Managed Policy下で実行された証拠であるAttestationを持つがゆえに、
-実際のProduction Nightly Runがすべて`INVALID_RUN`になってしまいます。
+sidecarを持つ実際のProduction Nightly Runがすべて`INVALID_RUN`になってしまいます。
 
 そこで[`src/contracts.py`](../src/contracts.py)の
 `validate_run_artifact_allowlist`は`working/`をsidecar directoryとして認識し、
@@ -142,8 +155,8 @@ Managed Policy下で実行された証拠であるAttestationを持つがゆえ�
 
 **Business Verifierは`working/`の内部を列挙しません。** 内部のfile名を
 Business Artifact Allowlistとして扱うことはしません。将来`working/`へ新しい
-Runtime Security Evidenceが追加されても、それだけを理由にBusiness Runを
-`INVALID_RUN`にしてはならないからです。中身の検証はProduction Archive側の責務です。
+sidecarが追加されても、それだけを理由にBusiness Runを`INVALID_RUN`にしては
+ならないからです。
 
 `working/`について検査するのは**identityだけ**で、そこはfail-closedです。
 
@@ -161,10 +174,8 @@ Runtime Security Evidenceが追加されても、それだけを理由にBusines
 `PRODUCTION_ARCHIVE_SOURCE_UNSAFE_ENTRY`でfail-closeします。Business側が
 `working/`の中身に寛容であることは、Archive側のscanを緩めません。
 
-そのうえでArchiveは`run/working/runtime_security.json`を**Runtime Security証跡**として
-Business Artifact chainとは独立に分類し、`VALID` / `MISSING` / `INVALID`を
-manifestへ記録します。`git_head_sha`はschema-validなAttestationからのみ読み、
-gitコマンドで推測することはありません。
+`working/`配下のfileはraw byteとしてArchiveされますが、その中身が
+`archive_status`を左右することはありません（v2）。
 
 ## 歴史的Source Matrix Registry
 

@@ -284,8 +284,8 @@ WebSearch禁止）。出力先は一時作業ファイル
 daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
 ```
 
-- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため、Production Managed Policyの
-  `APPROVED_SUBCOMMANDS`へ載ることが構造的にできない。Production Claudeもagentも実行しない
+- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため、Canonical CLI Pipeline
+  Orderへ載ることが構造的にできない。Production Claudeもagentも実行しない
 - Networkへ出ない。GET 0件、retry 0件、新規Physical Request 0件。`--allow-network`も
   `--force`も存在しない。入力は`--target-date`だけで、Run Directory・Source Matrix・
   対象source_id（`YAHOO_JP_VOLUME_RANKING` / `YAHOO_JP_GAIN_RANKING`）はscript内部で固定
