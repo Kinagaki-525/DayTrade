@@ -243,6 +243,76 @@ checkの`status_reason`等の自由文をparseして分類を判断すること�
   Request Record 1という関係になる。
 - **Stage Budget**: 上流のGateが閉じた場合、下流のネットワーク呼び出しは行わない。
 
+### Pre-Network失敗の2分類（DTWO-2026-028）
+
+transportへ触れる前に判定できる失敗は2種類あり、**扱いが異なる**。どちらも
+Physical Requestを1件も消費しない点は同じだが、「Sourceについて何か観測したか」が
+違う。
+
+#### 1. Source / request admissibility failure
+
+対象: `src/network_policy.py`の`NetworkPolicyError`。
+
+```text
+unapproved host / invalid scheme / invalid port / raw IP / issuer domain not approved
+```
+
+これはこのSourceとこのURLについての**再現可能な判定**であり、Evidenceである。
+したがってLogical Attemptとして記録する。
+
+```text
+Logical Attempt        作る
+status                 ACCESS_FAILED
+cache_status           NOT_CACHEABLE
+request_id             null
+network_request_performed  false
+Physical Request       0
+transport              0
+```
+
+#### 2. Local runtime prerequisite failure
+
+対象は**exactに1つ**だけである。
+
+```text
+HTTP_USER_AGENT_NOT_CONFIGURED
+```
+
+`DAYTRADE_HTTP_USER_AGENT`が未設定・空文字・前後に空白を含む場合、
+`src/source_fetch.py`の`user_agent()`が`SourceFetchError`を送出する。
+これは**このプロセスのローカル環境の不備**であって、Sourceについては何も語っていない。
+Physical Requestも、transport呼出も、Raw Evidenceも、Source Pageも存在しない。
+
+したがって**Logical Attemptを作らない**。`SourceFetchError`をacquisitionの
+hard errorとしてそのまま上位へ伝播させ、CLIは非0で終了する。
+
+```text
+Logical Attempt        作らない
+Physical Request       0
+transport              0
+Source Page            0
+CLI exit code          非0
+```
+
+Discovery Fail-Closed Gateは`acquire-discovery`のexit codeが非0なら後続Stageへ
+進まないので、この失敗もfail-closedのまま扱われる。
+
+#### なぜ分けるのか
+
+分ける前は、ローカルのshell設定漏れが`ACCESS_FAILED`のLogical Attemptとして
+記録されていた。Exact Logical Attempt Immutabilityにより、同一identityの
+Attemptは**statusに関係なく**byte-for-byte再利用されるため、環境変数を直して
+同じrun directoryで再実行しても、その失敗Attemptが返り続けた。設定ミス1つで
+その`(target_date, research_cutoff)`のrunが恒久的に使用不能になっていた。
+
+**Exact Logical Attempt Immutabilityは変更していない。** 緩めてもいないし、
+statusによる例外も作っていない。変えたのは境界であり、Sourceについて何も
+観測していないローカル失敗では、そもそもLogical Attemptを成立させない。
+
+過去に記録済みの
+`status=ACCESS_FAILED` / `notes=["HTTP_USER_AGENT_NOT_CONFIGURED"]`のAttemptは
+migrationしない。それらは引き続きimmutableに再利用され得る。
+
 ## Event AI Classification
 
 分類してよいのは `COMPANY_IR` / `COMPANY_IR_DISCLOSURE` / `YAHOO_JP_NEWS` /

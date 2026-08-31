@@ -541,6 +541,10 @@ def acquire_source(
     # transport, that this request will never be sent must run *before*
     # reserve_request(): a Physical Request Record must never be created for
     # something that was always going to fail pre-network.
+    # A Network Policy refusal is a determination *about this source and this
+    # URL* -- unapproved host, wrong scheme, raw IP, unapproved issuer domain.
+    # It is reproducible and it is evidence, so it is recorded as a Logical
+    # Attempt: the ledger says why nothing was fetched.
     try:
         validate_request_url(
             url,
@@ -548,13 +552,7 @@ def acquire_source(
             ticker=candidate_code,
             issuer_registry=issuer_registry,
         )
-        # User-Agent presence only matters to the real curl transport (it is
-        # what curl_transport() embeds in the request); a caller-supplied
-        # Fake Transport (every test in this codebase) never reads it, so
-        # this check is scoped to the default transport only.
-        if transport is curl_transport:
-            user_agent()
-    except (NetworkPolicyError, SourceFetchError) as exc:
+    except NetworkPolicyError as exc:
         attempt = _failed_attempt(
             definition=definition,
             candidate_code=candidate_code,
@@ -575,6 +573,22 @@ def acquire_source(
         if cache is not None:
             cache.remember(attempt)
         return attempt, []
+
+    # DTWO-2026-028: a missing User-Agent is *not* a fact about the source.
+    # Nothing was observed -- no Physical Request, no transport call, no Raw
+    # Evidence, no Source Page -- so there is nothing to record an Attempt
+    # about. Recording one anyway made a local shell misconfiguration
+    # indistinguishable from "we asked and this is what happened", and Exact
+    # Logical Attempt Immutability then reused that Attempt byte-for-byte, so
+    # fixing the shell could never un-stick the run directory.
+    #
+    # The SourceFetchError therefore propagates to the caller as a runtime
+    # hard error. Immutability is untouched: this Attempt simply never exists.
+    #
+    # The check stays scoped to the real transport, which is what embeds the
+    # header; a caller-supplied Fake Transport never reads it.
+    if transport is curl_transport:
+        user_agent()
 
     # ---- Physical Request: reserve (crash-safe) before any transport call -
     reservation = reserve_request(
