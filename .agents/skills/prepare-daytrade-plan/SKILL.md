@@ -13,7 +13,7 @@ Canonical CLI Pipeline Order (source of truth: `daytrade-sbi/docs/canonical-pipe
 
 `validate-run-artifacts` is the last command of a nightly. `record-recommendation` is
 **HUMAN-ONLY** and never part of this flow — it appends to a global CSV outside the run
-directory, so it stays in the Runtime Guard's `FORBIDDEN_SUBCOMMANDS`.
+directory, so it is not a pipeline stage.
 
 ## Canonical Instructions
 
@@ -26,54 +26,35 @@ Read these files before starting:
 - `daytrade-sbi/prompts/nightly_research.md` for the detailed artifact and CLI workflow
 - `daytrade-sbi/config/source_matrix.yaml` for the fixed market research sources
 
-Read is not an allowlist: a production session may read the repository through
-`permissions.additionalDirectories`, so nothing above needs a per-file grant. The
-production boundary that does the work is Bash (canonical CLI commands only), Write/Edit
-(one artifact), and the network allowlist. The security contract itself is **not**
-duplicated here — `daytrade-sbi/docs/nightly-operation.md` and
-`daytrade-sbi/docs/claude-provider-compatibility.md` are the sources of truth.
+What makes a nightly result trustworthy is inside the pipeline, not in front of it:
+Raw Evidence with SHA256, the Source Ledger, the deterministic parsers, the Trust Chain
+and the Risk Engine, each of which fails closed. The contract itself is **not** duplicated
+here — `daytrade-sbi/docs/nightly-operation.md` is the source of truth.
 
 Follow the nightly prompt as the procedural source of truth. Do not copy or replace its commands with inferred alternatives.
 
 ## Production Runtime Profile (Claude Code production executor only)
 
 Every command shown in this Skill and in `nightly_research.md` uses **logical relative paths**
-(`config/source_matrix.yaml`, `runs/<date>/ranking.json`). Codex and Development Claude Code run
-them as written. A Claude Code session started through `scripts/claude-production` (production
-runtime profile) must **not** copy those strings into the Bash tool: the OS-managed Production
-Runtime Guard inspects the command string *before* any shell runs it, so a relative path is denied
-with `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN` and a `;` with `CLAUDE_PRODUCTION_BASH_DENIED`. That is
-the guard's contract, not a defect — never work around it, and never ask for it to be relaxed.
+(`config/source_matrix.yaml`, `runs/<date>/ranking.json`). Resolve them against this
+session's own roots before running them: the DayTrade root is the current working directory
+(`scripts/claude-production` `chdir`s there before `exec claude`, and exports
+`DAYTRADE_ROOT`), and the run directory is `<DayTrade root>/runs/<target-date>`
+(`DAYTRADE_RUN_DIR`). Never hardcode a machine-specific absolute path into this Skill or any
+document.
 
-Source of truth: the **Production Path Materialization Contract** and the **Production
-1-call-1-command Contract** in `daytrade-sbi/docs/nightly-operation.md`. In the production runtime
-profile:
-
-- Materialize every path argument into a concrete absolute path immediately before the Bash call.
-  The DayTrade root is the session's current working directory (the launcher `chdir`s there before
-  `exec claude`); the run directory is `<DayTrade root>/runs/<target-date>`; the target date and the
-  canonical production interpreter are recorded in
-  `runs/<target-date>/working/runtime_security.json` (read it with the Read tool — `cat` is not an
-  approved command). Never hardcode a machine-specific absolute path into this Skill or any
-  document.
-- Leave no relative or shell-expanded form in the command string: no `config/...` or `runs/...`,
-  no `./` `../` `~/`, no `$DAYTRADE_ROOT` / `${DAYTRADE_ROOT}` / `$DAYTRADE_RUN_DIR` /
-  `${DAYTRADE_RUN_DIR}`, no `$(pwd)` or backticks. The guard sees the unexpanded string.
-- **1 Bash call = 1 canonical CLI command.** Do not append `; echo "EXIT_CODE=$?"` to read the exit
-  status — the Bash tool already reports a non-zero exit. No `&&`, `||`, pipes, redirection, command
-  substitution, process substitution, or `cd`. When a step needs an output file, use the CLI's own
-  `--output`.
-- **`acquire-*` is the exception to that `--output` rule.** An acquisition command writes its own
-  Business Artifact (`market_research.json` / `market_data.json` / `sources.json`) to a canonical
-  path and only then emits its CLI result summary to `--output`, so pointing `--output` at a
-  Business Artifact overwrites the artifact the same command just wrote (this is what happened on
-  the 2026-08-27 production nightly). In the standard nightly, pass no `--output` to `acquire-*`
-  and read the CLI result summary from the Bash tool's stdout. Only when the summary really has to
-  be kept as a file, write it to `runs/<target-date>/working/<result-name>.json`. A Business
-  Artifact, the `--sources` path itself, or anything outside the run directory is rejected with
+- **`acquire-*` is the exception to the usual "use the CLI's own `--output`" rule.** An
+  acquisition command writes its own Business Artifact (`market_research.json` /
+  `market_data.json` / `sources.json`) to a canonical path and only then emits its CLI result
+  summary to `--output`, so pointing `--output` at a Business Artifact overwrites the artifact
+  the same command just wrote (this is what happened on the 2026-08-27 production nightly). In
+  the standard nightly, pass no `--output` to `acquire-*` and read the CLI result summary from
+  the Bash tool's stdout. Only when the summary really has to be kept as a file, write it to
+  `runs/<target-date>/working/<result-name>.json`. A Business Artifact, the `--sources` path
+  itself, or anything outside the run directory is rejected with
   `ACQUISITION_OUTPUT_PATH_INVALID` before a single network GET is spent.
-- Only the command rendering changes. The Canonical CLI Pipeline Order, the flags, and the business
-  logic are identical in every runtime profile.
+- Only the command rendering changes between runtime profiles. The Canonical CLI Pipeline
+  Order, the flags, and the business logic are identical in every one of them.
 
 ## Orchestration
 
@@ -86,7 +67,8 @@ profile:
    is immutable, so a normal acquisition reuses it byte-for-byte and **never re-parses**
    stored evidence. The only way forward is the HUMAN-ONLY recovery
    `daytrade-sbi/scripts/reparse-production-discovery --target-date <date>`, which is not a
-   canonical `src.cli` subcommand and can therefore never appear in `APPROVED_SUBCOMMANDS`.
+   canonical `src.cli` subcommand and can therefore never appear in the Canonical CLI
+   Pipeline Order.
    **The agent must never run it** — stop and report that a human-only Discovery reparse recovery
    is needed. Never delete `network_requests/`, `source_pages/`, `sources.json`, or
    `market_research.json` to "retry"; never retry the acquisition; never look for a `--force`

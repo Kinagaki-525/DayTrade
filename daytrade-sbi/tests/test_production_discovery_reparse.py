@@ -24,8 +24,8 @@ import pytest
 
 from src import cli
 from src import production_discovery_reparse as recovery
-from src.claude_runtime_security import RUNTIME_SECURITY_CHECKS
 from tests import fake_transport
+from tests.legacy_runtime_security import RUNTIME_SECURITY_CHECKS
 from tests import source_page_fixtures as pages
 
 
@@ -1439,20 +1439,6 @@ def test_every_raised_error_code_is_declared():
     assert len(set(recovery.ERROR_CODES)) == len(recovery.ERROR_CODES)
     for code in recovery.ERROR_CODES:
         assert code.startswith("PRODUCTION_DISCOVERY_REPARSE_")
-
-
-# ------------------------------------------------------------- T24 guard ---
-
-
-def test_the_production_runtime_guard_does_not_approve_the_recovery():
-    guard = (
-        Path(recovery.__file__).resolve().parents[1]
-        / "ops"
-        / "claude"
-        / "daytrade_runtime_guard.py"
-    ).read_text(encoding="utf-8")
-    assert "reparse-production-discovery" not in guard
-    assert "production_discovery_reparse" not in guard
 
 
 def test_the_recovery_audit_is_not_a_business_artifact():

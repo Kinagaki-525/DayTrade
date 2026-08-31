@@ -1,72 +1,221 @@
-"""FIX-R2-004A: the unit-testable core of ``scripts/claude-production``.
+"""DTWO-2026-026: the unit-testable core of ``scripts/claude-production``.
 
-``scripts/claude-production`` is a human-only entry point; the security value
-of its preflight is only real if the preflight itself is tested. This module
-holds that preflight as an injectable pure-ish function: every OS boundary
-(paths, environment, subprocess, ``which``, platform) is a keyword argument,
-so tests drive it against a tmp directory instead of the real ``/etc``.
+This is a **Production Context Launcher**, not a security gate. It answers one
+question -- "is this checkout in a state a nightly may be run from, and what
+are the paths and the exact commit that run will be attributed to?" -- and then
+``exec``s Claude Code with that context in the environment.
 
-The *command line* deliberately exposes none of those seams (FIX-R2-004A
-section 19): a human may only choose ``--target-date`` and
-``--preflight-only``. Security-boundary paths are fixed constants.
+What it deliberately does *not* do (DTWO-2026-026 section 8.1): it reads no
+``/etc`` marker, no OS managed policy, no runtime guard, no seccomp
+attestation; it does not pin the Claude Code version, look for sandbox
+binaries, inspect MCP or Remote Control state, or touch the network. Those
+belonged to Layer C (Local Operational Governance) and are not what makes a
+DayTrade business result trustworthy -- Raw Evidence, SHA256, the Source
+Ledger, the Trust Chain and the Risk Engine are, and every one of them still
+fails closed inside the pipeline itself.
+
+A launcher failure is therefore an *operational start failure*. It is never
+converted into ``NO_TRADE``, ``DATA_UNAVAILABLE`` or ``REJECTED``: no business
+decision has been reached, because no business stage has run.
+
+The launcher writes nothing. No attestation artifact, no policy candidate, no
+file anywhere under ``runs/``.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import platform as _platform
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from src.claude_runtime_security import (
-    DEFAULT_ISSUER_REGISTRY_PATH,
-    DEFAULT_SOURCE_MATRIX_PATH,
-    MANAGED_GUARD_PATH,
-    MANAGED_SETTINGS_PATH,
-    PRODUCTION_MARKER_PATH,
-    REQUIRED_SANDBOX_BINARIES,
-    RUNTIME_SECURITY_CHECKS,
-    SECCOMP_MARKER_PATH,
-    RuntimeSecurityError,
-    build_runtime_security_document,
-    canonical_production_python,
-    derive_expected_domains,
-    render_managed_settings,
+from src.production_context import (
+    ProductionContextError,
     resolve_run_dir,
     validate_target_date,
-    verify_claude_version,
-    verify_http_user_agent,
-    verify_installed_managed_settings,
-    verify_installed_runtime_guard,
-    verify_platform,
-    verify_production_marker,
-    verify_sandbox_dependencies,
-    verify_seccomp_marker,
-    verify_source_tree_clean,
 )
-from src.contracts import validate_json_document
-from src.file_io import atomic_write_text
 
 DAYTRADE_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = DAYTRADE_ROOT.parent
 
-RUNTIME_SECURITY_SCHEMA_NAME = "runtime_security.schema.json"
+#: The only branch a production nightly may run from. A nightly is attributed
+#: to an exact commit, and a feature branch is not the reviewed line of
+#: history that commit is supposed to come from.
+PRODUCTION_BRANCH = "main"
+
+#: In-progress git operations, by the marker git itself leaves in the git
+#: directory. A half-finished merge or rebase means the working tree is a
+#: transient state nobody reviewed, whatever ``git status`` says about it.
+GIT_OPERATION_MARKERS = (
+    ("merge", "MERGE_HEAD"),
+    ("rebase", "rebase-merge"),
+    ("rebase", "rebase-apply"),
+    ("cherry-pick", "CHERRY_PICK_HEAD"),
+    ("revert", "REVERT_HEAD"),
+    ("bisect", "BISECT_LOG"),
+)
+
+ERROR_CODES = (
+    "CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED",
+    "CLAUDE_PRODUCTION_BRANCH_NOT_MAIN",
+    "CLAUDE_PRODUCTION_GIT_OPERATION_IN_PROGRESS",
+    "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY",
+    "CLAUDE_PRODUCTION_HEAD_UNRESOLVED",
+)
+
+#: A resolved commit is exactly forty lowercase hex characters.
+_HEX40 = frozenset("0123456789abcdef")
+
+
+class ProductionLauncherError(ProductionContextError):
+    """A fail-closed refusal. Claude is never started."""
+
+
+def _fail(code: str, message: str) -> ProductionLauncherError:
+    assert code in ERROR_CODES, code
+    return ProductionLauncherError(code, message)
 
 
 def default_run_command(argv: list[str], cwd: Path) -> str:
+    """Run a git command and return stdout, or raise with its stderr."""
     completed = subprocess.run(
         argv, cwd=str(cwd), capture_output=True, text=True, check=False
     )
     if completed.returncode != 0:
-        raise RuntimeSecurityError(
-            "CLAUDE_MANAGED_POLICY_INVALID",
+        raise _fail(
+            "CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED",
             f"command failed: {' '.join(argv)}: {completed.stderr.strip()}",
         )
     return completed.stdout
+
+
+def resolve_repository_root(
+    *,
+    daytrade_root: Path,
+    expected_root: Path,
+    run_command: Callable[[list[str], Path], str],
+) -> Path:
+    """The repository root, derived from the source tree and confirmed by git.
+
+    The layout fixes the answer without running anything; git is then asked
+    independently and the two must agree. A disagreement -- a stray checkout, a
+    nested repository, a copied source tree -- fails closed rather than picking
+    one of them.
+    """
+    if not daytrade_root.is_dir():
+        raise _fail(
+            "CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED",
+            f"{str(daytrade_root)!r} is not a directory",
+        )
+    reported = run_command(
+        ["git", "rev-parse", "--show-toplevel"], daytrade_root
+    ).strip()
+    if not reported:
+        raise _fail(
+            "CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED",
+            "git reported no repository top level",
+        )
+    resolved = Path(reported).resolve()
+    if resolved != expected_root.resolve():
+        raise _fail(
+            "CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED",
+            f"git reports the repository root as {reported!r}, not "
+            f"{str(expected_root)!r}; refusing to guess",
+        )
+    return resolved
+
+
+def verify_on_production_branch(
+    *, repository_root: Path, run_command: Callable[[list[str], Path], str]
+) -> str:
+    """Only ``main``; a detached HEAD is refused with everything else.
+
+    ``symbolic-ref --quiet HEAD`` answers only for a real branch, so a detached
+    HEAD is a non-zero exit rather than a name to compare.
+    """
+    try:
+        reference = run_command(
+            ["git", "symbolic-ref", "--quiet", "HEAD"], repository_root
+        ).strip()
+    except ProductionContextError:
+        raise _fail(
+            "CLAUDE_PRODUCTION_BRANCH_NOT_MAIN",
+            "HEAD is detached or the current branch could not be resolved; "
+            f"a production nightly runs from {PRODUCTION_BRANCH!r}",
+        ) from None
+    if not reference.startswith("refs/heads/"):
+        raise _fail(
+            "CLAUDE_PRODUCTION_BRANCH_NOT_MAIN",
+            f"HEAD points at {reference!r}, which is not a local branch",
+        )
+    branch = reference[len("refs/heads/") :]
+    if branch != PRODUCTION_BRANCH:
+        raise _fail(
+            "CLAUDE_PRODUCTION_BRANCH_NOT_MAIN",
+            f"current branch is {branch!r}; a production nightly runs from "
+            f"{PRODUCTION_BRANCH!r}",
+        )
+    return branch
+
+
+def verify_no_git_operation(
+    *, repository_root: Path, run_command: Callable[[list[str], Path], str]
+) -> None:
+    """Refuse while a merge, rebase, cherry-pick, revert or bisect is open."""
+    git_dir = Path(
+        run_command(["git", "rev-parse", "--absolute-git-dir"], repository_root).strip()
+    )
+    in_progress = sorted(
+        {name for name, marker in GIT_OPERATION_MARKERS if (git_dir / marker).exists()}
+    )
+    if in_progress:
+        raise _fail(
+            "CLAUDE_PRODUCTION_GIT_OPERATION_IN_PROGRESS",
+            f"a git operation is in progress: {', '.join(in_progress)}; "
+            "finish or abort it before starting a production session",
+        )
+
+
+def verify_tracked_tree_clean(porcelain_output: str) -> None:
+    """Every *tracked* change refuses the launch; untracked files never do.
+
+    The nightly is attributed to ``HEAD``, so an edited tracked file means the
+    code that runs is not the code that commit names. Untracked files are a
+    different thing entirely -- a scratch file in the checkout says nothing
+    about which committed code is about to execute -- and never block a start.
+    """
+    dirty = sorted(
+        {
+            line[3:].strip().strip('"')
+            for line in porcelain_output.splitlines()
+            if line.strip()
+        }
+    )
+    if dirty:
+        raise _fail(
+            "CLAUDE_PRODUCTION_WORKING_TREE_DIRTY",
+            f"tracked files have uncommitted changes: {dirty}",
+        )
+
+
+def resolve_head_sha(
+    *, repository_root: Path, run_command: Callable[[list[str], Path], str]
+) -> str:
+    """The exact commit this nightly is attributed to."""
+    try:
+        head = run_command(["git", "rev-parse", "HEAD"], repository_root).strip()
+    except ProductionContextError:
+        raise _fail(
+            "CLAUDE_PRODUCTION_HEAD_UNRESOLVED", "git rev-parse HEAD failed"
+        ) from None
+    if len(head) != 40 or not set(head) <= _HEX40:
+        raise _fail(
+            "CLAUDE_PRODUCTION_HEAD_UNRESOLVED",
+            f"git rev-parse HEAD did not return a 40-character sha: {head!r}",
+        )
+    return head
 
 
 def preflight(
@@ -74,160 +223,96 @@ def preflight(
     target_date: str,
     daytrade_root: str | Path = DAYTRADE_ROOT,
     project_root: str | Path | None = None,
-    managed_settings_path: str | Path = MANAGED_SETTINGS_PATH,
-    managed_guard_path: str | Path = MANAGED_GUARD_PATH,
-    production_marker_path: str | Path = PRODUCTION_MARKER_PATH,
-    seccomp_marker_path: str | Path = SECCOMP_MARKER_PATH,
-    source_matrix_path: str | Path = DEFAULT_SOURCE_MATRIX_PATH,
-    issuer_registry_path: str | Path = DEFAULT_ISSUER_REGISTRY_PATH,
-    expected_uid: int = 0,
-    environ: Mapping[str, str] | None = None,
     run_command: Callable[[list[str], Path], str] = default_run_command,
-    which: Callable[[str], str | None] = shutil.which,
-    platform_system: Callable[[], str] = _platform.system,
-    platform_name: Callable[[], str] = _platform.platform,
-    write_artifact: bool = True,
 ) -> dict[str, Any]:
-    """Run the full fail-closed production preflight.
+    """Every local operational precondition, in order.
 
-    Raises :class:`RuntimeSecurityError` on the first violation; nothing is
-    written to disk unless every check passed.
+    Raises :class:`ProductionLauncherError` on the first failure. Nothing is
+    written to disk in either outcome.
     """
-    environ = os.environ if environ is None else environ
-
-    # 0. untrusted human input, before any filesystem work at all.
+    # 1. untrusted human input, before any filesystem or git work at all.
     target_date = validate_target_date(target_date)
 
+    # 2-3. the two roots, derived from this file and confirmed by git.
     daytrade_root = Path(daytrade_root).resolve()
-    project_root = (
-        Path(project_root).resolve() if project_root is not None else daytrade_root.parent
+    expected_root = (
+        Path(project_root).resolve()
+        if project_root is not None
+        else daytrade_root.parent
     )
-    run_dir = resolve_run_dir(daytrade_root, target_date)
-
-    checks: dict[str, str] = {}
-
-    # 1. platform
-    verify_platform(platform_system())
-
-    # 2. dedicated production runtime marker (root-owned)
-    verify_production_marker(production_marker_path, expected_uid=expected_uid)
-    checks["production_marker"] = "PASS"
-
-    # 3. human seccomp attestation marker (root-owned) -- never guessed
-    verify_seccomp_marker(seccomp_marker_path, expected_uid=expected_uid)
-    checks["sandbox_seccomp"] = "PASS"
-
-    # 4. protected tree must be clean
-    verify_source_tree_clean(run_command(["git", "status", "--porcelain"], project_root))
-    checks["git_clean"] = "PASS"
-
-    # 5. Claude Code version
-    claude_version = run_command(["claude", "--version"], project_root).strip()
-    verify_claude_version(claude_version)
-    checks["claude_version"] = "PASS"
-
-    # 6. sandbox dependencies (never installed here)
-    verify_sandbox_dependencies({name: which(name) for name in REQUIRED_SANDBOX_BINARIES})
-    checks["sandbox_dependencies"] = "PASS"
-
-    # 7-8. expected domains + expected managed policy (in memory)
-    allowed_domains = derive_expected_domains(source_matrix_path, issuer_registry_path)
-    production_python_candidate = environ.get("DAYTRADE_PRODUCTION_PYTHON") or which(
-        "python3"
-    )
-    if not production_python_candidate:
-        raise RuntimeSecurityError(
-            "CLAUDE_MANAGED_POLICY_INVALID", "no production python3 was found"
-        )
-    # FIX-R2-004B: one canonical identity from here on -- the managed Bash allow
-    # rule, the managed hook command, runtime_security.json, the preflight
-    # result and DAYTRADE_PRODUCTION_PYTHON all carry this exact string.
-    production_python = canonical_production_python(production_python_candidate)
-    expected = render_managed_settings(
-        project_root=project_root,
+    repository_root = resolve_repository_root(
         daytrade_root=daytrade_root,
-        production_python=production_python,
-        source_matrix_path=source_matrix_path,
-        issuer_registry_path=issuer_registry_path,
-        guard_path=managed_guard_path,
+        expected_root=expected_root,
+        run_command=run_command,
     )
 
-    # 9. installed managed policy
-    settings_sha = verify_installed_managed_settings(
-        managed_settings_path, expected=expected, expected_uid=expected_uid
+    # 4-5. branch, which also rejects a detached HEAD.
+    branch = verify_on_production_branch(
+        repository_root=repository_root, run_command=run_command
     )
-    for name in (
-        "managed_settings",
-        "managed_settings_permissions",
-        "sandbox_required",
-        "sandbox_escape_disabled",
-        "strict_network_allowlist",
-        "managed_domain_lock",
-        "managed_hook_lock",
-        "managed_permission_lock",
-        "mcp_lockdown",
-        "domain_sync",
-    ):
-        checks[name] = "PASS"
 
-    # 10. installed runtime guard
-    guard_sha = verify_installed_runtime_guard(
-        managed_guard_path, expected_uid=expected_uid
+    # 6. no half-finished git operation.
+    verify_no_git_operation(
+        repository_root=repository_root, run_command=run_command
     )
-    checks["runtime_guard"] = "PASS"
-    checks["runtime_guard_sha"] = "PASS"
 
-    # 11. HTTP User-Agent (the value itself is never recorded)
-    verify_http_user_agent(environ)
-    checks["http_user_agent"] = "PASS"
-
-    # 12. runtime_security.json -- schema-validated, then atomically written
-    head = run_command(["git", "rev-parse", "HEAD"], project_root).strip()
-    document = build_runtime_security_document(
-        target_date=target_date,
-        platform_name=platform_name(),
-        claude_code_version=claude_version,
-        git_head_sha=head,
-        production_python=production_python,
-        managed_settings_sha256=settings_sha,
-        managed_runtime_guard_sha256=guard_sha,
-        source_matrix_path=source_matrix_path,
-        issuer_registry_path=issuer_registry_path,
-        allowed_domains=allowed_domains,
-        checks={name: checks[name] for name in RUNTIME_SECURITY_CHECKS},
-        http_user_agent_present=True,
-    )
-    try:
-        validate_json_document(document, RUNTIME_SECURITY_SCHEMA_NAME)
-    except ValueError as error:
-        raise RuntimeSecurityError(
-            "CLAUDE_MANAGED_POLICY_INVALID",
-            f"runtime_security document failed schema validation: {error}",
-        ) from None
-
-    artifact_path = run_dir / "working" / "runtime_security.json"
-    if write_artifact:
-        atomic_write_text(
-            artifact_path, json.dumps(document, indent=2, sort_keys=True) + "\n"
+    # 7. tracked cleanliness only -- untracked files are not a refusal.
+    verify_tracked_tree_clean(
+        run_command(
+            ["git", "status", "--porcelain", "--untracked-files=no"], repository_root
         )
+    )
+
+    # 8. the commit this run is attributed to.
+    head_sha = resolve_head_sha(
+        repository_root=repository_root, run_command=run_command
+    )
+
+    # 9. containment: runs/<target-date> under this checkout's runs root.
+    run_dir = resolve_run_dir(daytrade_root, target_date)
 
     return {
         "target_date": target_date,
         "run_dir": run_dir,
-        "artifact_path": artifact_path,
-        "document": document,
-        "production_python": production_python,
-        "project_root": project_root,
+        "project_root": repository_root,
         "daytrade_root": daytrade_root,
+        "current_branch": branch,
+        "git_head_sha": head_sha,
     }
+
+
+def build_environment(
+    result: Mapping[str, Any], environ: Mapping[str, str]
+) -> dict[str, str]:
+    """The production context every later stage reads."""
+    env = dict(environ)
+    env.update(
+        {
+            "DAYTRADE_RUNTIME_PROFILE": "production",
+            "DAYTRADE_PROJECT_ROOT": str(result["project_root"]),
+            "DAYTRADE_ROOT": str(result["daytrade_root"]),
+            "DAYTRADE_RUN_DIR": str(result["run_dir"]),
+            "DAYTRADE_TARGET_DATE": str(result["target_date"]),
+            "DAYTRADE_GIT_HEAD_SHA": str(result["git_head_sha"]),
+        }
+    )
+    return env
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="HUMAN-ONLY DayTrade production Claude Code launcher"
+        prog="claude-production",
+        description=(
+            "HUMAN-ONLY DayTrade production Claude Code launcher. Resolves the "
+            "run context and starts Claude; not a security gate."
+        ),
     )
     parser.add_argument("--target-date", required=True)
-    parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="run the local checks and exit without starting Claude",
+    )
     return parser
 
 
@@ -236,25 +321,22 @@ def main(argv: list[str] | None = None, **overrides: Any) -> int:
 
     try:
         result = preflight(target_date=args.target_date, **overrides)
-    except RuntimeSecurityError as error:
+    except ProductionContextError as error:
         sys.stderr.write(f"{error}\n")
         return 2
 
+    sys.stdout.write(f"target_date: {result['target_date']}\n")
+    sys.stdout.write(f"daytrade_root: {result['daytrade_root']}\n")
+    sys.stdout.write(f"run_dir: {result['run_dir']}\n")
+    sys.stdout.write(f"branch: {result['current_branch']}\n")
+    sys.stdout.write(f"git_head_sha: {result['git_head_sha']}\n")
+
     if args.preflight_only:
-        sys.stdout.write("runtime security preflight PASS\n")
+        sys.stdout.write("production context preflight PASS\n")
         return 0
 
-    env = dict(os.environ)
-    env.update(
-        {
-            "DAYTRADE_RUNTIME_PROFILE": "production",
-            "DAYTRADE_PROJECT_ROOT": str(result["project_root"]),
-            "DAYTRADE_ROOT": str(result["daytrade_root"]),
-            "DAYTRADE_RUN_DIR": str(result["run_dir"]),
-            "DAYTRADE_TARGET_DATE": result["target_date"],
-            "DAYTRADE_PRODUCTION_PYTHON": result["production_python"],
-        }
-    )
+    env = build_environment(result, os.environ)
+    sys.stdout.flush()
     os.chdir(result["daytrade_root"])
-    os.execvpe("claude", ["claude"], env)  # pragma: no cover
+    os.execvpe("claude", ["claude"], env)  # pragma: no cover - replaces process
     return 0  # pragma: no cover

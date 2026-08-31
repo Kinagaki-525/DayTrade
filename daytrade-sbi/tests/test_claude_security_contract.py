@@ -1,5 +1,17 @@
-"""The Claude Code security bootstrap is part of the product, so it is tested
-like the product: settings, rules file, and the PreToolUse network guard."""
+"""The Business Evidence boundary, tested like the product it protects.
+
+DTWO-2026-026 split DayTrade's controls into three layers and kept the
+fail-closed machinery on the two that decide whether a result can be trusted:
+Business Evidence Integrity and Trading Safety. This file covers the part of
+that boundary the Claude Code bootstrap owns -- ``CLAUDE.md``,
+``.claude/settings.json`` and the PreToolUse network guard -- plus the Python
+network policy every fetch actually goes through.
+
+Layer C (Local Operational Governance: git wrappers, launchers, sandbox and OS
+policy on a personally owned machine) is deliberately *not* here. Git traffic
+is ordinary developer work now; a direct HTTP fetch that skips the Source
+Acquisition CLI still is not.
+"""
 
 from __future__ import annotations
 
@@ -29,10 +41,10 @@ ALLOWED_DOMAINS = {
     "www.release.tdnet.info",
 }
 
-#: The single Development-only host, added for ``scripts/claude-safe-push``.
-#: It is *not* a market data source and must never reach the Production
-#: allowlist, which is derived from the Source Matrix and issuer registry
-#: alone (see ``claude_runtime_security.derive_expected_domains``).
+#: The single Development-only host, needed to push a branch at all. It is
+#: *not* a market data source: no ``acquire-*`` command may reach it, because
+#: ``src/network_policy.py`` validates every fetched URL against the Source
+#: Matrix and the human-approved issuer registry, and github.com is in neither.
 DEVELOPMENT_ONLY_DOMAINS = {"github.com"}
 
 
@@ -103,9 +115,6 @@ def test_claude_md_restricts_fetching_to_the_acquisition_cli():
         "Bash(powershell:*)",
         "Bash(pwsh:*)",
         "Bash(gh:*)",
-        "Bash(git fetch:*)",
-        "Bash(git pull:*)",
-        "Bash(git push:*)",
         "Bash(pip install:*)",
         "Bash(python -c:*)",
         "Bash(node -e:*)",
@@ -148,14 +157,18 @@ def test_sandbox_allowlist_is_exactly_the_approved_host_set():
     )
 
 
-def test_the_development_only_host_never_reaches_production():
-    """github.com is a Development workflow host, not a market data source."""
-    from src.claude_runtime_security import derive_expected_domains
+@pytest.mark.parametrize("host", sorted(DEVELOPMENT_ONLY_DOMAINS))
+def test_a_development_only_host_can_never_be_fetched_as_evidence(host):
+    """AC-17: relaxing Git did not put github.com on the evidence path.
 
-    production = set(derive_expected_domains())
-    assert not (production & DEVELOPMENT_ONLY_DOMAINS), (
-        "a Development-only host leaked into the Production allowlist"
-    )
+    The sandbox may reach it -- a push has to go somewhere -- but the Business
+    URL validator answers to the Source Matrix, not to the sandbox allowlist.
+    """
+    from src.network_policy import NetworkPolicyError, validate_request_url
+
+    with pytest.raises(NetworkPolicyError) as excinfo:
+        validate_request_url(f"https://{host}/x", source_id="JPX_CALENDAR")
+    assert excinfo.value.code == "NETWORK_POLICY_HOST_NOT_ALLOWED"
 
 
 def test_sandbox_unavailability_may_not_silently_fall_back_to_the_host():
@@ -306,9 +319,6 @@ def _run_hook(command: str) -> subprocess.CompletedProcess:
         "scp a b:c",
         "sftp host",
         "gh pr create",
-        "git fetch origin",
-        "git pull --rebase",
-        "git push -u origin main",
         "pip install requests",
         "pip3 install --user httpx",
         "npm install axios",
@@ -330,6 +340,11 @@ def test_forbidden_commands_are_denied_with_exit_code_two(command):
         "ls -la",
         "git status",
         "git commit -m 'concurrent nightly run'",
+        # DTWO-2026-026: ordinary Git, including its network half.
+        "git fetch origin",
+        "git pull --ff-only origin main",
+        "git push -u origin claude/example",
+        "git switch -c claude/example",
     ],
 )
 def test_legitimate_commands_are_allowed(command):

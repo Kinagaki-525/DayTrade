@@ -1,4 +1,4 @@
-"""Production Run Archive Contract v1.
+"""Production Run Archive Contract.
 
 The Operational Run directory is not durable evidence. It is dirty state: the
 next Preflight demands a clean work tree, ``runs/YYYY-MM-DD/`` is git-ignored,
@@ -29,15 +29,12 @@ from pathlib import Path
 import pytest
 
 from src import production_archive
-from src.claude_runtime_security import (
-    RUNTIME_SECURITY_CHECKS,
-    build_runtime_security_document,
-)
 from src.contracts import validate_json_document, validate_run_artifact_allowlist
 from src.production_archive import (
     ARCHIVE_STATUS_COMPLETE_VERIFIED,
     ARCHIVE_STATUS_INCOMPLETE,
     ARCHIVE_VERSION,
+    ARCHIVE_VERSION_V2,
     MANIFEST_NAME,
     MANIFEST_SHA_NAME,
     RESULT_ALREADY_ARCHIVED,
@@ -58,6 +55,10 @@ from src.production_archive import (
 )
 from src.production_verify import VERIFIED_CASE_C_NO_TRADE, VERIFIED_STATUSES
 from src.selection_calibration import resolve_historical_source_matrix_path
+from tests.legacy_runtime_security import (
+    RUNTIME_SECURITY_CHECKS,
+    build_runtime_security_document,
+)
 from tests.production_run_fixtures import HISTORICAL_SOURCE_MATRIX, build_case_c_run
 
 
@@ -187,8 +188,12 @@ def test_scan_tree_refuses_a_file_as_the_tree_root(tmp_path):
 
 
 def test_archiving_a_complete_run_seals_it_verified(tmp_path, run_dir, archive_root):
-    _write_runtime_security(run_dir, _runtime_security_document())
+    """TC-09: a business-VERIFIED run is COMPLETE_VERIFIED, on its own.
 
+    No attestation is written, none is needed, and none appears in the
+    manifest: what an archive claims is that this evidence and this decision
+    verify, not that some particular local Claude configuration produced them.
+    """
     result = _archive(tmp_path, run_dir)
 
     assert result["result"] == RESULT_ARCHIVED
@@ -197,12 +202,11 @@ def test_archiving_a_complete_run_seals_it_verified(tmp_path, run_dir, archive_r
 
     archive_dir = archive_root / "runs" / TARGET_DATE
     manifest = json.loads((archive_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
-    assert manifest["archive_version"] == ARCHIVE_VERSION
-    assert manifest["schema_version"] == 1
+    assert manifest["archive_version"] == ARCHIVE_VERSION_V2
+    assert manifest["schema_version"] == 2
     assert manifest["business_verification"]["status"] == VERIFIED_CASE_C_NO_TRADE
-    assert manifest["runtime_security"]["status"] == RUNTIME_SECURITY_VALID
-    assert manifest["source"]["runtime_security_git_head_sha"] == "a" * 40
-    assert manifest["source"]["run_relative_path"] == f"runs/{TARGET_DATE}"
+    assert manifest["source"] == {"run_relative_path": f"runs/{TARGET_DATE}"}
+    assert "runtime_security" not in manifest
 
 
 def test_the_operational_run_is_never_modified(tmp_path, run_dir):
@@ -234,7 +238,7 @@ def test_the_manifest_is_schema_valid_and_digest_matched(
 
     raw = (archive_dir / MANIFEST_NAME).read_bytes()
     manifest = json.loads(raw.decode("utf-8"))
-    validate_json_document(manifest, "production_archive_manifest.schema.json")
+    validate_json_document(manifest, "production_archive_manifest_v2.schema.json")
 
     digest = (archive_dir / MANIFEST_SHA_NAME).read_bytes()
     assert len(digest) == 65 and digest.endswith(b"\n")
@@ -390,62 +394,38 @@ def test_an_incomplete_run_is_still_archived(tmp_path, archive_root):
     assert report["status"] not in VERIFIED_STATUSES
 
 
-def test_a_verified_run_without_runtime_security_is_incomplete(
-    tmp_path, run_dir, archive_root
+@pytest.mark.parametrize(
+    "sidecar",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param("{ not json", id="unparseable"),
+        pytest.param("valid", id="v1-attestation"),
+    ],
+)
+def test_a_leftover_attestation_does_not_change_the_archive_status(
+    tmp_path, run_dir, archive_root, sidecar
 ):
-    """Business VERIFIED alone is not COMPLETE_VERIFIED: the attestation that
-    the run happened under the Managed Policy is a separate axis."""
+    """TC-10 / AC-13: the sidecar has no vote any more.
+
+    A run copied from an older host may still carry a
+    ``working/runtime_security.json``. It is archived as raw bytes like every
+    other sidecar file, and it changes nothing about what the archive claims.
+    """
+    if sidecar == "valid":
+        _write_runtime_security(run_dir, _runtime_security_document())
+    elif sidecar is not None:
+        _write_runtime_security(run_dir, sidecar)
+
     result = _archive(tmp_path, run_dir)
 
-    assert result["archive_status"] == ARCHIVE_STATUS_INCOMPLETE
+    assert result["archive_status"] == ARCHIVE_STATUS_COMPLETE_VERIFIED
     manifest = json.loads(
         (archive_root / "runs" / TARGET_DATE / MANIFEST_NAME).read_text(
             encoding="utf-8"
         )
     )
     assert manifest["business_verification"]["status"] in VERIFIED_STATUSES
-    assert manifest["runtime_security"] == {
-        "status": RUNTIME_SECURITY_MISSING,
-        "path": None,
-        "sha256": None,
-    }
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        pytest.param("{ not json", id="unparseable"),
-        pytest.param(json.dumps({"schema_version": 1}), id="schema-invalid"),
-    ],
-)
-def test_a_corrupt_runtime_security_attestation_is_invalid_not_missing(
-    tmp_path, run_dir, archive_root, payload
-):
-    _write_runtime_security(run_dir, payload)
-
-    result = _archive(tmp_path, run_dir)
-
-    assert result["archive_status"] == ARCHIVE_STATUS_INCOMPLETE
-    manifest = json.loads(
-        (archive_root / "runs" / TARGET_DATE / MANIFEST_NAME).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["runtime_security"]["status"] == RUNTIME_SECURITY_INVALID
-    assert manifest["source"]["runtime_security_git_head_sha"] is None
-
-
-def test_an_attestation_for_another_date_is_invalid(tmp_path, run_dir, archive_root):
-    _write_runtime_security(run_dir, _runtime_security_document("2026-08-11"))
-
-    _archive(tmp_path, run_dir)
-
-    manifest = json.loads(
-        (archive_root / "runs" / TARGET_DATE / MANIFEST_NAME).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["runtime_security"]["status"] == RUNTIME_SECURITY_INVALID
+    assert "runtime_security" not in manifest
 
 
 # ---------------------------------------------------------- idempotency ---
@@ -463,7 +443,7 @@ def test_archiving_twice_confirms_instead_of_rewriting(tmp_path, run_dir, archiv
     result = _archive(tmp_path, run_dir)
 
     assert result["result"] == RESULT_ALREADY_ARCHIVED
-    assert result["archive_status"] == ARCHIVE_STATUS_INCOMPLETE
+    assert result["archive_status"] == ARCHIVE_STATUS_COMPLETE_VERIFIED
     after = {
         path.relative_to(archive_dir).as_posix(): os.stat(path).st_mtime_ns
         for path in archive_dir.rglob("*")
@@ -625,16 +605,16 @@ def test_a_symlink_inside_the_run_aborts_the_whole_archive(
 
 
 def test_verify_accepts_a_freshly_sealed_archive(tmp_path, run_dir, archive_root):
-    _write_runtime_security(run_dir, _runtime_security_document())
     _archive(tmp_path, run_dir)
 
     result = verify_production_archive(TARGET_DATE, archive_root=archive_root)
 
     assert result["result"] == RESULT_ARCHIVE_VERIFIED
+    assert result["schema_version"] == 2
     assert result["archive_status"] == ARCHIVE_STATUS_COMPLETE_VERIFIED
     assert result["stored_business_verification_status"] == VERIFIED_CASE_C_NO_TRADE
     assert result["current_business_reverification_status"] == VERIFIED_CASE_C_NO_TRADE
-    assert result["runtime_security_status"] == RUNTIME_SECURITY_VALID
+    assert result["runtime_security_status"] is None
     assert result["source_matrix_registry"] == "PRESENT"
     assert result["total_file_count"] > 0
 
@@ -998,18 +978,17 @@ def test_both_entry_points_exist_and_are_executable():
         assert "HUMAN-ONLY" in script.read_text(encoding="utf-8")
 
 
-def test_the_archive_is_not_reachable_from_production_claude():
-    """Neither entry point is a canonical CLI subcommand, so the Managed
-    Policy's exec-form allowlist can never admit it."""
+def test_the_archive_is_not_a_canonical_pipeline_command():
+    """Sealing and verifying an archive are human operations, not stages.
+
+    Neither is a ``src.cli`` subcommand, so neither can appear in the Canonical
+    CLI Pipeline Order or be run as part of a nightly.
+    """
     from src import cli
 
-    guard_source = (
-        PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py"
-    ).read_text(encoding="utf-8")
     choices = set(cli.build_parser()._subparsers._group_actions[0].choices)  # noqa: SLF001
     for name in ("archive-production-run", "verify-production-archive"):
         assert name not in choices, name
-        assert name not in guard_source, name
 
 
 # ------------------------------- working/ Non-Business Sidecar contract ---
@@ -1207,3 +1186,132 @@ def test_dated_runs_are_git_ignored_but_the_readme_is_not():
     text = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "/runs/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/" in text
     assert "README.md" not in text.split("/runs/")[0]
+
+
+# --------------------------------- historical Archive v1 read contract ---
+#
+# DTWO-2026-026 stopped writing v1 manifests; it did not stop reading them. A
+# v1 archive was sealed while the Runtime Security Attestation was part of what
+# "complete" meant, and its bytes are never rewritten, re-sealed or migrated --
+# so verification has to keep judging it under exactly that older contract.
+
+
+def _rewrite_as_v1(archive_dir: Path, *, runtime_security: dict | None) -> None:
+    """Turn a freshly sealed v2 archive into the v1 archive it would have been.
+
+    Only the manifest and its digest are rewritten; every archived byte under
+    ``run/``, ``inputs/`` and ``verification/`` is left exactly as sealed, so
+    what the test verifies afterwards is real archived content.
+    """
+    _unseal(archive_dir)
+    manifest = json.loads((archive_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+    manifest["schema_version"] = 1
+    manifest["archive_version"] = ARCHIVE_VERSION
+    manifest["source"]["runtime_security_git_head_sha"] = (
+        runtime_security["git_head_sha"] if runtime_security else None
+    )
+    manifest["runtime_security"] = (
+        {
+            "status": runtime_security["status"],
+            "path": runtime_security["path"],
+            "sha256": runtime_security["sha256"],
+        }
+        if runtime_security
+        else {"status": RUNTIME_SECURITY_MISSING, "path": None, "sha256": None}
+    )
+    raw = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    (archive_dir / MANIFEST_NAME).write_bytes(raw)
+    (archive_dir / MANIFEST_SHA_NAME).write_bytes(
+        (production_archive.sha256_bytes(raw) + "\n").encode("ascii")
+    )
+
+
+def _archived_attestation(archive_dir: Path) -> dict:
+    payload = (archive_dir / "run/working/runtime_security.json").read_bytes()
+    return {
+        "status": RUNTIME_SECURITY_VALID,
+        "path": "run/working/runtime_security.json",
+        "sha256": production_archive.sha256_bytes(payload),
+        "git_head_sha": "a" * 40,
+    }
+
+
+def test_a_historical_v1_archive_still_verifies(tmp_path, run_dir, archive_root):
+    """TC-11 / AC-15: manifest schema, manifest SHA, file hashes and the legacy
+    runtime-security evidence all still validate for a v1 archive."""
+    _write_runtime_security(run_dir, _runtime_security_document())
+    _archive(tmp_path, run_dir)
+    archive_dir = archive_root / "runs" / TARGET_DATE
+    _rewrite_as_v1(archive_dir, runtime_security=_archived_attestation(archive_dir))
+
+    result = verify_production_archive(TARGET_DATE, archive_root=archive_root)
+
+    assert result["result"] == RESULT_ARCHIVE_VERIFIED
+    assert result["schema_version"] == 1
+    assert result["runtime_security_status"] == RUNTIME_SECURITY_VALID
+    assert result["stored_business_verification_status"] == VERIFIED_CASE_C_NO_TRADE
+
+
+def test_a_v1_archive_is_still_validated_against_the_v1_schema(
+    tmp_path, run_dir, archive_root
+):
+    """The v1 read path is the v1 contract, not a relaxed one: a v1 manifest
+    missing its runtime_security block is invalid, exactly as it always was."""
+    _write_runtime_security(run_dir, _runtime_security_document())
+    _archive(tmp_path, run_dir)
+    archive_dir = archive_root / "runs" / TARGET_DATE
+    _rewrite_as_v1(archive_dir, runtime_security=_archived_attestation(archive_dir))
+
+    _unseal(archive_dir)
+    manifest = json.loads((archive_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+    del manifest["runtime_security"]
+    raw = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    (archive_dir / MANIFEST_NAME).write_bytes(raw)
+    (archive_dir / MANIFEST_SHA_NAME).write_bytes(
+        (production_archive.sha256_bytes(raw) + "\n").encode("ascii")
+    )
+
+    with pytest.raises(ProductionArchiveError) as error:
+        verify_production_archive(TARGET_DATE, archive_root=archive_root)
+    assert error.value.code == "PRODUCTION_ARCHIVE_MANIFEST_INVALID"
+
+
+def test_a_v1_attestation_that_no_longer_matches_its_bytes_is_invalid(
+    tmp_path, run_dir, archive_root
+):
+    """The historical evidence check itself is untouched: a v1 manifest whose
+    recorded attestation disagrees with the archived file still fails."""
+    _write_runtime_security(run_dir, _runtime_security_document())
+    _archive(tmp_path, run_dir)
+    archive_dir = archive_root / "runs" / TARGET_DATE
+    attestation = _archived_attestation(archive_dir)
+    attestation["sha256"] = "f" * 64
+    _rewrite_as_v1(archive_dir, runtime_security=attestation)
+
+    with pytest.raises(ProductionArchiveError) as error:
+        verify_production_archive(TARGET_DATE, archive_root=archive_root)
+    assert error.value.code == "PRODUCTION_ARCHIVE_MANIFEST_INVALID"
+
+
+def test_an_unknown_manifest_generation_is_refused(tmp_path, run_dir, archive_root):
+    """Neither v1 nor v2 rules are applied to bytes that claim to be neither."""
+    _archive(tmp_path, run_dir)
+    archive_dir = archive_root / "runs" / TARGET_DATE
+    _unseal(archive_dir)
+    manifest = json.loads((archive_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+    manifest["schema_version"] = 3
+    raw = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    (archive_dir / MANIFEST_NAME).write_bytes(raw)
+    (archive_dir / MANIFEST_SHA_NAME).write_bytes(
+        (production_archive.sha256_bytes(raw) + "\n").encode("ascii")
+    )
+
+    with pytest.raises(ProductionArchiveError) as error:
+        verify_production_archive(TARGET_DATE, archive_root=archive_root)
+    assert error.value.code == "PRODUCTION_ARCHIVE_MANIFEST_INVALID"

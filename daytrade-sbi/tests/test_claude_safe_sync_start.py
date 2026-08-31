@@ -520,27 +520,15 @@ def _guard_verdict(command: str):
 @pytest.mark.parametrize(
     "command",
     [
-        "git fetch origin",
-        "git pull",
-        "git push",
-        "git clone https://github.com/Kinagaki-525/DayTrade.git",
-        "git ls-remote https://github.com/Kinagaki-525/DayTrade.git",
-        "git switch claude/foo",
-        "git checkout claude/foo",
-        "git ship origin claude/foo",
-    ],
-)
-def test_guard_regression_raw_git_paths_remain_blocked(command):
-    assert _guard_verdict(command).returncode != 0
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
+        # DTWO-2026-026: ordinary Git is the standard workflow, and the
+        # wrappers are one more way to run it rather than the only way.
         "scripts/claude-safe-sync-main",
         "scripts/claude-safe-start claude/example",
         "scripts/claude-safe-push",
+        "git fetch origin",
+        "git pull --ff-only origin main",
+        "git switch -c claude/example",
     ],
 )
-def test_guard_allows_only_the_named_wrapper_invocations(command):
+def test_the_guard_allows_both_the_wrappers_and_ordinary_git(command):
     assert _guard_verdict(command).returncode == 0

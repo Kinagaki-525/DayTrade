@@ -30,8 +30,8 @@ Afterwards the human restarts Production Claude and the canonical
 ``acquire-discovery`` runs as usual -- reusing the corrected Logical Attempts
 and spending zero network requests.
 
-Not a Managed-Policy-approved command: it can never appear in the Production
-Runtime Guard's APPROVED_SUBCOMMANDS.
+Not a ``src.cli`` subcommand: it can never appear in the Canonical CLI
+Pipeline Order.
 
 Exit codes: 0 = REPARSED / ALREADY_REPARSED, 2 = contract violation.
 """

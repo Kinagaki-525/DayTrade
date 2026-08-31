@@ -14,7 +14,7 @@ manifest alone.
 
 There is no ``--force`` and nothing here writes to the archive.
 
-Not a Managed-Policy-approved command: Production Claude cannot run this.
+Not a ``src.cli`` subcommand, so never a pipeline stage.
 
 Exit codes: 0 = ARCHIVE_VERIFIED, 2 = contract violation.
 """

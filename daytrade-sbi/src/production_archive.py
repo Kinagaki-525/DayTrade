@@ -1,4 +1,4 @@
-"""Production Run Archive Contract v1.
+"""Production Run Archive Contract.
 
 A Production Nightly Run leaves its evidence in ``runs/<target-date>/``. That
 directory is *operational*: the next run's ``git status`` sees it, a human may
@@ -12,8 +12,9 @@ What this module is NOT:
   :func:`src.production_verify.verify_production_run`, reused as-is;
 * it is not a backup -- the archive lives on the same machine (see
   ``docs/production-run-archive.md``);
-* it is not reachable from Production Claude -- both entry points are
-  human-only scripts, never Managed-Policy-approved commands.
+* it is not part of the nightly -- both entry points are human-only scripts,
+  never ``src.cli`` subcommands, so neither can appear in the Canonical CLI
+  Pipeline Order.
 
 Contract highlights (the full text is ``docs/production-run-archive.md``):
 
@@ -25,9 +26,8 @@ Contract highlights (the full text is ``docs/production-run-archive.md``):
   ``runs/``;
 * an existing archive is never overwritten -- an identical source is
   ``ALREADY_ARCHIVED``, a diverged source is a hard error;
-* ``working/`` is a Non-Business Sidecar: its ``runtime_security.json`` is
-  archived and validated as **runtime security evidence**, separately from the
-  Business Artifact chain;
+* ``working/`` is a Non-Business Sidecar: whatever it holds is archived as raw
+  bytes, and never as part of the Business Artifact chain;
 * an INCOMPLETE business run is still archived. Losing the evidence of a run
   that stopped early is strictly worse than storing it.
 
@@ -48,16 +48,16 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from src.claude_runtime_security import (
+from src.contracts import load_json_document, validate_json_document
+from src.downstream_trust import sha256_file_bytes
+from src.production_context import (
     DEFAULT_ISSUER_REGISTRY_PATH,
-    DEFAULT_SOURCE_MATRIX_PATH,
-    RuntimeSecurityError,
+    ProductionContextError,
     sha256_bytes,
     validate_target_date,
 )
-from src.contracts import load_json_document, validate_json_document
-from src.downstream_trust import sha256_file_bytes
 from src.production_verify import INVALID_RUN, VERIFIED_STATUSES, verify_production_run
+from src.source_matrix import DEFAULT_SOURCE_MATRIX_PATH
 
 
 # --------------------------------------------------------------- layout ---
@@ -70,8 +70,31 @@ REPOSITORY_ROOT = DAYTRADE_ROOT.parent
 #: Fixed by contract -- the CLI cannot move it.
 ARCHIVE_ROOT = REPOSITORY_ROOT.parent / "daytrade-production-archive"
 
+#: DTWO-2026-026. Two manifest generations coexist, and they mean different
+#: things. **v1** is historical: it was written while a Runtime Security
+#: Attestation was part of what a complete run meant, and its stored bytes are
+#: never rewritten, re-sealed or migrated -- they are read back under exactly
+#: the contract they were written under. **v2** is what every new archive gets:
+#: completeness is decided by the Business Verification alone, because that is
+#: what says whether the market evidence and the trading decision hold up.
 ARCHIVE_VERSION = "production-run-archive-v1"
+ARCHIVE_VERSION_V2 = "production-run-archive-v2"
 MANIFEST_SCHEMA_NAME = "production_archive_manifest.schema.json"
+MANIFEST_SCHEMA_NAME_V2 = "production_archive_manifest_v2.schema.json"
+
+#: schema_version -> the schema that generation is read under. Each schema
+#: ``const``-pins its own ``archive_version``, so the pair cannot drift.
+MANIFEST_SCHEMAS = {
+    1: MANIFEST_SCHEMA_NAME,
+    2: MANIFEST_SCHEMA_NAME_V2,
+}
+
+#: The generation new archives are written in.
+CURRENT_SCHEMA_VERSION = 2
+
+#: Legacy read contract only: the schema of the v1 Runtime Security
+#: Attestation. No new run produces this artifact, and nothing outside v1
+#: verification reads it.
 RUNTIME_SECURITY_SCHEMA_NAME = "runtime_security.schema.json"
 
 MANIFEST_NAME = "archive_manifest.json"
@@ -271,10 +294,10 @@ def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
 
 
 def _validated_target_date(value: str) -> str:
-    """Reuse the launcher's total target-date validator, re-coded for Archive."""
+    """Reuse the shared total target-date validator, re-coded for Archive."""
     try:
         return validate_target_date(value)
-    except RuntimeSecurityError as error:
+    except ProductionContextError as error:
         raise _fail(
             "PRODUCTION_ARCHIVE_TARGET_DATE_INVALID", error.message
         ) from None
@@ -468,8 +491,19 @@ def _read_manifest(archive_dir: Path) -> tuple[dict[str, Any], bytes]:
         raise _fail(
             "PRODUCTION_ARCHIVE_MANIFEST_INVALID", f"{MANIFEST_NAME} is not an object"
         )
+
+    # The generation is read *before* validation, because it selects the
+    # contract to validate against. An unknown generation is refused rather
+    # than guessed at: reading a v3 archive under the v2 rules would be a
+    # silent reinterpretation of somebody else's bytes.
+    version = manifest.get("schema_version")
+    if version not in MANIFEST_SCHEMAS:
+        raise _fail(
+            "PRODUCTION_ARCHIVE_MANIFEST_INVALID",
+            f"unsupported manifest schema_version: {version!r}",
+        )
     try:
-        validate_json_document(manifest, MANIFEST_SCHEMA_NAME)
+        validate_json_document(manifest, MANIFEST_SCHEMAS[version])
     except ValueError as error:
         raise _fail("PRODUCTION_ARCHIVE_MANIFEST_INVALID", str(error)) from None
     return manifest, raw
@@ -596,18 +630,24 @@ def verify_archive_integrity(archive_dir: Path, *, target_date: str) -> dict[str
                 f"{archive_path}: SHA256 {actual} != manifest {recorded['sha256']}",
             )
 
-    runtime_security = manifest["runtime_security"]
-    recomputed = _runtime_security_evidence(archive_dir, target_date)
-    if (
-        runtime_security["status"] != recomputed["status"]
-        or runtime_security["sha256"] != recomputed["sha256"]
-        or runtime_security["path"] != recomputed["path"]
-    ):
-        raise _fail(
-            "PRODUCTION_ARCHIVE_MANIFEST_INVALID",
-            "runtime_security evidence does not match the manifest: "
-            f"stored {runtime_security['status']}, recomputed {recomputed['status']}",
-        )
+    # Legacy read contract: only a v1 manifest carries Runtime Security
+    # evidence, and it is still checked exactly as it was recorded. A v2
+    # manifest has no such field to check -- it is not that the check was
+    # weakened, it is that the evidence is no longer part of what an archive
+    # claims.
+    if manifest["schema_version"] == 1:
+        runtime_security = manifest["runtime_security"]
+        recomputed = _runtime_security_evidence(archive_dir, target_date)
+        if (
+            runtime_security["status"] != recomputed["status"]
+            or runtime_security["sha256"] != recomputed["sha256"]
+            or runtime_security["path"] != recomputed["path"]
+        ):
+            raise _fail(
+                "PRODUCTION_ARCHIVE_MANIFEST_INVALID",
+                "runtime_security evidence does not match the manifest: "
+                f"stored {runtime_security['status']}, recomputed {recomputed['status']}",
+            )
 
     return manifest
 
@@ -621,7 +661,6 @@ def _build_manifest(
     target_date: str,
     archived_at: str,
     business_status: str,
-    runtime_security: dict[str, Any],
     source_matrix_sha256: str,
     issuer_registry_sha256: str,
 ) -> dict[str, Any]:
@@ -640,13 +679,13 @@ def _build_manifest(
             )
     files.sort(key=lambda entry: entry["path"])
 
-    complete = (
-        business_status in VERIFIED_STATUSES
-        and runtime_security["status"] == RUNTIME_SECURITY_VALID
-    )
+    # v2: the Business Verification decides, alone. Whether the local Claude
+    # executor ran under some particular OS policy says nothing about whether
+    # the market evidence and the trading decision in this run hold up.
+    complete = business_status in VERIFIED_STATUSES
     return {
-        "schema_version": 1,
-        "archive_version": ARCHIVE_VERSION,
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "archive_version": ARCHIVE_VERSION_V2,
         "target_date": target_date,
         "archived_at": archived_at,
         "archive_status": (
@@ -654,16 +693,10 @@ def _build_manifest(
         ),
         "source": {
             "run_relative_path": f"runs/{target_date}",
-            "runtime_security_git_head_sha": runtime_security["git_head_sha"],
         },
         "business_verification": {
             "status": business_status,
             "report_path": VERIFICATION_REPORT_PATH,
-        },
-        "runtime_security": {
-            "status": runtime_security["status"],
-            "path": runtime_security["path"],
-            "sha256": runtime_security["sha256"],
         },
         "inputs": {
             "source_matrix": {
@@ -777,18 +810,15 @@ def archive_production_run(
         (staging / "verification").mkdir(parents=True, exist_ok=True)
         (staging / VERIFICATION_REPORT_PATH).write_bytes(_canonical_json_bytes(report))
 
-        runtime_security = _runtime_security_evidence(staging, target_date)
-
         manifest = _build_manifest(
             staging,
             target_date=target_date,
             archived_at=clock().strftime("%Y-%m-%dT%H:%M:%SZ"),
             business_status=str(report.get("status", INVALID_RUN)),
-            runtime_security=runtime_security,
             source_matrix_sha256=source_matrix_sha256,
             issuer_registry_sha256=issuer_registry_sha256,
         )
-        validate_json_document(manifest, MANIFEST_SCHEMA_NAME)
+        validate_json_document(manifest, MANIFEST_SCHEMA_NAME_V2)
 
         manifest_bytes = _canonical_json_bytes(manifest)
         (staging / MANIFEST_NAME).write_bytes(manifest_bytes)
@@ -961,7 +991,13 @@ def verify_production_archive(
         "current_business_reverification_status": str(
             report.get("status", INVALID_RUN)
         ),
-        "runtime_security_status": manifest["runtime_security"]["status"],
+        "schema_version": manifest["schema_version"],
+        # v1 archives recorded this; v2 archives have nothing to report here.
+        "runtime_security_status": (
+            manifest["runtime_security"]["status"]
+            if manifest["schema_version"] == 1
+            else None
+        ),
         "source_matrix_registry": registry_status,
         "total_file_count": manifest["total_file_count"],
         "total_size_bytes": manifest["total_size_bytes"],
@@ -1008,10 +1044,14 @@ __all__ = [
     "ARCHIVE_STATUS_COMPLETE_VERIFIED",
     "ARCHIVE_STATUS_INCOMPLETE",
     "ARCHIVE_VERSION",
+    "ARCHIVE_VERSION_V2",
+    "CURRENT_SCHEMA_VERSION",
     "DAYTRADE_ROOT",
     "ERROR_CODES",
     "MANIFEST_NAME",
     "MANIFEST_SCHEMA_NAME",
+    "MANIFEST_SCHEMA_NAME_V2",
+    "MANIFEST_SCHEMAS",
     "MANIFEST_SHA_NAME",
     "REPOSITORY_ROOT",
     "RESULT_ALREADY_ARCHIVED",

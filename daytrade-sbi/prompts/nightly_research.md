@@ -48,47 +48,22 @@
 ## Production Executor Path Contract（Claude Production Runtime Profileのみ）
 
 このPrompt中のcommand例は、すべての実行環境で共通の**論理パス表記**（`config/source_matrix.yaml`、
-`runs/YYYY-MM-DD/...`）で書かれている。Codex / Development Claude Codeはこの表記のまま
-実行できるが、**Production Claude Code（`scripts/claude-production`のPreflightを通したsession）は
-この文字列をBash Toolへそのままコピーしてはいけない**。
+`runs/YYYY-MM-DD/...`）で書かれている。実行するときは、その表記を実行環境の具体的な
+pathへ解決する。DayTrade Rootはsessionのcurrent working directory（Launcherが
+`os.chdir`済み。`DAYTRADE_ROOT`にも入っている）、Run Directoryは
+`<DayTrade Root>/runs/<target-date>`（`DAYTRADE_RUN_DIR`）である。特定のOS絶対パスを
+このPromptへ書き足さない。
 
-Production Runtime Guardはshell実行前のcommand文字列だけを検査するため、
-相対パスは`CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`、`;`等は`CLAUDE_PRODUCTION_BASH_DENIED`で
-fail closedする。Guardを緩める変更は行わない。正本は
-[docs/nightly-operation.md](../docs/nightly-operation.md)の
-**Production Path Materialization Contract**と**Production 1-call-1-command Contract**。
+`acquire-*`の`--output`だけは扱いが違う。`acquire-*`のBusiness Artifact
+（`market_research.json` / `market_data.json` / `sources.json`）はCLI自身がcanonical pathへ
+生成し、`--output`はCLI result summaryの出力先でしかない。標準Nightlyでは`acquire-*`に
+`--output`を付けず、result summaryはBash Toolのstdoutで確認する。どうしてもfile保存する
+場合だけ`runs/<target-date>/working/<result-name>.json`を指定できる（標準手順では不要）。
+それ以外のpath（run directory直下のBusiness Artifact、`--sources`自身、run directory外）は
+`ACQUISITION_OUTPUT_PATH_INVALID`でpre-acquisition Hard Errorになる。
 
-Productionで守ること:
-
-1. Bash Toolへ渡す直前に、論理パスを具体的なabsolute pathへmaterializeする。
-   DayTrade Rootはsessionのcurrent working directory（Launcherが`os.chdir`済み）、
-   Run Directoryは`<DayTrade Root>/runs/<target-date>`。
-   target dateは`runs/<target-date>/working/runtime_security.json`の`target_date`で確認する
-   （Readで確認し、Bashで`cat`しない）。特定のOS絶対パスをここへ書き足さない。
-2. Bash Toolへ渡すcommandに、`config/...`・`runs/...`のような相対パス、`./` `../` `~/`、
-   `$DAYTRADE_ROOT` / `${DAYTRADE_ROOT}` / `$DAYTRADE_RUN_DIR` / `${DAYTRADE_RUN_DIR}`、
-   `$(pwd)`などのshell展開依存の表記を残さない。
-3. **1 Bash call = 1 canonical CLI command**。終了コード確認のために
-   `; echo "EXIT_CODE=$?"`を付けない（Bash Tool自身がnon-zero exitを返す）。
-   `&&` / `||` / pipe / redirect / command substitution / `cd`も使わない。
-   出力ファイルはCLIの`--output`で指定する。
-   **ただし`acquire-*`はこの一般ルールの対象外である。** `acquire-*`のBusiness Artifact
-   （`market_research.json` / `market_data.json` / `sources.json`）はCLI自身がcanonical pathへ
-   生成し、`--output`はCLI result summaryの出力先でしかない。標準Nightlyでは`acquire-*`に
-   `--output`を付けず、result summaryはBash Toolのstdoutで確認する。
-   どうしてもresult summaryをfile保存する場合だけ`runs/<target-date>/working/<result-name>.json`
-   を指定できる（標準手順では不要）。それ以外のpath（run directory直下のBusiness Artifact、
-   `--sources`自身、run directory外）は`ACQUISITION_OUTPUT_PATH_INVALID`でpre-acquisition
-   Hard Errorになる。
-4. Canonical CLI Pipeline Orderそのものは変わらない。変わるのはcommandのrendering
-   （path materialization）だけであり、stageの順序・引数の意味・業務ロジックは同一。
-
-例（`<DAYTRADE_ROOT>`と`<TARGET_DATE>`は実際のabsolute path・実日付へ置換済みであること）:
-
-```text
-<production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
-<production python> -B -m src.cli snapshot-config --config <DAYTRADE_ROOT>/config/strategy.yaml --output <DAYTRADE_ROOT>/runs/<TARGET_DATE>/strategy_snapshot.yaml
-```
+Canonical CLI Pipeline Orderそのものは実行環境で変わらない。変わるのはcommandの
+renderingだけであり、stageの順序・引数の意味・業務ロジックは同一である。
 
 ## 保存先
 
@@ -198,8 +173,8 @@ Logical Parse Resultはそのまま残る。
 daytrade-sbi/scripts/reparse-production-discovery --target-date YYYY-MM-DD
 ```
 
-- **HUMAN-ONLY**。canonical `src.cli` subcommandではないため`APPROVED_SUBCOMMANDS`に載らない。
-  **Production Claude自身がこのscriptを実行してはいけない**
+- **HUMAN-ONLY**。canonical `src.cli` subcommandではないためCanonical CLI Pipeline Orderに
+  載らない。**Production Claude自身がこのscriptを実行してはいけない**
 - agentがやることは1つだけ: そこで停止し、Parser fix後のRecoveryが必要であることをHumanへ報告する
 - agentは`network_requests/`・`source_pages/`・`sources.json`・`market_research.json`を
   削除しない。retryしない。`--force`相当の回避策を探さない
@@ -438,8 +413,7 @@ py -B -m src.cli validate-run-artifacts --run-dir runs/YYYY-MM-DD
 
 `validate-run-artifacts`がNightlyの最後のcommandである。`record-recommendation`は
 **HUMAN-ONLY**であり、Nightly flowでは実行しない。run directory外の
-`trades/recommendations.csv`へappendする非idempotentな記録操作なので、Runtime Guardの
-`FORBIDDEN_SUBCOMMANDS`に残っている。
+`trades/recommendations.csv`へappendする非idempotentな記録操作だからである。
 
 ## 最終報告
 

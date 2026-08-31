@@ -2,29 +2,18 @@
 
 ## 通常Operator Flow（Production, 毎晩）
 
-普通の夜はこの9段階だけである。長い節はすべて**例外時**のためのものであり、
-毎晩読む必要はない。
+普通の夜はこの3段階だけである。
 
-1. **Safe Sync main** — Production作業ツリーを`origin/main`へ同期する
-2. **update requirement確認** — Managed Policy / Runtime Guard / 受理済み
-   Claude Code versionに差分があるかを確認する
-3. **必要時Human-only replacement** — 差分があるときだけ
-   [Policy replacement（Human専用）](#policy-replacementhuman専用)を実施する。
-   差分がなければskipする
-4. **Runtime Security Preflight** — `scripts/claude-production`が起動前に
-   fail-closedで全項目を検査する
-5. **Production Claude launch** — Preflightが通れば`claude`が`exec`される
-6. **`/status`確認** — managed settings sourceが`(file)`であること
-7. **optional `/remote-control`** — 使わないなら8をskipする
-8. **Remote使用時だけ2件smoke** —
-   Read project-root `CLAUDE.md` → **PASS** / Bash `pwd` → **DENY**
-9. **`$prepare-daytrade-plan`** — Canonical CLI Pipeline Orderを実行する
+1. **必要ならHumanが通常のGit同期を行う** — `git switch main` /
+   `git pull --ff-only origin main`
+2. **`daytrade-sbi/scripts/claude-production --target-date YYYY-MM-DD`** —
+   run contextを解決してClaude Codeを起動する
+3. **`$prepare-daytrade-plan`** — Canonical CLI Pipeline Orderを実行する
 
-段階4がProduction Security Boundaryの検査点である。Managed Policyのstatic
-property（sandbox / network / managed lock / version pin）はそこでfail-closedに
-検査済みなので、起動後に人間が同じ項目をもう一度目視確認する手順は置かない。
-稀なrecovery手順とSecurity Architectureの説明は、この通常手順とは分離して
-後段の節にある。
+このどこにもSecurity Gateは無い。DayTradeの結果を信用してよいかを決めるのは、
+Pipelineの内側にあるRaw Evidence / SHA256 / Source Ledger / deterministic Parser /
+Trust Chain / Risk Engineであり、localのClaude実行環境がどう構成されているかでは
+ない。詳細は[Production Context Launcher](#production-context-launcher)を参照する。
 
 ## 開始方法
 
@@ -34,12 +23,7 @@ property（sandbox / network / managed lock / version pin）はそこでfail-clo
 
 Skillは`prompts/nightly_research.md`を詳細手順として読みます。メインエージェントはCanonical CLI Pipeline Order（[canonical-pipeline.md](canonical-pipeline.md)）どおりにCLIを逐次実行します。市場データの取得は`acquire-*` CLIだけが行い、サブエージェントへ委譲できるのは読み取り専用の出典監査だけです。
 
-実行前にPython依存関係を導入し、テストが成功することを確認します。
-
-```powershell
-py -m pip install -r requirements-dev.txt
-py -B -m pytest
-```
+実行前にPython依存関係が入っていること、テストが成功することを確認します。
 
 ## Canonical CLI Pipeline Order
 
@@ -214,131 +198,92 @@ Recommendation / Riskをリポジトリ自身の公式Builder（`src/downstream_
   あるが、Selectionが有効化された本番Happy Pathではないため`INVALID_RUN`になる。
   Case C `NO_TRADE`も、Risk `REJECTED`も、正当なHappy Pathである（TRADEを強制しない）。
 
-## Claude Production Runtime Security（FIX-R2-004）
+## Production Context Launcher
 
-### Production Runtime要件
-
-- 正式なProduction RuntimeはDayTrade Production**専用**のLinuxまたはWSL2。
-  Native Windowsは禁止。
-- `/etc/claude-code/managed-settings.json`はRepository単位ではなく、その
-  **Linux/WSL distro上のClaude Code全体**へ適用されるGlobal Managed Policyです。
-  したがって通常のDevelopment WSLへdeployしてはいけません。Development用Claudeと
-  同じdistroへProduction Managed Policyを置く運用は禁止です。
-- 専用Runtime marker `/etc/daytrade-production-runtime` の内容が
-  `DAYTRADE_PRODUCTION_RUNTIME_V1` であることがPreflight条件です。このファイルは
-  Human provisioningで作成します。
-
-### Human-only prerequisites（Agentは絶対に実行しない）
-
-Coding Agentはinstallを行いません。Preflightは存在確認だけを行い、不足していれば
-`CLAUDE_SANDBOX_DEPENDENCY_MISSING`でfail closedします。
+`scripts/claude-production`は**Security Gateではない**。この checkout がNightlyを
+実行してよい状態か（実在する`--target-date`、`main`、進行中のGit操作なし、tracked
+変更なし、解決可能なHEAD）を確認し、run contextを環境変数へ置いて`daytrade-sbi`から
+Claude Codeを`exec`する。それだけである。
 
 ```bash
-# Ubuntu/Debian (human, once per production runtime)
-sudo apt-get install bubblewrap socat
+daytrade-sbi/scripts/claude-production --target-date 2026-09-01
 ```
 
-- Claude Code **2.1.251 ちょうど**。範囲ではなくexact versionである。Read semantics /
-  hook dispatch / Remote Controlはprovider挙動であり、Provider Compatibility Suite
-  （[claude-provider-compatibility.md](claude-provider-compatibility.md)）を実際に
-  通したbuildだけを受理する。新しいbuildは古いbuildと同じだけ未検証なので、
-  どちらもPreflightが拒否する。
-- Linux / WSL2 Productionでは Claude Sandbox seccomp filter が必須です。Preflightは
-  seccompの有無を推測しません。次のHuman Runtime Acceptance v2（V2差分Probe方式）
-  の結果だけを検証します。`/sandbox`のDependencies表示だけをAcceptanceの根拠には
-  しません。
+`--preflight-only`を付けるとClaudeを起動せずcheckだけを行う。これはHumanの
+migration / troubleshooting用であり、Security Attestationではない。
 
-  以下のHuman Runtime Acceptance v2手順は、リポジトリの
-  `<repository-root>/daytrade-sbi`をcurrent working directoryとする。
-  Sandbox外Probeを実行した同じ`daytrade-sbi`ディレクトリからClaude Codeも起動する。
+### 起動を拒否する条件
 
-  1. HumanがClaude Sandbox**外**の通常のWSL shellで`daytrade-sbi`へ移動し、
-     次を実行する。
+| 条件 | error code |
+| --- | --- |
+| `--target-date`が実在するYYYY-MM-DDでない | `CLAUDE_TARGET_DATE_INVALID` |
+| repository rootを解決できない / git と不一致 | `CLAUDE_PRODUCTION_REPOSITORY_UNRESOLVED` |
+| current branchが`main`でない / detached HEAD | `CLAUDE_PRODUCTION_BRANCH_NOT_MAIN` |
+| merge / rebase / cherry-pick / revert / bisect が進行中 | `CLAUDE_PRODUCTION_GIT_OPERATION_IN_PROGRESS` |
+| tracked fileに未commitの変更がある | `CLAUDE_PRODUCTION_WORKING_TREE_DIRTY` |
+| `git rev-parse HEAD`が40桁SHAを返さない | `CLAUDE_PRODUCTION_HEAD_UNRESOLVED` |
 
-     ```bash
-     cd <repository-root>/daytrade-sbi
-     scripts/claude-seccomp-probe --expect-unsandboxed
-     ```
+tracked cleanの判定は`git status --porcelain --untracked-files=no`相当である。
+**untracked fileは起動拒否理由にしない。** checkoutに置かれた作業用fileは、これから
+実行されるcommit済みcodeが何かについて何も語らないからである。
 
-     結果が`DAYTRADE_SECCOMP_PROBE=UNIX_SOCKET_CREATE_ALLOWED`でexit 0である
-     ことを確認する。
+**Launcher failureはBusiness decisionではない。** `NO_TRADE`・`DATA_UNAVAILABLE`・
+`REJECTED`のいずれへも変換しない。Business Stageが1つも走っていないのだから、
+Business判断は存在しない。
 
-  2. 手順1と同じ`daytrade-sbi`ディレクトリをCWDとして、Claude Codeを
-     Sandbox有効状態で起動する。
+### Launcherが確認しないこと
 
-  3. `/sandbox`でHumanが現在のSandbox設定を確認する（参考情報であり、これ単独では
-     Acceptanceの根拠にしない）。
+次はいずれも起動可否に影響しない（DTWO-2026-026で廃止）。
 
-  4. Claude Sandbox**内**で次を実行する。
+```text
+/etc のProduction runtime marker / seccomp marker
+/etc/claude-code のManaged Policy / Runtime Guard
+Claude Codeのexact version
+bwrap / socat / seccompの有無
+MCP / Remote Control / /status の状態
+local mainとfetchしたてのorigin/mainの一致
+network到達性
+runtime_security.json
+```
 
-     ```bash
-     scripts/claude-seccomp-probe --expect-sandboxed
-     ```
+これらは個人所有のlocal実行環境に対するOperational Securityであって、市場Evidenceの
+正しさとは別軸である。そのため**Business Runの正当性条件から外した**。
 
-     結果が`DAYTRADE_SECCOMP_PROBE=UNIX_SOCKET_CREATE_BLOCKED_EPERM`でexit 0で
-     あることを確認する。
+### Launcherが設定する環境変数
 
-  5. 手順1と手順4の両方が確認できた場合に限り、Humanがroot権限でattestation
-     markerを作成する。
+```text
+DAYTRADE_RUNTIME_PROFILE=production
+DAYTRADE_PROJECT_ROOT=<repository root>
+DAYTRADE_ROOT=<daytrade-sbi root>
+DAYTRADE_RUN_DIR=<daytrade-sbi>/runs/<target-date>
+DAYTRADE_TARGET_DATE=<target-date>
+DAYTRADE_GIT_HEAD_SHA=<現在の40桁HEAD>
+```
 
-     ```bash
-     sudo sh -c 'echo DAYTRADE_SECCOMP_VERIFIED_V2 > /etc/daytrade-seccomp-verified'
-     sudo chown root:root /etc/daytrade-seccomp-verified
-     sudo chmod 644 /etc/daytrade-seccomp-verified
-     ```
+Launcherはrun directoryへfileを1つも書かない。`runtime_security.json`も
+Security Attestationも生成しない。
 
-     markerの内容は完全一致で`DAYTRADE_SECCOMP_VERIFIED_V2`とし、group・other
-     非writableにする。手順1または手順4のいずれかが確認できない場合はmarkerを
-     作成せず、ProductionはFail Closedのまま停止する。
+### Production Human-only boundary
 
-  6. Preflightは`/etc/daytrade-seccomp-verified`が regular file / uid 0 /
-     group・other非writable / 内容が`DAYTRADE_SECCOMP_VERIFIED_V2`であることを
-     検証します。ひとつでも満たさなければ`CLAUDE_SANDBOX_SECCOMP_UNVERIFIED`で
-     Hard Stopし、`claude`は起動せず`runtime_security.json`も書きません。旧
-     `DAYTRADE_SECCOMP_VERIFIED_V1`のmarkerも同様にUnverified扱いです
-     （V1からV2への自動migrationはありません）。
+次は常にHumanだけが行う。Production Claude sessionからは実行しない。
 
-  このmarkerはHuman専用です。Probe自身・Coding Agent・Repository Scriptも
-  作成しません。Native LinuxでもWSL2でも同一の要件です（判断分岐を増やさない
-  ため）。
-- `/etc/daytrade-production-runtime`も同様に regular file / uid 0 /
-  group・other非writable / 内容一致 を要求します（content-only verificationでは
-  ありません）。
-- **AppArmor prerequisite は Native Linux と WSL2 で扱いが異なります。**
-  Repository Script はどちらの環境でも `sysctl` を変更しません。
+- Production hostへのdeploy / install / OS設定変更
+- `trades/trades.csv`への実績記録、`record-execution`
+- `activate-selection-config`（Threshold Pairの適用）
+- `archive-production-run` / `verify-production-archive`
+- `reparse-production-discovery`
+- SBI証券へのlogin・発注・訂正・取消
 
-  **Native Ubuntu / Linux**
+Production Claudeが直接Write / Editしてよい唯一のArtifactは
+`runs/<date>/working/event_source_extraction.json`である。
+`sources.json`・`market_data.json`・`market_research.json`・`candidate_pipeline.json`・
+`ranking.json`・`selection.json`・`recommendation.json`・`risk_result.json`・
+業務レポートを手で編集してはならない。
 
-  `sysctl kernel.apparmor_restrict_unprivileged_userns`を確認します。
+### Production Python
 
-  - 値が`1`: Claude Code公式手順に従ってbwrap用AppArmor profileをHumanが設定する
-  - 値が`0`: repository側の対応は不要
-  - 値を確認できない場合: Fail-Closedのまま停止する（推測して進めない）
-
-  **Ubuntu on WSL2**
-
-  WSLではAppArmorがinstallされていてもWSL kernelの制約により既定で有効化されず、
-  この`sysctl`自体が存在しないことがあります。存在しない場合は、
-  **このAppArmor固有のsysctl checkはそのWSL環境にはNOT APPLICABLE**として扱います。
-
-  その場合も次を行いません。
-
-  - `sysctl`を新規作成しない
-  - kernel security設定を無効化しない
-  - AppArmor profileを捏造しない
-
-  そして次は**WSLでも一切緩みません**。
-
-  - Seccomp Human Runtime Acceptance V2は必須のまま（`DAYTRADE_SECCOMP_VERIFIED_V2`）
-  - `bwrap` / `socat`の要件は必須のまま
-  - Runtime Security Preflightの契約は不変
-
-  WSLで`sysctl`が存在する場合は、Native Linuxと同じ値ベースの判断を使います。
-
-#### Production Python dependency bootstrap（Human専用）
-
-Production RuntimeのPython依存関係は、固定のroot-owned virtualenvへinstallする。
-**Coding Agentはこのbootstrapを実行しない。** Production runtimeごとに1回、Humanが行う。
+Production RuntimeのPython依存関係は、固定のroot-owned virtualenvへHumanがinstallする。
+**Coding Agentはこのbootstrapを実行しない。** Production runtimeごとに1回だけ行う。
 
 | 項目 | 値 |
 | --- | --- |
@@ -348,696 +293,65 @@ Production RuntimeのPython依存関係は、固定のroot-owned virtualenvへin
 
 Ubuntu/DebianのsystemPythonはPEP 668の**externally-managed environment**であり、
 そこへ直接installしない。distribution提供のPython libraryでrepository requirementsを
-代替もしない（例: Ubuntu 26.04の`python3-jsonschema` 4.19.2は
-`jsonschema>=4.23`を満たさない）。
-
-**前提**: Repositoryを**Reviewed HEAD**へcheckout済みであり、以降のcommandはすべて
-その作業treeの`daytrade-sbi`をcurrent working directoryとして実行する。bootstrapは
-Reviewed HEADのdependency manifestに対して行うため、この2つが揃っていなければ
-開始しない。
-
-以下のcommandは目視確認ではなく`test`によるshell assertionで判定する。失敗した
-commandがあればその場でSTOPする（`&&`で繋いで途中失敗を握り潰さない）。
-
-1. base OS Python candidateを1回だけ決め、versionがrepositoryのcanonical版と
-   完全一致することをshellで確認する。
-
-   ```bash
-   BASE_PYTHON="$(command -v python3)"
-   test -n "$BASE_PYTHON"
-   EXPECTED_PYTHON_VERSION="$(cat .python-version)"
-   test "$(
-       "$BASE_PYTHON" -c 'import platform; print(platform.python_version())'
-   )" = "$EXPECTED_PYTHON_VERSION"
-   ```
-
-2. venv作成能力をHumanがaptで導入する。これはPython project dependenciesのinstallでは
-   なく、venv creationのOS prerequisiteである。
-
-   ```bash
-   sudo apt-get install python3.14-venv
-   ```
-
-3. `/opt/daytrade-production-python`が既に存在する場合は**Fail-ClosedでSTOP**する。
-   独自の削除・上書き・`--clear`による再作成を行わない。既存環境の扱いはHumanが
-   別途判断する。
-
-   ```bash
-   test ! -e /opt/daytrade-production-python
-   ```
-
-4. 手順1で確定した同じcandidateからroot-owned venvを作る。**`--copies`が必須**である。
-   ここで`python3`を再discoveryさせない。
-
-   ```bash
-   sudo "$BASE_PYTHON" -m venv --copies /opt/daytrade-production-python
-   ```
-
-   通常のsymlink-based venvを使ってはいけない。`canonical_production_python()`は
-   `Path.resolve()`でsymlinkを解決するため、venvの`python3`がbase interpreterへの
-   symlinkだと**canonical pathがvenvの外へ解決され**、Production Python identityと
-   dependencyを持つvenv site-packages contextが分離し得る。`--copies`はvenv内Pythonを
-   regular fileにするので、canonicalize後も同じpathのままになる。
-
-5. venv内のpipからdependency manifestをinstallする。`requirements-dev.txt`は
-   `-r requirements.txt`を含むため、2つを別々にinstallしない。CWDが`daytrade-sbi`で
-   あるため、manifestはそのCWDから解決する。
-
-   ```bash
-   sudo /opt/daytrade-production-python/bin/python3 \
-       -m pip install --disable-pip-version-check \
-       -r "$PWD/requirements-dev.txt"
-   ```
-
-6. root所有かつgroup/other非writableにする。Production ClaudeがDependency環境を
-   書き換えられる状態にしない。
-
-   ```bash
-   sudo chown -R root:root /opt/daytrade-production-python
-   sudo chmod -R go-w /opt/daytrade-production-python
-   ```
-
-7. Production Human shellでvenvのbinをPATH先頭へ置き、候補を1回だけ決めて、
-   fixed pathと完全一致することをshellで確認する。
-
-   ```bash
-   export PATH="/opt/daytrade-production-python/bin:$PATH"
-   PRODUCTION_PYTHON="$(command -v python3)"
-   test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"
-   test -f "$PRODUCTION_PYTHON"
-   test ! -L "$PRODUCTION_PYTHON"
-   ```
-
-   `test ! -L`は`--copies`で作られたregular fileであることの確認である。
-
-8. Production venvのversionとdependency整合をshellで確認する。
-
-   ```bash
-   test "$(
-       "$PRODUCTION_PYTHON" -c 'import platform; print(platform.python_version())'
-   )" = "$EXPECTED_PYTHON_VERSION"
-   "$PRODUCTION_PYTHON" -m pip check
-   ```
-
-9. repository自身のresolverが同じpathを返すことをshellで確認する。出力を目視で
-   見比べるのではなく`test`で比較する。
-
-   ```bash
-   CANONICAL_PRODUCTION_PYTHON="$(
-       "$PRODUCTION_PYTHON" -c \
-       'import sys; from src.claude_runtime_security import canonical_production_python; print(canonical_production_python(sys.executable))'
-   )"
-   test "$CANONICAL_PRODUCTION_PYTHON" = "$PRODUCTION_PYTHON"
-   ```
-
-10. 同じProduction Pythonでtestが0 failedであることを確認する。
-
-    ```bash
-    "$PRODUCTION_PYTHON" -B -m pytest
-    ```
-
-**禁止事項**（いずれもFail-Closedを回避する手段であり採用しない）:
-
-- systemPythonへの通常の`pip install`、およびPEP 668のoverride
-- `pip install`のuser installやrepository rootへの`pip --target`
-- `PYTHONPATH`によるdependency injection
-- `python`のalias追加、`python`→`python3`のmanual symlink作成、
-  `python-is-python3`のinstall
-- aptのPython libraryでrepository requirementsを代替すること
-
-このvenvにpytestが常設されるが、それを理由に**Runtime Guardのallowed commandを
-追加しない**。Production ClaudeのManaged Bash allowed invocationは引き続き
-`<canonical production python> -B -m src.cli ...`だけである。
-
-### Source Matrixのdomain変更時にHumanが行うこと
-
-Production allowed domainsは`config/source_matrix.yaml`の`url_template` hostと
-`config/issuer_domain_registry.yaml`から`derive_expected_domains()`が導出する。
-したがって**Source MatrixのhostがPRで変わると、Expected Managed Policyも変わる**。
-
-- 変更をmergeしたら、Humanが**Managed Policyを更新する**。更新しないとPreflightが
-  `CLAUDE_NETWORK_DOMAIN_SET_MISMATCH`で起動を拒否する（Fail-Closed）
-  - Policyが**未installのhost**: 下記「Policy deployment（Human）」で初回installする
-  - Policyが**既にinstall済みのhost**: 下記「Policy replacement（Human専用）」で
-    reviewed replacementを行う。`deploy-claude-managed-policy`は既存Policyを
-    `EXISTING_MANAGED_POLICY_PRESENT`で拒否したままであり、その拒否は緩めない
-- Development側の`.claude/settings.json`の`allowedDomains`もHumanが更新する。
-  **Agentはこのファイルを変更しない。** 必要hostが欠けている場合の唯一の正しい挙動は
-  `SECURITY_POLICY_CHANGE_REQUIRED`で停止し、Humanの変更を待つことである
-- PR #15で`JPX_LISTED_COMPANY`が`www2.jpx.co.jp`（東証上場会社情報検索）へ移ったため、
-  **この再deployが必要**である。追加は完全一致hostであり、wildcardではない
-
-### Policy deployment（Human）
-
-この手順のcommandはすべて**Production Linux/WSL2のHuman shell**で、`daytrade-sbi`を
-current working directoryとして実行する。冒頭「開始方法」のPowerShell `py`は
-Windows Python Launcher向けの別contextであり、ここでは使わない。
-
-1. 専用Production WSL2を用意し、上記prerequisitesをHumanがinstallする。
-2. RepositoryをReviewed HEADへcheckoutし、`daytrade-sbi`をcurrent working directoryに
-   する。**その状態で**「Production Python dependency bootstrap（Human専用）」を
-   完了させる（bootstrapはReviewed HEADのdependency manifestに対して行う）。
-   未完了ならここから先へ進まない。
-3. **Production Python candidateを1回だけ決める。** 以降のpytest / render / deployは
-   すべてこの同じ値を使う。PATHを先にmaterializeしてから`command -v python3`を
-   1回だけ実行する（同一手順中に再discoveryしない）。
-
-   ```bash
-   export PATH="/opt/daytrade-production-python/bin:$PATH"
-   PRODUCTION_PYTHON="$(command -v python3)"
-   ```
-
-   期待値は`/opt/daytrade-production-python/bin/python3`である。PATHを先に
-   materializeしないと、dependencyを持たないsystem Pythonが選ばれる。
-
-   `python3`はProduction Python candidateの**discovery launcher**にすぎない。
-   Managed Policy / Runtime Security上のcanonical identityは、この候補を
-   `canonical_production_python()`がresolveした**absolute executable path**である。
-   `--production-python`にsymlink（例: `python3 -> python3.11`）を渡しても構わない。
-   `canonical_production_python()`が内部で必ずresolved absolute pathへ正規化するため、
-   Managed Bash allow rule / Hook command / `runtime_security.json` /
-   `DAYTRADE_PRODUCTION_PYTHON` / Runtime Guardの比較はすべて同一identityになる。
-   Humanが事前にsymlinkを手動解決したり、独自にcanonicalizeする必要はない。
-
-   **Productionはbare `python` commandの存在を要求しない。** `python`のalias追加、
-   `python -> python3` symlink作成、`python-is-python3`のinstallをprerequisiteに
-   しない。`command -v python3`が失敗して`PRODUCTION_PYTHON`が空になる場合は
-   Fail-ClosedとしてPolicy deploymentを開始しない（aliasやsymlinkで回避しない）。
-
-4. 依存関係とtestをその候補で確認する。versionはrepositoryのcanonical版
-   （`daytrade-sbi/.python-version`）と一致していなければならない。
-
-   ```bash
-   "$PRODUCTION_PYTHON" --version
-   "$PRODUCTION_PYTHON" -B -m pytest
-   ```
-
-   version不一致、または0 failed以外ならSTOPする。独自にPythonをinstall・切替しない。
-
-5. Policyをrenderする（`/etc`には何も書きません）。scriptのshebang解決に任せず、
-   **script自身も同じProduction Pythonで起動する**。
-
-   ```bash
-   "$PRODUCTION_PYTHON" scripts/render-claude-production-policy --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
-   ```
-
-6. rendered policyをHumanがreviewする。
-7. root権限でdeployする。ここも同様にscript自身をProduction Pythonで起動する。
-   `sudo`の`secure_path`はPATHを差し替えるため、shebang任せだと別のPythonが
-   選ばれ得る。
-
-   ```bash
-   sudo "$PRODUCTION_PYTHON" scripts/deploy-claude-managed-policy --production-python "$PRODUCTION_PYTHON"
-   ```
-
-   既に`/etc/claude-code/managed-settings.json`が存在する場合は
-   `EXISTING_MANAGED_POLICY_PRESENT`で停止します。自動merge・自動backup・overwriteは
-   行わず、`--force`も存在しません。既存の組織Policyを壊さないためです。
-   `managed-settings.d`へのdrop-in配置も行いません。
-8. `claude doctor`を実行し、Managed Settingsにinvalid entryがないことを確認する。
-9. Runtime Security Preflightを通す。launcher自身も同じProduction Pythonで起動する
-   （「Production Entry Contract」と同じ契約）。
-
-   ```bash
-   "$PRODUCTION_PYTHON" scripts/claude-production \
-       --target-date <YYYY-MM-DD> \
-       --preflight-only
-   ```
-10. Claude Codeの`/status`でSetting sourcesを確認し、file-based
-    *Enterprise managed settings*が実際に読み込まれていることを確認する。別のmanaged
-    sourceが優先されている場合はPASS扱いにせず、そのPolicyをreviewするまで停止する。
-11. Offline Runtime Smoke（`validate-source-matrix`等、networkを使わないCLI）を実行する。
-    後述のProduction Path Materialization Contractに従い、path argumentは具体的な
-    absolute pathへmaterializeし、1 Bash callにcanonical CLI commandを1個だけ入れる。
-
-    ```text
-    <production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
-    ```
-
-    期待結果は`{"valid": true, "errors": []}`とexit code 0。終了コードを見るために
-    `; echo "EXIT_CODE=$?"`を付け足さない（`;`はGuardが拒否する）。
-    `--source-matrix config/source_matrix.yaml`のような相対パスは
-    `CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`で拒否される。
-12. 実Sourceへの Network Smoke（JPX / Yahoo / Kabutan / TDnet）はFIX-R2-005で初めて行う。
-
-### Policy replacement（Human専用）
-
-**初回installとは別の操作**である。`deploy-claude-managed-policy`は既存Policyを
-必ず`EXISTING_MANAGED_POLICY_PRESENT`で拒否し、その挙動は変更していない。
-`--force`は存在せず、追加もしない。既にPolicyがinstallされたhostでSource Matrixや
-Production Python identityの変更を反映するには、こちらを使う。
-
-**Managed Policy JSONを手で編集しない。** 編集はProduction Security Contract違反であり、
-復旧手段にもしない。
-
-Humanは**2つのSHA256をreviewして明示する**。どちらもcommandが推測しない。
-
-| attestation | 意味 |
-| --- | --- |
-| `--expected-installed-sha256` | いまhostにinstallされているPolicyをreviewし、置換を承認したこと |
-| `--expected-rendered-sha256` | Reviewed repository stateからrenderされたcandidateをreviewしたこと |
-
-SHAはcanonical lowercase 64桁のみ受理する。大文字の自動変換・whitespace除去・
-prefix除去・短縮hashは行わず、malformedは決定論的に失敗する。
-
-1. まずread-onlyのcheck modeで状態を確認する。`/etc`へ一切書かない。
-
-   ```bash
-   "$PRODUCTION_PYTHON" scripts/replace-claude-managed-policy \
-       --production-python "$PRODUCTION_PYTHON" --check
-   ```
-
-   出力の`installed_policy_sha256` / `rendered_policy_sha256` /
-   `installed_policy_status` / `runtime_guard_status` / `replacement_ready`を確認する。
-   `installed_policy_status=CURRENT`なら置換不要。
-
-2. candidateをrenderしてHumanがreviewする。
-
-   ```bash
-   "$PRODUCTION_PYTHON" scripts/render-claude-production-policy \
-       --production-python "$PRODUCTION_PYTHON" > /tmp/managed-settings.json
-   ```
-
-3. reviewした2つのSHAを明示して置換する。root権限が必要。
-
-   ```bash
-   sudo "$PRODUCTION_PYTHON" scripts/replace-claude-managed-policy \
-       --production-python "$PRODUCTION_PYTHON" \
-       --expected-installed-sha256 <reviewed installed sha256> \
-       --expected-rendered-sha256 <reviewed rendered sha256>
-   ```
-
-置換は次の条件をすべて満たしたときだけ行われ、1つでも欠ければ**何も書かない**。
-
-- target directoryとPolicy fileがroot所有・group/other非writable・symlinkでない
-- installed PolicyのSHA256がreviewed installed SHAと完全一致（renameの直前に再確認する
-  compare-and-swap。staging中にbytesが変わった場合、その変更を新しいbaselineとして
-  自動受理せず停止する）
-- candidateのSHA256がreviewed rendered SHAと完全一致
-- installed Runtime Guardがrepositoryのcanonical guardとbyte一致
-  （**このcommandはGuardを更新しない**。不一致なら停止する）
-
-書き込みは同一directory内へexclusive createしたtemporary fileへ行い、`os.replace`で
-atomicに差し替える。既存fileをin-placeで切り詰めたり編集したりしない。rename前に
-失敗した場合、installed bytesは1 byteも変わらず、staged temporary fileは残さない。
-persistent backupは作成しない。
-
-rename成功後は、directory flush（durability確認）と検証（再読込・SHA・ownership・
-semantic一致）を行う。**いずれが失敗してもsuccessとして報告しない。**
-
-- directory flushが`EIO` / `ENOSPC`等のI/O errorになった場合は
-  `CLAUDE_MANAGED_POLICY_DURABILITY_FAILED`で失敗する。directory fsyncを実装しない
-  filesystemであることが限定列挙のerrnoで判別できる場合だけ続行し、**未知のerrnoを
-  unsupported扱いにしない**
-- 検証が失敗した場合は`CLAUDE_MANAGED_POLICY_POST_VERIFY_FAILED`で失敗する
-
-いずれもrename後であり、backupを持たないため**自動rollbackは行わない**。
-installed fileはcandidate bytesのまま残る。Human inspection requiredとして停止し、
-検証を緩めてsuccessに変えない。
-
-### Production Remote Control（Human専用）
-
-Remote Controlは**Human input transportの追加**であり、Production sessionができること
-を広げるものではない。Runtime Security Preflight / Runtime Guard / sandbox / seccomp /
-Managed Permission Rules / Managed Hooks / MCP lockdown / strict network allowlist /
-Production Python identity / Source Matrix domain制限 / Raw Evidence / SHA256 Trust Chain /
-Canonical Pipelineは一切変更しない。**Remote Controlを理由にこれらを緩めない。**
-
-#### Activation
-
-Remote ControlはProduction Launcherの機能では**ない**。次の順序でHumanが行う。
-
-```text
-scripts/claude-production
-  ↓
-Runtime Security Preflight
-  ↓ PASS
-normal interactive claude
-  ↓
-Human が /status を実行
-  ↓
-Enterprise managed settings (file) が読み込まれていることを確認
-  ↓
-同じ session で Human が /remote-control を実行
-  ↓
-browser / iPhone / Android から attach
+代替もしない（例: Ubuntu 26.04の`python3-jsonschema` 4.19.2は`jsonschema>=4.23`を
+満たさない）。
+
+Repositoryを対象HEADへcheckoutし、`daytrade-sbi`をcurrent working directoryとして
+実行する。各stepは目視ではなく`test`によるshell assertionで判定し、失敗したらSTOPする。
+
+```bash
+BASE_PYTHON="$(command -v python3)"
+test -n "$BASE_PYTHON"
+EXPECTED_PYTHON_VERSION="$(cat .python-version)"
+test "$(
+    "$BASE_PYTHON" -c 'import platform; print(platform.python_version())'
+)" = "$EXPECTED_PYTHON_VERSION"
+sudo apt-get install python3.14-venv
+test ! -e /opt/daytrade-production-python
+sudo "$BASE_PYTHON" -m venv --copies /opt/daytrade-production-python
+sudo /opt/daytrade-production-python/bin/python3 \
+    -m pip install --disable-pip-version-check \
+    -r "$PWD/requirements-dev.txt"
+sudo chown -R root:root /opt/daytrade-production-python
+sudo chmod -R go-w /opt/daytrade-production-python
 ```
 
-Launcherから自動でRemote Controlを開始しない。Preflightを通っていないsessionを
-Production扱いしない。
+- `/opt/daytrade-production-python`が既に存在する場合は**Fail-ClosedでSTOP**する。
+  削除・上書き・`--clear`による再作成を行わない
+- `--copies`を使う。symlink-based venvはinterpreter pathがvenvの外へ解決され、
+  dependencyを持つsite-packages contextと分離し得る
 
-#### 禁止する起動形態
-
-DayTrade Production entryとして次を使わない。
-
-```text
-claude remote-control        （server mode）
-claude --remote-control
-remoteControlAtStartup=true
-```
-
-Production Launcherへ`--remote-control`相当のintegrationを追加しない。
-
-#### Managed Policy契約
-
-Production Managed Policyは次を固定する。
-
-| key | 値 | 理由 |
-| --- | --- | --- |
-| `disableRemoteControl` | **存在しない** | `false`を書くとManaged scopeが最優先になり、より厳しいuser / project / organisation設定によるdisableを妨げる。DayTrade Policyは「禁止を解除するだけ」で、Remote Controlを強制enableしない |
-| `remoteControlAtStartup` | `false` | session起動だけでRemote exposureさせない |
-| `crossSessionInbound` | `"refuse"` | 同じtransport上のsession間messageを受け取らない |
-| `permissions.deny` | `SendMessage` / `ListAgents`を含む | 上記のoutbound側 |
-| `requiredMinimumVersion` / `requiredMaximumVersion` | ともに`2.1.251` | 両側からpinし、Provider Compatibility Suiteを通したexact buildだけを受理する |
-
-Remote Controlがaccount / organization設定の結果として使えない場合、それは
-Security failureではない。
-
-#### Authentication
-
-Remote Controlはclaude.ai account authenticationを使用する。API key /
-setup-token相当によるRemote ControlをProduction手順として採用しない。
-
-#### Network
-
-Remote Controlはlocal Claude Code processからのoutbound HTTPS/TLSであり、inbound port
-を必要としない。**Remote Controlのために次を変更しない。**
-
-```text
-sandbox.network.strictAllowlist
-sandbox.network.allowManagedDomainsOnly
-sandbox.network.allowLocalBinding
-sandbox.network.allowAllUnixSockets
-sandbox.network.allowedDomains
-```
-
-`allowedDomains`はSource Matrixとissuer registryから導出したBusiness用のexact setの
-ままであり、**Anthropic hostを追加しない**。
-
-#### Cross-session
-
-`crossSessionInbound=refuse`と`SendMessage` / `ListAgents` denyを維持する。
-Claude session同士の自律的なmessage交換にRemote Control transportを使わない。
-Cross-session Messagingがhost process側にinbox socketを持ち得ることを理由に
-`allowAllUnixSockets`を緩めない。
-
-#### Data Flow / Transcript
-
-Remote Controlを有効化すると、**新しいData Flowが1つ増える**。有効化前にHumanが
-これを受容する必要がある。
-
-- Remote Control接続中は、**session transcriptがAnthropic serversへ保存される**
-- transcriptには少なくとも次が含まれる
-  - Human messages
-  - Claude responses
-  - tool activity（実行したtoolとその内容）
-- **executionはlocal Production machineに残る。** remote clientはinputを送るだけで、
-  commandはProduction機で実行される
-- **filesystem accessもlocal Production machineに残る。** remote clientが
-  Production機のfileへ直接触れることはない
-
-したがってRemote Controlが追加するのは「実行権限」ではなく
-**transcriptのserver-side storage**である。
-
-Zero Data Retention等、この保存と両立しないorganization compliance requirementが
-存在する場合は、**Remote Controlを有効化しない**。
-
-このData Flowは次を変更しない。
-
-- Business Data Contract
-- Raw Evidence
-- SHA256 Trust Chain
-
-**Anthropic側に保存されたtranscriptをRaw Evidenceとして扱わない。**
-DayTrade Trust Chainのevidenceにもしない。transcriptの内容をrepository側で
-再現・保存もしない。
-
-#### Attachments
-
-Production v1ではremote clientからのfile / image attachmentを**使用しない**。
-
-#### Secrets
-
-Remote Controlのsession URL / QR payload / token / OAuth credential /
-session credential / device credentialを次へ保存しない。
-
-```text
-runs/ の Business Artifact
-Raw Evidence
-runtime_security.json
-repository
-log
-```
-
-Remote Control Policy stateのEvidenceは既存の**Managed Policy canonical bytes /
-SHA256 / `managed_settings` PASS / `/status`のSetting sources**で扱う。
-
-#### Failure
-
-Remote Controlの接続失敗はBusiness Pipelineの結果では**ない**。
-`NO_TRADE` / `DATA_UNAVAILABLE` / `TRADE` / `REJECTED` / risk result /
-recommendation resultへ変換しない。Remote Controlを復旧するためにSecurityを
-緩めない。
-
-#### Session lifecycle
-
-- local `claude` processを停止するとRemote Control sessionも終了する
-- browser / mobileがdisconnectしてもlocal processの継続はBusiness failureではない
-- 長時間のnetwork outageではClaude processが終了する可能性がある
-- WSL / Windowsを停止した場合、session継続を期待しない
-
-detached Production processを維持するためのtmux / screen運用は今回導入しない。
-
-#### Incident
-
-不審なattachやdevice紛失時は次を行う。
-
-1. local Production Claude processを停止する
-2. 該当するClaude active session / deviceをrevokeする
-3. 必要なら全session logout / Claude Code authorizationのrevoke
-4. Production Remote Control再開前にHuman incident review
-5. 恒久的なdisableが必要ならDevelopment → PR → Human merge →
-   reviewed replacement lifecycleで反映する
-
-**Production Policyを直接編集しない。**
-
-#### Production Remote Control Acceptance（Human-only）
-
-Remote Controlは**人間の入力transport**であって、独立したSecurity Boundaryではない。
-attachした人間が送るpromptは、そのProduction sessionのManaged Policyと
-Runtime Guardに、local promptとまったく同じように従う（PC-16）。したがって
-Remote Controlを有効にしたからといって、Managed Policyのstatic propertyを
-人間がもう一度目視確認する必要はない。それらはRuntime Security Preflightが
-起動前にfail-closedで検査済みであり、二重確認は手順を長くするだけで新しい保証を
-生まない。
-
-Remote Controlを使う場合にだけ、**2件のsmoke**を実施する。目的はattachした
-transportが本当にこのProduction sessionの境界配下にあることの確認である。
-
-| # | Probe | Expected |
-| --- | --- | --- |
-| 1 | Read tool で project rootの`CLAUDE.md`を読む | **PASS**（trusted repository readが効いている） |
-| 2 | Bash tool で`pwd`を実行する | **DENY**（`CLAUDE_PRODUCTION_COMMAND_NOT_CANONICAL`） |
-
-2件ともexpectedどおりなら、Remote Control経由でProduction Nightlyへ進んでよい。
-どちらかがexpectedと異なる場合はRemote Controlを使わず、Human判断で停止するか
-localでProduction Nightlyを実施する。
-
-Remote Controlのconnection failure自体をBusiness結果へ変換しない
-（`NO_TRADE` / `DATA_UNAVAILABLE`等にしない）。接続できないときはRemote Controlを
-使わずにProduction Nightlyを実施するか、Human判断で停止する。
-
-Remote Control URL / QR / token / credentialを、repository / log / Raw Evidence /
-Business Artifact / `runtime_security.json`へ保存しない。これは手順ではなく恒常的な
-禁止事項である。
-
-Managed Policyを差し替えた後は、**Runtime Security Preflightを再実行し、PASSした
-ときだけBusiness Pipelineを開始する**。旧`runtime_security.json`を新policyの
-Evidenceとして再利用しない。Security FailureをBusiness Decision（`NO_TRADE` /
-`DATA_UNAVAILABLE`）へ変換しない。
-
-### Runtime Security Preflight
-
-`scripts/claude-production`は次の順序でfail closedに検査し、すべてPASSしたときだけ
-`runs/<target-date>/working/runtime_security.json`を書いて`claude`を`exec`します。
-
-検査順序は platform → `production_marker` → `sandbox_seccomp` → `git_clean` →
-`claude_version` → `sandbox_dependencies` → managed policy … です。`--target-date`は
-最初にYYYY-MM-DD（実在日付）としてvalidateされ、run directoryが
-`runs/<target-date>`直下であることを確認します。違反は`CLAUDE_TARGET_DATE_INVALID`で、
-このときfilesystemには何も書きません。Security Boundaryのpath
-（`/etc/claude-code/managed-settings.json`・`/etc/claude-code/daytrade-runtime-guard.py`・
-`/etc/daytrade-production-runtime`・`/etc/daytrade-seccomp-verified`）はCLIから
-差し替えできません。`--target-date`と`--preflight-only`だけがHuman入力です。
-
-`production_marker` / `sandbox_seccomp` / `git_clean` / `claude_version` / `sandbox_dependencies` /
-`managed_settings` / `managed_settings_permissions` / `sandbox_required` /
-`sandbox_escape_disabled` / `strict_network_allowlist` / `managed_domain_lock` /
-`managed_hook_lock` / `managed_permission_lock` / `mcp_lockdown` / `domain_sync` /
-`runtime_guard` / `runtime_guard_sha` / `http_user_agent`
-
-`runtime_security.json`には`DAYTRADE_HTTP_USER_AGENT`の値、環境変数一式、token、
-API key、cookie、credentialを書きません。User-Agentは`http_user_agent_present: true`
-だけを記録します。実値は`runtime_security.json`にも、logにも、`report.md`にも、
-`recommendation.md`にも書きません。
-
-### Production Entry Contract
-
-Production Nightly Runは、`scripts/claude-production`のRuntime Security Preflightを
-PASSしたProduction Claudeからのみ開始します。単に`claude`を起動しただけのsessionは、
-同じマシン上であってもProduction Runtimeとして扱いません。Preflightを通っていない
-sessionからSource Acquisition CLIを実行しないでください。
-
-**起動のたびに、Production Python identityをHuman shellでmaterializeします。**
-Policy deploymentを行ったshellとは別の新しいshellから起動する場合も同じです。
+Production Human shellでの確認:
 
 ```bash
 export PATH="/opt/daytrade-production-python/bin:$PATH"
 PRODUCTION_PYTHON="$(command -v python3)"
 test "$PRODUCTION_PYTHON" = "/opt/daytrade-production-python/bin/python3"
-test -f "$PRODUCTION_PYTHON"
 test ! -L "$PRODUCTION_PYTHON"
+test "$(
+    "$PRODUCTION_PYTHON" -c 'import platform; print(platform.python_version())'
+)" = "$EXPECTED_PYTHON_VERSION"
+"$PRODUCTION_PYTHON" -m pip check
+"$PRODUCTION_PYTHON" -B -m pytest
 ```
 
-PATHを先にmaterializeするのは、**launcher内部の`which("python3")`にも同じvenv
-interpreterを解決させる**ためです。`scripts/claude-production`は
-`DAYTRADE_PRODUCTION_PYTHON`が未設定のとき`which("python3")`から候補を決めるので、
-venvがPATHの先頭に無いshellから起動すると、system `python3`が再発見され、
-`/opt/daytrade-production-python/bin/python3`向けにrenderされたManaged Policyと
-identityが一致しなくなります。`DAYTRADE_PRODUCTION_PYTHON`をHumanが独自に
-hardcode/exportする運用へは変更しません。launcher側やRuntime Guardを緩めることも
-しません。
+**禁止事項**（いずれもdependency契約を回避する手段である）:
 
-Preflightもshebang任せにせず、launcher自身を同じProduction Pythonで起動します。
+- systemPythonへの通常の`pip install`、およびPEP 668のoverride
+- `pip install`のuser installやrepository rootへの`pip --target`
+- `PYTHONPATH`によるdependency injection
+- `python`のalias追加、`python`→`python3`のmanual symlink、`python-is-python3`
+- aptのPython libraryでrepository requirementsを代替すること
 
-```bash
-"$PRODUCTION_PYTHON" scripts/claude-production \
-    --target-date <YYYY-MM-DD> \
-    --preflight-only
-```
+### Source Matrixのdomain変更時にHumanが行うこと
 
-実Nightly startも同様です。
+`config/source_matrix.yaml`の`url_template` hostが変わったら、`.claude/settings.json`の
+`sandbox.network.allowedDomains`をHumanが更新する。**Agentはこのfileを変更しない。**
+必要hostが欠けている場合の唯一の正しい挙動は`SECURITY_POLICY_CHANGE_REQUIRED`で
+停止し、Humanの変更を待つことである。
 
-```bash
-"$PRODUCTION_PYTHON" scripts/claude-production \
-    --target-date <YYYY-MM-DD>
-```
-
-上のmaterializationと検証を行わずに`scripts/claude-production`を直接起動する形は、
-正式なProduction Entry commandではありません。
-
-`DAYTRADE_HTTP_USER_AGENT`は必須です。未設定または空白のみの場合、Preflightは
-`CLAUDE_HTTP_USER_AGENT_MISSING`でfail closedになり、`src/source_fetch.py`側も
-`HTTP_USER_AGENT_NOT_CONFIGURED`で停止します。コード側のdefault User-Agentも
-fallbackも存在せず、追加してはいけません。診断のためにHumanが一時的に使った値を
-Repositoryのcanonical defaultへ昇格させることもしません。
-
-**Runtime Security Preflightの前に、Humanがpresence checkpointを行います。**
-Fail-Closedの挙動は正しいものですが、Policy deployment作業を終えてから不足に気づく
-のを避けるため、この確認を先に置きます。
-
-```bash
-test -n "$DAYTRADE_HTTP_USER_AGENT"
-```
-
-空ならここで停止し、Human承認済みの値をProduction shellへmaterializeしてから
-Preflightへ進みます。**値そのものをこのdocumentやrepository artifactへ書かない**
-（`runtime_security.json`にも保存しません）。checkpointが確認するのは
-非空であることだけです。
-
-### Production Path Materialization Contract
-
-このリポジトリのドキュメント（[canonical-pipeline.md](canonical-pipeline.md)・
-[prompts/nightly_research.md](../prompts/nightly_research.md)・
-`.agents/skills/prepare-daytrade-plan/SKILL.md`・本ドキュメント）に現れる
-`config/source_matrix.yaml`や`runs/YYYY-MM-DD/ranking.json`のような相対パスは、
-すべての実行環境（Codex / Development Claude Code / Production Claude Code）で共通の
-**論理パス表記**です。Production Claude Codeでは、これはBash Toolへそのまま渡せる
-command文字列**ではありません**。
-
-Production Runtime Guardはshell実行**前**のcommand文字列だけを検査するため、
-path argumentが具体的なabsolute pathでなければ
-`CLAUDE_PRODUCTION_PATH_OUTSIDE_RUN`でfail closedします
-（例: `--source-matrix must be an absolute path in production`）。
-これはGuardの欠陥ではなくGuardの契約そのものであり、
-Guard側でrelative pathやshell expansionを許可する変更は行いません。
-
-したがってProduction Claude Codeは、Bash Toolへ渡す直前に、論理パスを次の2つの
-runtime contextから具体的なabsolute pathへmaterializeします。DayTrade Rootを
-特定のOS絶対パスとしてドキュメントやSkillへhardcodeしません。
-
-- **DayTrade Root**: Production Launcher（`scripts/claude-production`）は
-  `exec claude`の直前に`os.chdir(<daytrade root>)`するため、Production Claude Code
-  sessionのcurrent working directoryがDayTrade Rootです。sessionが提示している
-  working directoryのabsolute pathをそのまま使います。
-- **Run Directory / Target Date**: Run Directoryは`<DayTrade Root>/runs/<target-date>`
-  です。target dateはHumanが`scripts/claude-production --target-date`で指定した日付で、
-  Preflightが書いた`runs/<target-date>/working/runtime_security.json`の`target_date`
-  （および`production_python`）で確認できます。この確認はReadで行い、Bashで`cat`しません。
-
-materializeした結果、Bash Toolへ渡すcommandには次のいずれも残してはいけません。
-
-| 残してはいけない表記 | 例 |
-| --- | --- |
-| repository相対パス | `config/source_matrix.yaml` / `runs/YYYY-MM-DD/ranking.json` |
-| `./` `../` `~/` | `./runs/...` / `../daytrade-sbi/config/...` / `~/DayTrade/...` |
-| 環境変数展開 | `$DAYTRADE_ROOT/...` / `${DAYTRADE_ROOT}/...` / `$DAYTRADE_RUN_DIR/...` / `${DAYTRADE_RUN_DIR}/...` |
-| command substitution | `$(pwd)/...` / `` `pwd`/... `` |
-
-環境変数もcommand substitutionもshell実行時にしか展開されないため、Guardから見れば
-前者は「絶対パスでない値」、後者は「shell metacharacter」であり、いずれも拒否されます。
-
-正しいmaterialization（`<DAYTRADE_ROOT>`と`<TARGET_DATE>`は、実際のabsolute path・
-実日付へ置換済みの具体的な文字列であること）:
-
-```text
-<production python> -B -m src.cli validate-source-matrix --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml
-<production python> -B -m src.cli build-ranking --candidates <DAYTRADE_ROOT>/runs/<TARGET_DATE>/candidates.json --config <DAYTRADE_ROOT>/runs/<TARGET_DATE>/strategy_snapshot.yaml --event-gate <DAYTRADE_ROOT>/runs/<TARGET_DATE>/event_gate.json --market-data <DAYTRADE_ROOT>/runs/<TARGET_DATE>/market_data.json --output <DAYTRADE_ROOT>/runs/<TARGET_DATE>/ranking.json --source-matrix <DAYTRADE_ROOT>/config/source_matrix.yaml --sources <DAYTRADE_ROOT>/runs/<TARGET_DATE>/sources.json
-```
-
-`<production python>`も同様に、`runtime_security.json`の`production_python`と完全一致する
-canonical absolute pathです（`python3`やsymlink aliasは拒否されます）。
-
-### Production 1-call-1-command Contract
-
-Productionでは **1 Bash call = 1 canonical CLI command** です。Bash Tool 1回につき
-canonical `src.cli` commandをちょうど1個だけ実行します。
-
-- 終了コード確認のために`; echo "EXIT_CODE=$?"`を付けない。`;`は
-  `CLAUDE_PRODUCTION_BASH_DENIED`（`shell metacharacter ';' is not permitted in
-  production`）になります。Bash Tool自身がcommandのnon-zero exitを返すため、
-  終了コード確認用の追加shell commandは不要です。
-- `&&` / `||` / `|` / `&` / redirect（`>` `>>` `<`）/ command substitution（`$(...)`
-  / `` `...` ``）/ process substitution / 改行 / `cd`はすべて拒否されます。
-- 出力ファイルが必要な場合はredirectではなくCLI自身の`--output`を使います。
-- **`acquire-*`はこの例外です。** `acquire-*`のBusiness Artifactは
-  CLI自身がcanonical pathへ生成し、`--output`はCLI result summaryの出力先でしかありません。
-  標準Nightlyでは`acquire-*`に`--output`を付けず、result summaryをBash Toolのstdoutで
-  確認します。summaryをfileへ残す必要がある場合だけ
-  `runs/<target-date>/working/<result-name>.json`を指定できます。
-  run directory直下のBusiness Artifact（`market_research.json` / `market_data.json` /
-  `sources.json` / `research_window.json` / `strategy_snapshot.yaml`）、`--sources`自身、
-  run directory外を指定すると、ネットワークGETを1回も消費する前に
-  `ACQUISITION_OUTPUT_PATH_INVALID`で停止します。
-- 複数のcanonical CLI commandを1つのBash callへまとめない。Canonical CLI Pipeline Orderの
-  各canonical `src.cli` commandを、それぞれ独立したBash callとして逐次実行します。
-  Pipelineの番号とBash callは1:1ではありません（`init/complete event-research`のように
-  1つの番号表現に複数のcanonical CLI commandが含まれる箇所があります）。
-  Canonical CLI Pipeline Order自体は変わりません。
-
-### Production Boundaryの正本
-
-Production Security Boundaryの正本は**OS Managed Policy**です。プロジェクトの
-`.claude/settings.json`と`.claude/hooks/network_guard.py`はDevelopment defense onlyとして
-維持しますが、`allowManagedHooksOnly: true`のProductionでは実行されません。
-`strictAllowlist`はProject Scopeではproduction gateにならないため、Managed Policyだけに
-設定します。
-
-Production中のClaudeは既定でBash denyです。許可されるのは
-`<production python> -B -m src.cli <approved subcommand> ...`のexec formだけで、
-`;` `&&` `||` `|` `&` redirection command substitution process substitution `cd`は
-すべて拒否されます。Claudeが直接Write/Editできる唯一のArtifactは
-`runs/<date>/working/event_source_extraction.json`です。
+Business側のhost検証は`src/network_policy.py`が行う。sandbox allowlistは
+Defense in Depthであって、そこにhostがあることはBusiness許可を意味しない。
 
 ### Discovery停止後のParser Fix Recovery（Human専用）
 
@@ -1057,7 +371,7 @@ Humanへ引き継ぐ。
 ```
 1. Production Claude sessionを終了する
 2. fixをmainへ同期する（Human）
-3. Production preflightを通す
+3. Production Context Launcherが通る状態にする（`main` / tracked clean）
 4. Humanが通常のshellから次を実行する
 ```
 
@@ -1076,15 +390,18 @@ daytrade-sbi/scripts/reparse-production-discovery --target-date <YYYY-MM-DD>
 
 - **HUMAN-ONLY**。`--target-date`が唯一の入力で、`--force` / `--run-dir` / `--parser` /
   `--allow-network`は存在しない。canonical `src.cli` subcommandではないため
-  `APPROVED_SUBCOMMANDS`に載ることが構造的にできず、**Production Claudeは実行できないし、
-  実行しようとしてもいけない**
+  Canonical CLI Pipeline Orderに載ることが構造的にできない。
+  **Production Claudeは実行できないし、実行しようとしてもいけない**
 - Networkへ出ない。GET 0件・retry 0件・新規Physical Request 0件
 - `network_requests/*.json`と`source_pages/*`はread-only Evidenceで、実行前後の生byteが
   完全一致する。削除も再取得もしない
 - `attempt_id` / `request_id`は変わらない。更新されるのは`sources.json`のParser由来fieldだけ
-- Runtime Security Attestation（`runs/<date>/working/runtime_security.json`）の
-  `git_head_sha`とlocal HEADが一致し、保護対象treeがcleanでなければ停止する。
-  修復のためのreset / restore / checkoutは行わない
+- **前提**: この recovery は`runs/<date>/working/runtime_security.json`の
+  `git_head_sha`とlocal HEADの一致を要求し、保護対象treeがcleanでなければ停止する。
+  修復のためのreset / restore / checkoutは行わない。DTWO-2026-026以降の新規Runは
+  この attestation を生成しないため、**recoveryが使えるのは attestation を持つ
+  既存Runだけ**である。新規Runに対する起動条件は未定であり、Fail-Closedのまま
+  停止する（緩和はしていない）
 - 下流Artifactが1件でもあれば`PRODUCTION_DISCOVERY_REPARSE_DOWNSTREAM_ARTIFACT_PRESENT`、
   現在のParserでもTOP50を確認できなければ`PRODUCTION_DISCOVERY_REPARSE_STILL_INCOMPLETE`で、
   どちらも`sources.json`を1 byteも変更しない
@@ -1094,7 +411,7 @@ daytrade-sbi/scripts/reparse-production-discovery --target-date <YYYY-MM-DD>
 
 ### Run終了後: Production Run Archive（Human専用）
 
-`runs/<target-date>/`はOperationalなdirectoryです。次回Preflightの`git_clean`を
+`runs/<target-date>/`はOperationalなdirectoryです。次回起動時のtracked clean判定を
 通すためにgit ignoreされており、Pipelineが途中で止まれば半端な状態で残り、
 整理すればその夜の唯一の記録が消えます。
 
@@ -1109,19 +426,16 @@ scripts/verify-production-archive --target-date <YYYY-MM-DD>
 
 - `--target-date`が唯一の入力です。`--force`はありません
 - Operational Runはread-only sourceで、Archiveはそこへ書き込みません
-- どちらもcanonical `src.cli` subcommandではないため、Production Managed Policyの
-  `APPROVED_SUBCOMMANDS`に載ることが構造的にできません。**Production Claudeは
-  これらを実行できませんし、実行しようとしてはいけません**
+- どちらもcanonical `src.cli` subcommandではないため、Canonical CLI Pipeline Orderに
+  載ることが構造的にできません。**Production Claudeはこれらを実行しません**
 - `archive_status: INCOMPLETE`はArchiveの失敗ではなく、その夜が途中で止まったことを
   意味します。途中で止まった夜の証跡も保存します
 - Archiveは同一マシン上にあり、off-site backupの代わりにはなりません
 
 `runs/<date>/working/`は**Non-Business Sidecar**です。Business Verifierは
-`working/`を丸ごとskipし、内部のfile名を列挙しません（将来Runtime Security Evidenceが
-増えても、それだけでBusiness Runを`INVALID_RUN`にしないためです）。
-`working`という名のregular file・symlink、`working2`のような別directoryは拒否します。
-Archiveは`working/`配下もraw byteで保存したうえで、`runtime_security.json`を
-Runtime Security証跡として、Business Artifact chainとは独立に
-`VALID` / `MISSING` / `INVALID`で分類します。
+`working/`を丸ごとskipし、内部のfile名を列挙しません。`working`という名の
+regular file・symlink、`working2`のような別directoryは拒否します。Archiveは
+`working/`配下もraw byteで保存しますが、その中身がArchiveの`archive_status`を
+左右することはありません（Archive v2）。
 
 契約の全文: [production-run-archive.md](production-run-archive.md)

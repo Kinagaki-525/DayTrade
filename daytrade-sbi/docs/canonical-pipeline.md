@@ -33,8 +33,7 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
   一切変更しない。
 
 したがって両者は競合しない。詳細層が業務依存層と矛盾したらそれはbugであり、
-`tests/test_documentation_consistency.py`がその保存を検証する。Runtime Guardの
-`APPROVED_SUBCOMMANDS`は詳細層から導出される。
+`tests/test_documentation_consistency.py`がその保存を検証する。
 
 ### Detailed Nightly Execution Sequence
 
@@ -77,12 +76,10 @@ Web調査で市場データを取得しません。数値はすべてPythonのcu
 ありません。
 
 手順15・17・33のvalidation stepと、手順20・21・31・32のreporting stepは、Nightlyが
-実際に実行しているものです。Runtime Guardの`APPROVED_SUBCOMMANDS`はこの順序を正本と
-して導出されます。
+実際に実行しているものです。
 
 `record-recommendation`はこのCanonical Pipelineに**含まれません**。run directory外の
-global CSVへappendする非idempotentなHuman / record operationであり、Runtime Guardの
-`FORBIDDEN_SUBCOMMANDS`に残ります。
+global CSVへappendする非idempotentなHuman / record operationです。
 
 ## 候補集合の由来
 
@@ -113,27 +110,27 @@ global CSVへappendする非idempotentなHuman / record operationであり、Run
 
 詳細: [source-acquisition.md](source-acquisition.md)
 
-## Claude Code Executor: Runtime Security Gate（FIX-R2-004）
+## Claude Code Executor: Production Context Launcher
 
 Business Canonical Pipelineそのものは、どのAgentで実行しても同一であり、Claude依存では
-ありません。Claude Codeを**Production executor**として使う場合にだけ、パイプラインの前に
-Runtime Security Gateが挟まります。
+ありません。Claude Codeを**Production executor**として使う場合、パイプラインの前に
+Production Context Launcherが入ります。
 
 ```
-Runtime Security Gate  →  Business Canonical Pipeline
+Production Context Launcher  →  Business Canonical Pipeline
 ```
 
-- Runtime Security Gate = OS Managed Policy（`/etc/claude-code/managed-settings.json`）と
-  OS Managed Runtime Guard（`/etc/claude-code/daytrade-runtime-guard.py`）、および
-  `scripts/claude-production` Preflight。
-- Production Security Boundaryの**正本はOS Managed Policy**であり、プロジェクトの
-  `.claude/settings.json`ではありません。`.claude/settings.json`と
-  `.claude/hooks/network_guard.py`はDevelopment用のDefense in Depthとして残しますが、
-  `allowManagedHooksOnly: true`のProductionでは実行されません。
-- Managed Policyのsandbox allowlistは`config/source_matrix.yaml`と
-  `config/issuer_domain_registry.yaml`から決定論的に導出されます
-  （`src/claude_runtime_security.derive_expected_domains`）。Hostを手で書き足す運用は
-  ありません。
+- Production Context Launcher = `scripts/claude-production`。実在する`--target-date`、
+  `main`、進行中のGit操作なし、tracked clean、解決可能なHEADだけを確認し、run contextを
+  環境変数へ置いてClaude Codeを起動します。
+- **これはBusiness PipelineのSecurity Gateではありません。** Launcher failureは
+  local operationalな起動失敗であり、`NO_TRADE` / `DATA_UNAVAILABLE` / `REJECTED`等の
+  Business decisionへ変換してはいけません。
+- Business Evidenceの正しさを守るのはPipelineの内側です。Raw Evidence / SHA256 /
+  Source Ledger / Physical Request Record / Attempt Immutability / deterministic Parser /
+  Trust Chain / Risk Engineがそれぞれfail-closedに動きます。
+- `.claude/settings.json`と`.claude/hooks/network_guard.py`はDevelopment用の
+  Defense in Depthです。市場データURLの検証を実際に行うのは`src/network_policy.py`です。
 - 手順の詳細は[docs/nightly-operation.md](nightly-operation.md)を参照してください。
 
 ### Executor-specific command rendering
@@ -144,10 +141,7 @@ Business Canonical Dependency Order（25 dependency step）の相対順序も同
 
 - このドキュメント・`prompts/nightly_research.md`・`.agents/skills/prepare-daytrade-plan/SKILL.md`の
   `config/source_matrix.yaml`・`runs/YYYY-MM-DD/...`は、executor非依存の**論理パス表記**です。
-- Claude Production executorは、同じCanonical Pipelineを、Runtime Guardの契約に従って
-  **具体的なabsolute pathへmaterializeしてから**実行します。さらにBash Tool 1回につき
-  canonical CLI commandを1個だけ実行します（**1 Bash call = 1 canonical CLI command**）。
-  正本は[docs/nightly-operation.md](nightly-operation.md)の
-  **Production Path Materialization Contract**と**Production 1-call-1-command Contract**。
-- Canonical Pipeline Orderそのものと、Production command renderingを混同しないでください。
-  path materializationはstage順序・引数の意味・業務ロジックを一切変えません。
+- Production executorは、論理パス表記を実行環境の具体的なpathへ解決してから実行します。
+  `DAYTRADE_ROOT`と`DAYTRADE_RUN_DIR`はLauncherが設定します。
+- Canonical Pipeline Orderそのものと、command renderingを混同しないでください。
+  path解決はstage順序・引数の意味・業務ロジックを一切変えません。

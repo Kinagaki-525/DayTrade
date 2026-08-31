@@ -20,8 +20,8 @@ this script never fetches, pulls, merges, rebases or resets to "fix" one.
 NOT A SECURITY BOUNDARY. This file lives in the repository and Development
 Claude Code can edit it. It is a Development workflow control that prevents
 mistakes and keeps raw ``git push`` out of the agent's hands; it is not
-comparable to the Production boundary, which is the OS Managed Policy
-(``/etc/claude-code/managed-settings.json``) and the OS Managed Runtime Guard.
+comparable to the Business Evidence boundary, which lives inside the
+pipeline: Raw Evidence, SHA256, the Source Ledger and the Trust Chain.
 The PreToolUse hook inspects Bash tool invocations, not their child processes,
 so the ``git push`` this script runs is deliberately outside the hook's view.
 

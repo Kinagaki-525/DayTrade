@@ -322,220 +322,27 @@ def test_safe_push_024_mirror_remote_is_refused(repo):
     assert still_set.stdout.strip() == "true"
 
 
-# ------------------------------------------- the guard still denies raw git --
+# ------------------------------------------- legacy compatibility status ----
+#
+# DTWO-2026-026 demoted this wrapper. Ordinary ``git push`` is the standard
+# Development workflow now, and the repository policy no longer denies it, so
+# the wrapper is a convenience that still refuses the two pushes nobody should
+# make -- not a boundary anything depends on.
 
 
-def _guard_verdict(command: str):
-    """Run the PreToolUse hook exactly as Claude Code does, over a Bash command."""
-    payload = json.dumps(
-        {"tool_name": "Bash", "tool_input": {"command": command}}
+def test_the_wrapper_is_documented_as_optional_legacy():
+    text = (PROJECT_ROOT / "docs" / "development-workflow.md").read_text(
+        encoding="utf-8"
     )
-    return subprocess.run(
-        [sys.executable, str(NETWORK_GUARD)],
-        input=payload,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
-    )
+    assert "claude-safe-push" in text
+    assert "legacy" in text.lower()
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("git push", id="SAFE-PUSH-014"),
-        pytest.param("git push origin main", id="SAFE-PUSH-015"),
-        pytest.param("git push --force origin claude/example", id="SAFE-PUSH-016a"),
-        pytest.param("git push -f", id="SAFE-PUSH-016b"),
-        pytest.param("git fetch origin", id="SAFE-PUSH-016c"),
-        pytest.param("git pull", id="SAFE-PUSH-016d"),
-        # The executable may be spelled as a path, and global options may sit
-        # between it and the subcommand. Neither may be relied on to identify
-        # the command, or github.com becomes reachable around the wrapper.
-        pytest.param(
-            "/usr/bin/git push origin claude/example", id="SAFE-PUSH-025"
-        ),
-        pytest.param(
-            "git -c core.askPass=true push origin claude/example",
-            id="SAFE-PUSH-026",
-        ),
-        pytest.param(
-            "/usr/bin/git -c core.askPass=true push origin claude/example",
-            id="SAFE-PUSH-027",
-        ),
-        pytest.param(
-            "git send-pack https://github.com/Kinagaki-525/DayTrade.git HEAD",
-            id="SAFE-PUSH-028",
-        ),
-        pytest.param(
-            "/usr/bin/git send-pack https://github.com/Kinagaki-525/DayTrade.git HEAD",
-            id="SAFE-PUSH-029",
-        ),
-        pytest.param(
-            "git clone https://github.com/Kinagaki-525/DayTrade.git",
-            id="SAFE-PUSH-030",
-        ),
-        pytest.param(
-            "git ls-remote https://github.com/Kinagaki-525/DayTrade.git",
-            id="SAFE-PUSH-031",
-        ),
-        # Git ships each subcommand as its own executable too.
-        pytest.param(
-            "/usr/lib/git-core/git-send-pack https://github.com/x/y.git HEAD",
-            id="SAFE-PUSH-029b",
-        ),
-        pytest.param(
-            "git -c credential.helper=/tmp/x push origin claude/foo",
-            id="SAFE-PUSH-026b",
-        ),
-        pytest.param(
-            "git -C /home/daytrade/DayTrade push origin claude/foo",
-            id="SAFE-PUSH-026c",
-        ),
-    ],
-)
-def test_the_network_guard_still_blocks_raw_git_network_commands(command):
-    """Safe Push must not have been built by deleting the raw git push block."""
-    assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
-
-
-# ------------------------------------------------ aliases defeat a blacklist --
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        # Git lets any subcommand be renamed, so the command string need never
-        # contain the word "push" for a push to happen.
-        pytest.param(
-            "git -c alias.ship=push ship origin claude/example", id="SAFE-PUSH-033"
-        ),
-        pytest.param("git config alias.ship push", id="SAFE-PUSH-034"),
-        pytest.param("git config --global alias.ship push", id="SAFE-PUSH-035"),
-        pytest.param("git config --local alias.ship push", id="SAFE-PUSH-035b"),
-        # An alias configured earlier leaves nothing to recognise at all, which
-        # is why an unknown subcommand has to be refused on sight.
-        pytest.param("git ship origin claude/example", id="SAFE-PUSH-036"),
-        pytest.param("git some-unknown-command", id="SAFE-PUSH-037"),
-        # A safe first command does not license the second.
-        pytest.param(
-            "git status && git ship origin claude/example", id="SAFE-PUSH-044"
-        ),
-        pytest.param(
-            "git diff ; git ship origin claude/example", id="SAFE-PUSH-044b"
-        ),
-        pytest.param(
-            "git status | git ship origin claude/example", id="SAFE-PUSH-044c"
-        ),
-        pytest.param(
-            "/usr/bin/git -c alias.ship=push ship origin claude/example",
-            id="SAFE-PUSH-045",
-        ),
-        # An alias body can carry the push itself.
-        pytest.param(
-            "git config alias.ship '!git push origin'", id="SAFE-PUSH-034b"
-        ),
-        pytest.param("git --config-env=alias.ship=X ship", id="SAFE-PUSH-033b"),
-        # A quoted argument can carry a whole command of its own.
-        pytest.param(
-            'bash -c "git ship origin claude/example"', id="SAFE-PUSH-044d"
-        ),
-        # `git remote update` fetches, so `remote` is not a local-only command.
-        pytest.param("git remote update", id="SAFE-PUSH-037b"),
-    ],
-)
-def test_the_network_guard_fails_closed_on_raw_git_aliases(command):
-    """A blacklist of known network subcommands cannot see through an alias."""
-    assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        # FIX-DEV-GIT-011. -C was once allowed here because it is not -c: it
-        # changes a directory rather than injecting configuration. But a
-        # directory is exactly what the pathspec validator resolves operands
-        # against, so `-C` breaks the explicit-file contract just as thoroughly
-        # as `--work-tree` does. The canonical form has no global option at all,
-        # so --no-pager goes with it rather than being carved out by name.
-        pytest.param("git -C /home/daytrade/DayTrade status", id="SAFE-PUSH-043a"),
-        pytest.param("git --no-pager diff", id="SAFE-PUSH-043b"),
-    ],
-)
-def test_safe_push_the_guard_fixes_the_git_execution_context(command):
-    """Raw git is `git <subcommand>` from the repository root, nothing before it."""
-    assert _guard_verdict(command).returncode != 0, f"guard allowed: {command}"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("scripts/claude-safe-push", id="SAFE-PUSH-032"),
-        pytest.param(
-            "cd daytrade-sbi && scripts/claude-safe-push", id="SAFE-PUSH-046"
-        ),
-        # Closing the raw git network paths must not cost us read-only git.
-        pytest.param("git status --short", id="SAFE-PUSH-032a"),
-        pytest.param("git log --oneline -5", id="SAFE-PUSH-032b"),
-        pytest.param("git ls-files .claude", id="SAFE-PUSH-032c"),
-        pytest.param("git diff --check", id="SAFE-PUSH-032d"),
-        # The local-only work the allowlist exists to keep possible.
-        pytest.param("git status", id="SAFE-PUSH-038"),
-        pytest.param("git diff", id="SAFE-PUSH-039"),
-        pytest.param("git log -1 --oneline", id="SAFE-PUSH-040"),
-        pytest.param("git branch --show-current", id="SAFE-PUSH-041"),
-        # Explicit paths after '--' only; see _add_reason in the guard.
-        pytest.param("git add -- CLAUDE.md", id="SAFE-PUSH-042"),
-        pytest.param('git commit -m "test"', id="SAFE-PUSH-043"),
-        pytest.param("git rev-parse HEAD", id="SAFE-PUSH-043c"),
-        # Read-only config forms cannot define an alias.
-        pytest.param("git config --get remote.origin.mirror", id="SAFE-PUSH-043d"),
-        pytest.param("git config --list", id="SAFE-PUSH-043e"),
-        pytest.param(
-            "git status --short && git log --oneline -3", id="SAFE-PUSH-043f"
-        ),
-    ],
-)
-def test_the_network_guard_lets_the_safe_push_wrapper_through(command):
-    """The wrapper is not a git push string, so no guard exception was needed."""
-    result = _guard_verdict(command)
-    assert result.returncode == 0, result.stderr
-
-
-# --------------------------------------------- Production non-regression ----
-
-
-def test_safe_push_017_development_settings_allow_github_for_the_wrapper():
-    """The Development sandbox needs github.com; raw git push stays denied."""
+def test_the_repository_policy_no_longer_denies_raw_git_push():
     settings = json.loads(DEV_SETTINGS.read_text(encoding="utf-8"))
-    allowed = settings["sandbox"]["network"]["allowedDomains"]
-    assert "github.com" in allowed, (
-        "Development sandbox cannot reach GitHub, so claude-safe-push cannot work"
-    )
     deny = settings["permissions"]["deny"]
-    assert "Bash(git push:*)" in deny, "raw git push must stay denied"
+    assert "Bash(git push:*)" not in deny
+    # The sandbox still has to be able to reach GitHub for any push at all.
+    assert "github.com" in settings["sandbox"]["network"]["allowedDomains"]
     assert settings["sandbox"]["failIfUnavailable"] is True
     assert settings["sandbox"]["allowUnsandboxedCommands"] is False
-
-
-def test_safe_push_018_production_expected_domains_do_not_include_github():
-    """Production's allowlist is derived from the matrix and issuer registry only."""
-    from src.claude_runtime_security import derive_expected_domains
-
-    domains = derive_expected_domains()
-    assert domains, "the Production allowlist derivation returned nothing"
-    assert "github.com" not in domains, (
-        "github.com leaked into the Production expected domain set"
-    )
-
-
-def test_safe_push_019_production_policy_was_not_taught_about_safe_push():
-    """Production denies push entirely; the wrapper must be unknown to it."""
-    for path in (
-        PROJECT_ROOT / "ops" / "claude" / "managed-settings.template.json",
-        PROJECT_ROOT / "ops" / "claude" / "daytrade_runtime_guard.py",
-        PROJECT_ROOT / "src" / "claude_runtime_security.py",
-    ):
-        text = path.read_text(encoding="utf-8")
-        assert "claude-safe-push" not in text, f"{path.name} references safe push"
-        assert "github.com" not in text, f"{path.name} allows github.com"
