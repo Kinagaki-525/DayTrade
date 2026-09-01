@@ -6,8 +6,16 @@
 
 1. **必要ならHumanが通常のGit同期を行う** — `git switch main` /
    `git pull --ff-only origin main`
-2. **`daytrade-sbi/scripts/claude-production --target-date YYYY-MM-DD`** —
-   run contextを解決してClaude Codeを起動する
+2. **User-Agentを設定してProduction Context Launcherを起動する**
+
+   ```bash
+   export DAYTRADE_HTTP_USER_AGENT='<human-managed value>'
+   daytrade-sbi/scripts/claude-production --target-date YYYY-MM-DD
+   ```
+
+   `DAYTRADE_HTTP_USER_AGENT`はSource Acquisitionの実行前提である。値は環境の継承
+   だけで届くので、**Launcherを起動するそのshellで設定する**。詳細は後述の
+   [HTTP User-Agent](#http-user-agenthuman-shellで設定する)節を参照する
 3. **`$prepare-daytrade-plan`** — Canonical CLI Pipeline Orderを実行する
 
 このどこにもSecurity Gateは無い。DayTradeの結果を信用してよいかを決めるのは、
@@ -244,6 +252,7 @@ MCP / Remote Control / /status の状態
 local mainとfetchしたてのorigin/mainの一致
 network到達性
 runtime_security.json
+HTTP User-Agentのpresence / value
 ```
 
 これらは個人所有のlocal実行環境に対するOperational Securityであって、市場Evidenceの
@@ -262,6 +271,45 @@ DAYTRADE_GIT_HEAD_SHA=<現在の40桁HEAD>
 
 Launcherはrun directoryへfileを1つも書かない。`runtime_security.json`も
 Security Attestationも生成しない。
+
+### HTTP User-Agent（Human shellで設定する）
+
+実HTTP Source Acquisitionには環境変数`DAYTRADE_HTTP_USER_AGENT`が必要である。
+`src/source_fetch.py`の`user_agent()`はこの環境変数だけを読み、hardcoded defaultを
+持たない。未設定・空文字・前後に空白を含む値はいずれも
+`HTTP_USER_AGENT_NOT_CONFIGURED`となり、Source Acquisitionはfail-closedで停止する。
+curl自身の身元で市場サイトへ黙ってGETしないための契約であり、この挙動は変更しない。
+
+値が届く経路は**環境の継承だけ**である。
+
+```text
+Human shell（export DAYTRADE_HTTP_USER_AGENT）
+  ↓ 環境をそのまま引き継ぐ
+Production Context Launcher
+  ↓
+Claude / repository CLI
+  ↓
+src.source_fetch.user_agent()
+  ↓
+curl --user-agent
+```
+
+```bash
+export DAYTRADE_HTTP_USER_AGENT='<human-managed value>'
+daytrade-sbi/scripts/claude-production --target-date YYYY-MM-DD
+```
+
+- UA値は**Human-managed runtime input**である。repositoryへ保存しない。実際の
+  User-Agent文字列をこのドキュメントを含むrepository内fileへ書かない
+- artifact / log / evidenceへUA値を保存しない
+- **Launcher自身はUAのpresenceもvalueも検査しない。** これはSecurity Gateではなく、
+  Runtime Security Preflightでもなく、Canonical CLI Pipeline Orderの新stepでもない。
+  設定漏れはLauncherではなく最初のSource Acquisitionでfail-closedとして現れる
+- Humanが必要ならshell profile等、repository外の手段で恒久設定してよい。
+  repositoryとして特定の恒久設定方式を強制しない
+- Developmentでも、real `curl_transport`を使うSource Acquisitionを実行するなら
+  同じrequirementが適用される。fake / mock transportを使うunit testはUAを読まないので、
+  Human shellへUA設定を要求する運用契約にはしない
 
 ### Production Human-only boundary
 
