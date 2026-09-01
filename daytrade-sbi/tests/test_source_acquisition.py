@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.contracts import validate_json_document
@@ -16,6 +18,7 @@ from src.source_acquisition import (
     resolve_url,
     write_ledger,
 )
+from src.request_budget import reserve_request
 from src.source_fetch import TransportResult
 from src.source_matrix import load_source_matrix, source_by_id
 from tests import source_page_fixtures as pages
@@ -536,12 +539,43 @@ def _stage_with_transport(tmp_path, transport):
 # --------------------------------- FIX-R2-002A: Physical Request Trust -----
 
 
-def test_missing_user_agent_creates_zero_request_records(tmp_path, monkeypatch):
-    """DAYTRADE_HTTP_USER_AGENT unset, using the real curl transport: the
-    pre-network boundary must reject before reserve_request() ever runs, so
-    zero Physical Request Records are created."""
-    from src.source_acquisition import acquire_source
-    from src.source_fetch import curl_transport
+# ------------------ DTWO-2026-028: local runtime prerequisite vs. the Source --
+#
+# Two failures used to be recorded identically, and they are not the same kind
+# of fact.
+#
+# A NetworkPolicyError -- unapproved host, wrong scheme, raw IP, unapproved
+# issuer domain -- is a determination *about this source and this URL*. It is
+# reproducible, it is evidence, and it is recorded as an ACCESS_FAILED Logical
+# Attempt so the ledger says why nothing was fetched.
+#
+# A missing DAYTRADE_HTTP_USER_AGENT is not about the source at all. Nothing was
+# observed: no Physical Request, no transport call, no Raw Evidence, no Source
+# Page. Recording it as a Logical Attempt made a local shell misconfiguration
+# permanently indistinguishable from "we asked and this is what happened" --
+# and because Exact Logical Attempt Immutability then reuses that attempt
+# byte-for-byte, fixing the shell could not un-stick the run directory. So the
+# correction is at the boundary: it never becomes an Attempt in the first
+# place. Immutability itself is untouched.
+
+
+def _zero_evidence_on_disk(run_dir) -> bool:
+    """No Physical Request Record and no Source Page were written."""
+    requests = run_dir / "network_requests"
+    source_pages = run_dir / "source_pages"
+    return (not requests.exists() or not list(requests.iterdir())) and (
+        not source_pages.exists() or not list(source_pages.iterdir())
+    )
+
+
+def test_missing_user_agent_is_a_hard_error_not_an_attempt(tmp_path, monkeypatch):
+    """TC-028-01: the acquisition stops; it does not record a Source Attempt.
+
+    Nothing was observed about the source, so there is nothing to record about
+    it. The caller gets the SourceFetchError and the run directory stays empty.
+    """
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import SourceFetchError, curl_transport
 
     monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
 
@@ -550,29 +584,271 @@ def test_missing_user_agent_creates_zero_request_records(tmp_path, monkeypatch):
 
     monkeypatch.setattr("subprocess.run", _explode)
 
-    attempt, values = acquire_source(
-        DEFINITIONS["YAHOO_JP_QUOTE"],
+    cache = RequestBudgetCache(tmp_path)
+    with pytest.raises(SourceFetchError) as error:
+        acquire_source(
+            DEFINITIONS["YAHOO_JP_QUOTE"],
+            target_date=TARGET_DATE,
+            trading_date=TARGET_DATE,
+            research_cutoff=CUTOFF,
+            candidate_code="7203",
+            run_dir=tmp_path,
+            issuer_registry=REGISTRY,
+            transport=curl_transport,
+            cache=cache,
+        )
+
+    assert error.value.code == "HTTP_USER_AGENT_NOT_CONFIGURED"
+    assert _zero_evidence_on_disk(tmp_path)
+    # Nothing was remembered, so nothing can be reused later.
+    assert cache._by_id == {}  # noqa: SLF001 - the poisoning surface itself
+
+
+def test_a_fixed_user_agent_can_acquire_the_same_identity(tmp_path, monkeypatch):
+    """TC-028-02: the failure poisons nothing.
+
+    This is the whole point of the change: the 2026-09-01 run stopped because a
+    shell was missing one variable, and under the old behaviour setting it would
+    not have helped -- the recorded ACCESS_FAILED attempt would have been reused
+    byte-for-byte forever.
+    """
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import SourceFetchError, curl_transport
+
+    cache = RequestBudgetCache(tmp_path)
+    kwargs = dict(
         target_date=TARGET_DATE,
         trading_date=TARGET_DATE,
         research_cutoff=CUTOFF,
         candidate_code="7203",
         run_dir=tmp_path,
         issuer_registry=REGISTRY,
-        transport=curl_transport,
+        cache=cache,
     )
-    assert values == []
-    assert attempt["cache_status"] == "NOT_CACHEABLE"
-    assert attempt["network_request_performed"] is False
-    assert attempt["request_id"] is None
-    assert not (tmp_path / "network_requests").exists() or not list(
-        (tmp_path / "network_requests").iterdir()
+
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(  # pragma: no cover
+            AssertionError("transport must never be invoked")
+        ),
+    )
+    with pytest.raises(SourceFetchError):
+        acquire_source(
+            DEFINITIONS["YAHOO_JP_QUOTE"], transport=curl_transport, **kwargs
+        )
+
+    # The operator sets the variable and runs the same stage again. A counting
+    # transport keeps this test off the network entirely.
+    monkeypatch.setenv("DAYTRADE_HTTP_USER_AGENT", "daytrade-test-agent/1.0")
+    transport, calls = _counting_transport(pages.yahoo_quote_page(), status=200)
+    attempt, _values = acquire_source(
+        DEFINITIONS["YAHOO_JP_QUOTE"], transport=transport, **kwargs
+    )
+
+    assert calls["count"] == 1, "the normal request path was not reached"
+    assert attempt["reused_from_attempt_id"] is None
+    assert attempt["network_request_performed"] is True
+    assert attempt["request_id"] is not None
+
+
+def test_an_existing_exact_attempt_is_reused_before_the_user_agent_check(
+    tmp_path, monkeypatch
+):
+    """TC-028-04: reuse precedes the prerequisite, and must keep doing so.
+
+    An acquisition that a stored Attempt already answers spends no request, so
+    it must not start demanding runtime prerequisites it will never use. Moving
+    the User-Agent check above the reuse branch would make an unset variable
+    break runs that need no network at all.
+    """
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import curl_transport
+
+    cache = RequestBudgetCache(tmp_path)
+    kwargs = dict(
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code="7203",
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        cache=cache,
+    )
+
+    monkeypatch.setenv("DAYTRADE_HTTP_USER_AGENT", "daytrade-test-agent/1.0")
+    transport, calls = _counting_transport(pages.yahoo_quote_page(), status=200)
+    first, _ = acquire_source(
+        DEFINITIONS["YAHOO_JP_QUOTE"], transport=transport, **kwargs
+    )
+    assert calls["count"] == 1
+
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(  # pragma: no cover
+            AssertionError("transport must never be invoked")
+        ),
+    )
+    second, _ = acquire_source(
+        DEFINITIONS["YAHOO_JP_QUOTE"], transport=curl_transport, **kwargs
+    )
+
+    assert second == first, "the existing attempt was not reused byte-for-byte"
+    assert calls["count"] == 1, "a second physical request was spent"
+
+
+def _tdnet_kwargs(tmp_path, candidate_code, cache):
+    """JPX_TDNET is a *shared page*: its url_template carries no ``{ticker}``.
+
+    Two candidates therefore produce two different Logical Attempt identities
+    over one Physical Request identity -- which is precisely the shape that
+    must not demand a User-Agent for the second candidate, because the second
+    candidate spends no request.
+    """
+    return dict(
+        target_date=TARGET_DATE,
+        trading_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        candidate_code=candidate_code,
+        run_dir=tmp_path,
+        issuer_registry=REGISTRY,
+        cache=cache,
     )
 
 
-def test_invalid_host_creates_zero_request_records(tmp_path):
-    """A URL resolving to a host outside the Network Policy allowlist must
-    fail before reserve_request(): zero Physical Request Records, one
-    NOT_CACHEABLE attempt, and the transport is never invoked."""
+def test_a_completed_physical_request_is_reused_without_a_user_agent(
+    tmp_path, monkeypatch
+):
+    """TC-028-R03: the prerequisite is for *starting* a request, not for one.
+
+    The first candidate spends the GET. The second candidate has no Logical
+    Attempt of its own, so it does not take the immutability shortcut -- but it
+    still needs no transport, because the Physical Request is already
+    COMPLETED. Demanding a User-Agent here would block work that never touches
+    the network.
+    """
+    from src.request_budget import request_id_for
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import curl_transport
+
+    cache = RequestBudgetCache(tmp_path)
+    definition = DEFINITIONS["JPX_TDNET"]
+    assert "{ticker}" not in definition["url_template"], "fixture is not a shared page"
+
+    monkeypatch.setenv("DAYTRADE_HTTP_USER_AGENT", "daytrade-test-agent/1.0")
+    transport, calls = _counting_transport(pages.jpx_tdnet_page(), status=200)
+    first, _ = acquire_source(
+        definition, transport=transport, **_tdnet_kwargs(tmp_path, "7203", cache)
+    )
+    assert calls["count"] == 1
+    assert first["network_request_performed"] is True
+
+    # A different candidate over the same shared page, with no User-Agent.
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(  # pragma: no cover
+            AssertionError("transport must never be invoked")
+        ),
+    )
+    second, _ = acquire_source(
+        definition, transport=curl_transport, **_tdnet_kwargs(tmp_path, "6758", cache)
+    )
+
+    assert calls["count"] == 1, "a second physical request was spent"
+    assert second["attempt_id"] != first["attempt_id"], "not a distinct logical attempt"
+    assert second["network_request_performed"] is False
+    assert second["request_id"] == first["request_id"]
+    assert second["request_id"] == request_id_for(
+        url=first["url"], target_date=TARGET_DATE, research_cutoff=CUTOFF
+    )
+    assert second["cache_status"] == "HIT"
+
+
+def test_a_reserved_physical_request_is_still_indeterminate_without_a_user_agent(
+    tmp_path, monkeypatch
+):
+    """TC-028-R04: a crashed prior run is not a User-Agent problem.
+
+    Rounding this into HTTP_USER_AGENT_NOT_CONFIGURED would hide the one state
+    the Request Budget refuses to guess about, and would invite a retry.
+    """
+    from src.request_budget import RequestBudgetError
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import curl_transport
+
+    cache = RequestBudgetCache(tmp_path)
+    definition = DEFINITIONS["JPX_TDNET"]
+
+    # Reserve without ever completing: exactly what a mid-request crash leaves.
+    monkeypatch.setenv("DAYTRADE_HTTP_USER_AGENT", "daytrade-test-agent/1.0")
+    url = resolve_url(definition, ticker=None, issuer_registry=REGISTRY)
+    reserve_request(
+        tmp_path,
+        url=url,
+        target_date=TARGET_DATE,
+        research_cutoff=CUTOFF,
+        origin_source_id="JPX_TDNET",
+        origin_candidate_code="7203",
+        origin_attempt_id="att-" + "0" * 32,
+    )
+
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+    with pytest.raises(RequestBudgetError) as error:
+        acquire_source(
+            definition,
+            transport=curl_transport,
+            **_tdnet_kwargs(tmp_path, "6758", cache),
+        )
+    assert error.value.code == "REQUEST_BUDGET_STATE_INDETERMINATE"
+
+
+def test_a_corrupt_physical_request_is_still_an_integrity_violation(
+    tmp_path, monkeypatch
+):
+    """TC-028-R05: tampered evidence outranks a missing prerequisite.
+
+    The record is inspected through the same loader ``reserve_request`` uses,
+    so its integrity verdict is reached before the User-Agent is ever read.
+    """
+    from src.request_budget import RequestBudgetError, network_request_path
+    from src.source_acquisition import RequestBudgetCache, acquire_source
+    from src.source_fetch import curl_transport
+
+    cache = RequestBudgetCache(tmp_path)
+    definition = DEFINITIONS["JPX_TDNET"]
+
+    monkeypatch.setenv("DAYTRADE_HTTP_USER_AGENT", "daytrade-test-agent/1.0")
+    transport, _calls = _counting_transport(pages.jpx_tdnet_page(), status=200)
+    first, _ = acquire_source(
+        definition, transport=transport, **_tdnet_kwargs(tmp_path, "7203", cache)
+    )
+
+    record_path = network_request_path(tmp_path, first["request_id"])
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["url"] = "https://evil.example.com/swapped"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    monkeypatch.delenv("DAYTRADE_HTTP_USER_AGENT", raising=False)
+    with pytest.raises(RequestBudgetError) as error:
+        acquire_source(
+            definition,
+            transport=curl_transport,
+            **_tdnet_kwargs(tmp_path, "6758", cache),
+        )
+    assert error.value.code != "HTTP_USER_AGENT_NOT_CONFIGURED"
+    assert "INTEGRITY" in error.value.code or "INDETERMINATE" in error.value.code
+
+
+def test_an_unapproved_host_is_still_recorded_as_an_attempt(tmp_path):
+    """TC-028-03: a policy refusal is a fact about the source, so it stays.
+
+    The correction is narrow on purpose: only the local runtime prerequisite
+    stopped being an Attempt. A URL outside the Network Policy allowlist still
+    fails before ``reserve_request()`` -- zero Physical Request Records, one
+    NOT_CACHEABLE attempt, transport never invoked -- exactly as before.
+    """
     from src.source_acquisition import acquire_source
 
     bad_definition = dict(DEFINITIONS["YAHOO_JP_QUOTE"])
@@ -589,13 +865,26 @@ def test_invalid_host_creates_zero_request_records(tmp_path):
         issuer_registry=REGISTRY,
         transport=transport,
     )
+
     assert calls["count"] == 0
     assert values == []
+    assert attempt["status"] == "ACCESS_FAILED"
     assert attempt["cache_status"] == "NOT_CACHEABLE"
     assert attempt["network_request_performed"] is False
     assert attempt["request_id"] is None
-    assert not (tmp_path / "network_requests").exists() or not list(
-        (tmp_path / "network_requests").iterdir()
+    assert attempt["reused_from_attempt_id"] is None
+    assert _zero_evidence_on_disk(tmp_path)
+    # TC-028-06: no new status, no new cache_status, no schema change -- the
+    # attempt this path still records is valid under the ledger schema as it
+    # already stands.
+    validate_json_document(
+        {
+            "schema_version": 3,
+            "target_date": TARGET_DATE,
+            "sources": [],
+            "source_attempts": [attempt],
+        },
+        "sources.schema.json",
     )
 
 
