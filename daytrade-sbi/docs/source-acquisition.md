@@ -297,6 +297,32 @@ CLI exit code          非0
 Discovery Fail-Closed Gateは`acquire-discovery`のexit codeが非0なら後続Stageへ
 進まないので、この失敗もfail-closedのまま扱われる。
 
+##### UAが必要なのは「新しいPhysical HTTP Requestを開始するとき」だけ
+
+`DAYTRADE_HTTP_USER_AGENT`はcurlが実際にリクエストへ埋めるヘッダである。したがって
+**transportを使わない経路では要求しない**。UAを要求するのは、この呼び出しが
+新しいPhysical Requestを開始する場合だけである。
+
+| 状況 | UA要求 | transport |
+| --- | --- | --- |
+| 同一identityのExact Logical Attemptが既にある | しない | 0（byte-for-byte reuse） |
+| Physical Requestが既にCOMPLETED（別のLogical Attemptが消費済み） | しない | 0（HIT） |
+| Physical Requestが存在しない | **する** | 1（これから消費する） |
+
+2番目は共有ページで日常的に起きる。TDnet indexのように`url_template`が`{ticker}`を
+持たないSourceは、候補ごとに別々のLogical Attempt（`attempt_id`が異なる）を作りつつ、
+Physical Requestは1つ（`request_id`が同じ）を共有する。2件目以降の候補はGETを
+消費しないので、UA未設定でも処理できなければならない。
+
+判定はPhysical Request Recordの**read-only inspection**で行い、identityは
+`src/request_budget.py`の`request_id_for()`を、読み出しは同じ`load_request_record()`を
+使う。`reserve_request()`が使うものと同一で、identity計算を複製しない。
+
+この検査はRequest Budgetの判断を横取りしない。Recordが`RESERVED`のままなら
+従来どおり`REQUEST_BUDGET_STATE_INDETERMINATE`、Record integrityが壊れていれば
+従来どおり`REQUEST_RECORD_INTEGRITY_VIOLATION`であり、**どちらもUA errorへ
+丸めない**。retryも追加しない。
+
 #### なぜ分けるのか
 
 分ける前は、ローカルのshell設定漏れが`ACCESS_FAILED`のLogical Attemptとして
